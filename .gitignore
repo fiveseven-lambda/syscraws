@@ -1,0 +1,4 @@
+syscraws
+*.o
+*.d
+html
