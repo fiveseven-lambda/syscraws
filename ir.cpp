@@ -15,13 +15,13 @@ namespace ir {
     GlobalAddr::GlobalAddr(std::size_t pos): pos(pos) {}
     StackAddr::StackAddr(StackId stack_id, std::size_t pos): stack_id(stack_id), pos(pos) {}
     Env::Env(): num_stack(0) {}
-    Value &Env::operator()(const GlobalAddr &addr){
-        return global.at(addr.pos).value();
+    std::optional<Value> &Env::operator()(const GlobalAddr &addr){
+        return global.at(addr.pos);
     }
-    Value &Env::operator()(const StackAddr &addr){
+    std::optional<Value> &Env::operator()(const StackAddr &addr){
         auto it = stack.find(addr.stack_id);
         if(it == stack.end()) throw;
-        return it->second.at(addr.pos).value();
+        return it->second.at(addr.pos);
     }
     void print(const Value &value){
         if(const Int *v_int = std::get_if<Int>(&value)){
@@ -32,8 +32,12 @@ namespace ir {
             std::cout << *v_float << std::endl;
         }else if(const Str *v_str = std::get_if<Str>(&value)){
             std::cout << *v_str << std::endl;
-        }else if(std::get_if<Addr>(&value)){
-            std::cout << "address" << std::endl;
+        }else if(const Addr *v_addr = std::get_if<Addr>(&value)){
+            if(const GlobalAddr *v_global = std::get_if<GlobalAddr>(v_addr)){
+                std::cout << "global address (" << v_global->pos << ")" << std::endl;
+            }else if(const StackAddr *v_stack = std::get_if<StackAddr>(v_addr)){
+                std::cout << "stack address (" << v_stack->stack_id << ", " << v_stack->pos << ")" << std::endl;
+            }
         }else{
             std::cout << "function" << std::endl;
         }
@@ -44,7 +48,7 @@ namespace ir {
         return args[1];
     }
     Value Deref::invoke(Env & env, const std::vector<Value> &args) const {
-        return std::visit(env, std::get<Addr>(args[0]));
+        return std::visit(env, std::get<Addr>(args[0])).value();
     }
     Value IAdd::invoke(Env &, const std::vector<Value> &args) const {
         return std::get<Int>(args[0]) + std::get<Int>(args[1]);
@@ -54,6 +58,10 @@ namespace ir {
     }
     Value IEq::invoke(Env &, const std::vector<Value> &args) const {
         return std::get<Int>(args[0]) == std::get<Int>(args[1]);
+    }
+    Value IPrint::invoke(Env &, const std::vector<Value> &args) const {
+        std::cout << std::get<Int>(args[0]) << std::endl;
+        return std::get<Int>(args[0]);
     }
     Value FAdd::invoke(Env &, const std::vector<Value> &args) const {
         return std::get<Float>(args[0]) + std::get<Float>(args[1]);
@@ -111,3 +119,92 @@ namespace ir {
         return ret;
     }
 }
+
+#ifdef DEBUG
+#include <iostream>
+class indent {
+    int depth;
+public:
+    indent(int depth): depth(depth) {}
+    friend std::ostream &operator<<(std::ostream &os, const indent &ind){
+        for(int i = 0; i < ind.depth; i++) os << "  ";
+        return os;
+    }
+};
+
+namespace ir {
+    void debug_print(const Value &value, int depth){
+        if(const Int *v_int = std::get_if<Int>(&value)){
+            std::cout << indent(depth) << "int(" << *v_int << ")" << std::endl;
+        }else if(const Bool *v_bool = std::get_if<Bool>(&value)){
+            std::cout << indent(depth) << "bool(" << *v_bool << ")" << std::endl;
+        }else if(const Float *v_float = std::get_if<Float>(&value)){
+            std::cout << indent(depth) << "float(" << *v_float << ")" << std::endl;
+        }else if(const Str *v_str = std::get_if<Str>(&value)){
+            std::cout << indent(depth) << "str(" << *v_str << ")" << std::endl;
+        }else if(const Addr *v_addr = std::get_if<Addr>(&value)){
+            if(const GlobalAddr *v_global = std::get_if<GlobalAddr>(v_addr)){
+                std::cout << indent(depth) << "global address (" << v_global->pos << ")" << std::endl;
+            }else if(const StackAddr *v_stack = std::get_if<StackAddr>(v_addr)){
+                std::cout << indent(depth) << "stack address (" << v_stack->stack_id << ", " << v_stack->pos << ")" << std::endl;
+            }
+        }else if(auto v_func = std::get_if<std::shared_ptr<Func>>(&value)){
+            if(auto func_def = dynamic_cast<const FuncDef *>(v_func->get())){
+                std::cout << indent(depth) << "function" << std::endl;
+                debug_print(*func_def->entry, depth + 1);
+            }else{
+                std::cout << indent(depth) << "function (builtin)" << std::endl;
+            }
+        }
+    }
+    void Imm::debug_print(int depth) const {
+        std::cout << indent(depth) << "imm" << std::endl;
+        ::ir::debug_print(value, depth + 1);
+    }
+    void Local::debug_print(int depth) const {
+        std::cout << indent(depth) << "local(" << index << ")" << std::endl;
+    }
+    void Call::debug_print(int depth) const {
+        std::cout << indent(depth) << "call" << std::endl;
+        func_expr->debug_print(depth + 1);
+        for(auto &arg : args_expr){
+            arg->debug_print(depth + 1);
+        }
+    }
+
+    void ExprStmt::debug_map(std::unordered_map<Stmt *, std::size_t> &map){
+        auto it = map.find(this);
+        if(it == map.end()){
+            std::size_t n = map.size();
+            map.emplace(this, n);
+            if(next) next->debug_map(map);
+        }
+    }
+    void BrStmt::debug_map(std::unordered_map<Stmt *, std::size_t> &map){
+        auto it = map.find(this);
+        if(it == map.end()){
+            std::size_t n = map.size();
+            map.emplace(this, n);
+            if(next_true) next_true->debug_map(map);
+            if(next_false) next_false->debug_map(map);
+        }
+    }
+    void debug_print(Stmt &stmt, int depth){
+        std::unordered_map<Stmt *, std::size_t> map;
+        map.emplace(nullptr, 0);
+        stmt.debug_map(map);
+        for(auto &[s, i] : map){
+            if(!s) continue;
+            std::cout << indent(depth) << "#" << i;
+            if(auto expr_stmt = dynamic_cast<ExprStmt *>(s)){
+                std::cout << " -> #" << map[expr_stmt->next.get()] << std::endl;
+                expr_stmt->expr->debug_print(depth + 1);
+            }else if(auto br_stmt = dynamic_cast<BrStmt *>(s)){
+                std::cout << " -> #" << map[br_stmt->next_true.get()] << ", #" << map[br_stmt->next_false.get()] << std::endl;
+                br_stmt->cond->debug_print(depth + 1);
+            }
+        }
+    }
+}
+
+#endif

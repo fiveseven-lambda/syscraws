@@ -27,7 +27,7 @@ static void run(const Config &config){
             auto stmt = parse(lexer);
             if(!stmt) break;
             // stmt->debug_print(0);
-            std::unique_ptr<ast::Item> item = stmt->to_ast();
+            std::unique_ptr<ast::Item> item = stmt->to_item();
             // item->debug_print(0);
             item->run(ctx, env);
         }

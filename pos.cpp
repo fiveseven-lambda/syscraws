@@ -65,7 +65,7 @@ namespace pos {
     /**
      * @brief クローン
      */
-    Range Range::clone(){
+    Range Range::clone() const {
         return Range(start, end);
     }
 

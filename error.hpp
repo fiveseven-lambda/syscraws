@@ -222,13 +222,53 @@ namespace error {
     };
 
     /**
-     * @brief 構文解析（AST）：
+     * @brief 構文解析（AST）：整数リテラルが大きすぎてオーバーフローした．
      */
     class OverflowInIntegerLiteral : public Error {
         std::exception &error;
         pos::Range pos;
     public:
         OverflowInIntegerLiteral(std::exception &, pos::Range);
+        void eprint(const std::deque<std::string> &) const override;
+    };
+
+    /**
+     * @brief 構文解析（pre-AST）：term から type への変換に失敗．
+     */
+    class TermNotType : public Error {
+        pos::Range term;
+    public:
+        TermNotType(pos::Range);
+        void eprint(const std::deque<std::string> &) const override;
+    };
+
+    /**
+     * @brief 構文解析（pre-AST）：term から pat への変換に失敗．
+     */
+    class InvalidLHSOfDecl : public Error {
+        pos::Range term;
+    public:
+        InvalidLHSOfDecl(pos::Range);
+        void eprint(const std::deque<std::string> &) const override;
+    };
+
+    /**
+     * @brief 構文解析（pre-AST）：
+     */
+    class DeclWithoutTypeOrRHS : public Error {
+        pos::Range pos;
+    public:
+        DeclWithoutTypeOrRHS(pos::Range);
+        void eprint(const std::deque<std::string> &) const override;
+    };
+
+    /**
+     * @brief 翻訳：存在しない変数名
+     */
+    class UndefinedVariable : public Error {
+        pos::Range pos;
+    public:
+        UndefinedVariable(pos::Range);
         void eprint(const std::deque<std::string> &) const override;
     };
 

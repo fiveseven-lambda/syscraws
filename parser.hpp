@@ -16,7 +16,7 @@
 #include "lexer.hpp"
 
 /**
- * @brief stmt をパースする．
+ * @brief token::Token の列を pre_ast::Stmt に変換する．
  *
  * @retval nullptr EOF に達した．
  */

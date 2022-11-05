@@ -53,7 +53,7 @@ namespace pos {
         Range &operator=(Range &&);
         Range &operator+=(const Range &);
         friend Range operator+(const Range &, const Range &);
-        Range clone();
+        Range clone() const;
         friend std::ostream &operator<<(std::ostream &, const Range &);
         void eprint(const std::deque<std::string> &) const;
     };

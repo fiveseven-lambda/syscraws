@@ -12,18 +12,30 @@
 #include "error.hpp"
 
 namespace ast {
-    Context::Context(): ops(NumOps) {
+    Context::Context():
+        ops(NumOps),
+        deref(new ir::Deref),
+        assign(new ir::Assign)
+    {
         auto &int_ty = ty.get_int();
         auto &bool_ty = ty.get_bool();
         auto &float_ty = ty.get_float();
         ops[Add].emplace_back(ty.get_func({int_ty, int_ty}, int_ty), std::make_shared<ir::IAdd>());
         ops[Add].emplace_back(ty.get_func({float_ty, float_ty}, float_ty), std::make_shared<ir::FAdd>());
         ops[Equal].emplace_back(ty.get_func({int_ty, int_ty}, bool_ty), std::make_shared<ir::IEq>());
+        ops[Mul].emplace_back(ty.get_func({int_ty, int_ty}, int_ty), std::make_shared<ir::IMul>());
+        funcs["print"].emplace_back(ty.get_func({int_ty}, int_ty), std::make_shared<ir::IPrint>());
     }
     Expr::Expr(pos::Range pos):
         pos(std::move(pos)) {}
     Expr::~Expr() = default;
-    std::pair<const type::Func &, std::unique_ptr<ir::Expr>> Expr::translate_func(Context &ctx, std::vector<std::reference_wrapper<const type::Type>>){
+    std::pair<const type::Func &, std::unique_ptr<ir::Expr>> Expr::translate_func(Context &ctx, const std::vector<std::reference_wrapper<const type::Type>> &){
+        auto [ty, expr] = translate(ctx, false);
+        if(auto func_ty = dynamic_cast<const type::Func *>(&ty)){
+            return {*func_ty, std::move(expr)};
+        }else{
+            TODO;
+        }
     }
     const pos::Range &Expr::get_pos() const {
         return pos;
@@ -31,51 +43,31 @@ namespace ast {
     Identifier::Identifier(pos::Range pos, std::string_view name):
         Expr(std::move(pos)),
         name(name) {}
-    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> Identifier::translate(Context &ctx){
-    }
-    Int::Int(pos::Range pos, std::int32_t value):
-        Expr(std::move(pos)),
-        value(value) {}
-    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> Int::translate(Context &ctx){
-        return {ctx.ty.get_int(), std::make_unique<ir::Imm>(value)};
-    }
-    Float::Float(pos::Range pos, double value):
-        Expr(std::move(pos)),
-        value(value) {}
-    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> Float::translate(Context &ctx){
-        return {ctx.ty.get_float(), std::make_unique<ir::Imm>(value)};
-    }
-    String::String(pos::Range pos, std::string value):
-        Expr(std::move(pos)),
-        value(value) {}
-    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> String::translate(Context &ctx){
-    }
-    Call::Call(pos::Range pos, std::unique_ptr<Expr> func, std::vector<std::unique_ptr<Expr>> args):
-        Expr(std::move(pos)),
-        func(std::move(func)),
-        args(std::move(args)) {}
-    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> Call::translate(Context &ctx){
-        std::size_t num_args = args.size();
-        std::vector<std::reference_wrapper<const type::Type>> args_type;
-        std::vector<std::unique_ptr<ir::Expr>> args_expr;
-        args_type.reserve(num_args);
-        args_expr.reserve(num_args);
-        for(auto &arg : args){
-            auto [type, expr] = arg->translate(ctx);
-            args_type.push_back(type);
-            args_expr.push_back(std::move(expr));
+    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> Identifier::translate(Context &ctx, bool lvalue){
+        if(lvalue){
+            auto it_local = ctx.locals.find(name);
+            if(it_local != ctx.locals.end()){
+                return {it_local->second.first.get(), std::make_unique<ir::Local>(it_local->second.second)};
+            }
+            auto it_global = ctx.globals.find(name);
+            if(it_global != ctx.globals.end()){
+                return {it_global->second.first.get(), std::make_unique<ir::Imm>(ir::GlobalAddr(it_global->second.second))};
+            }
+            auto it_func = ctx.funcs.find(name);
+            if(it_func != ctx.funcs.end()){
+                TODO;
+            }
+            throw error::make<error::UndefinedVariable>(get_pos().clone());
+        }else{
+            auto [ty, addr] = translate(ctx, true);
+            std::vector<std::unique_ptr<ir::Expr>> args;
+            args.push_back(std::move(addr));
+            return {ty, std::make_unique<ir::Call>(std::make_unique<ir::Imm>(ctx.deref), std::move(args))};
         }
-        auto [func_type, func_expr] = func->translate_func(ctx, args_type);
-        return {func_type.get_ret(), std::make_unique<ir::Call>(std::move(func_expr), std::move(args_expr))};
     }
-    OperatorExpr::OperatorExpr(pos::Range pos, Operator op):
-        Expr(std::move(pos)),
-        op(op) {}
-    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> OperatorExpr::translate(Context &ctx){
-    }
-    std::pair<const type::Func &, std::unique_ptr<ir::Expr>> OperatorExpr::translate_func(Context &ctx, std::vector<std::reference_wrapper<const type::Type>> expected_args){
+    std::pair<const type::Func &, std::unique_ptr<ir::Expr>> resolve_overload(const std::vector<Context::Func> &candidates, const std::vector<std::reference_wrapper<const type::Type>> &expected_args){
         std::size_t expected_num_args = expected_args.size();
-        for(auto &[ty, func] : ctx.ops[op]){
+        for(auto &[ty, func] : candidates){
             auto &args = ty.get().get_args();
             if(args.size() != expected_num_args) continue;
             bool is_matched = true;
@@ -88,7 +80,58 @@ namespace ast {
                 return {ty, std::make_unique<ir::Imm>(func)};
             }
         }
-        TODO;
+    }
+    std::pair<const type::Func &, std::unique_ptr<ir::Expr>> Identifier::translate_func(Context &ctx, const std::vector<std::reference_wrapper<const type::Type>> &expected_args){
+        auto it_func = ctx.funcs.find(name);
+        if(it_func == ctx.funcs.end()) TODO;
+        return resolve_overload(it_func->second, expected_args);
+    }
+    Int::Int(pos::Range pos, std::int32_t value):
+        Expr(std::move(pos)),
+        value(value) {}
+    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> Int::translate(Context &ctx, bool lvalue){
+        if(lvalue) TODO;
+        return {ctx.ty.get_int(), std::make_unique<ir::Imm>(value)};
+    }
+    Float::Float(pos::Range pos, double value):
+        Expr(std::move(pos)),
+        value(value) {}
+    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> Float::translate(Context &ctx, bool lvalue){
+        if(lvalue) TODO;
+        return {ctx.ty.get_float(), std::make_unique<ir::Imm>(value)};
+    }
+    String::String(pos::Range pos, std::string value):
+        Expr(std::move(pos)),
+        value(value) {}
+    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> String::translate(Context &ctx, bool lvalue){
+        if(lvalue) TODO;
+        return {ctx.ty.get_str(), std::make_unique<ir::Imm>(value)};
+    }
+    Call::Call(pos::Range pos, std::unique_ptr<Expr> func, std::vector<std::unique_ptr<Expr>> args):
+        Expr(std::move(pos)),
+        func(std::move(func)),
+        args(std::move(args)) {}
+    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> Call::translate(Context &ctx, bool lvalue){
+        std::size_t num_args = args.size();
+        std::vector<std::reference_wrapper<const type::Type>> args_type;
+        std::vector<std::unique_ptr<ir::Expr>> args_expr;
+        args_type.reserve(num_args);
+        args_expr.reserve(num_args);
+        for(auto &arg : args){
+            auto [type, expr] = arg->translate(ctx, false);
+            args_type.push_back(type);
+            args_expr.push_back(std::move(expr));
+        }
+        auto [func_type, func_expr] = func->translate_func(ctx, args_type);
+        return {func_type.get_ret(), std::make_unique<ir::Call>(std::move(func_expr), std::move(args_expr))};
+    }
+    OperatorExpr::OperatorExpr(pos::Range pos, Operator op):
+        Expr(std::move(pos)),
+        op(op) {}
+    std::pair<const type::Type &, std::unique_ptr<ir::Expr>> OperatorExpr::translate(Context &ctx, bool){
+    }
+    std::pair<const type::Func &, std::unique_ptr<ir::Expr>> OperatorExpr::translate_func(Context &ctx, const std::vector<std::reference_wrapper<const type::Type>> &expected_args){
+        return resolve_overload(ctx.ops[op], expected_args);
     }
 
     Type::Type(pos::Range pos):
@@ -100,6 +143,17 @@ namespace ast {
     TypeName::TypeName(pos::Range pos, std::string_view name):
         Type(std::move(pos)),
         name(name) {}
+    const type::Type &TypeName::get(Context &ctx){
+        if(name == "int"){
+            return ctx.ty.get_int();
+        }else if(name == "bool"){
+            return ctx.ty.get_bool();
+        }else if(name == "float"){
+            return ctx.ty.get_float();
+        }else if(name == "str"){
+            return ctx.ty.get_str();
+        }
+    }
 
     Pat::Pat(pos::Range pos):
         pos(std::move(pos)) {}
@@ -117,14 +171,18 @@ namespace ast {
     const pos::Range &Item::get_pos() const {
         return pos;
     }
+
     Stmt::Stmt(pos::Range pos):
         Item(std::move(pos)) {}
     Stmt::~Stmt() = default;
     void Stmt::run(Context &ctx, ir::Env &env){
-        auto tmp = std::make_shared<ir::FuncDef>();
+        // これローカル変数 ir::FuncDef tmp; だと何故かダメっぽい？
+        auto tmp = std::make_unique<ir::FuncDef>();
         tmp->entry = translate(ctx, nullptr, tmp->num_locals);
-        ir::print(tmp->invoke(env, {}));
+        // ir::debug_print(*tmp->entry, 0);
+        tmp->invoke(env, {});
     }
+
     /**
      * @brief コンストラクタ．
      * @param pos 位置．
@@ -139,6 +197,39 @@ namespace ast {
     Block::Block(pos::Range pos, std::vector<std::unique_ptr<Stmt>> stmts):
         Stmt(std::move(pos)),
         stmts(std::move(stmts)) {}
+    std::shared_ptr<ir::Stmt> Block::translate(Context &ctx, std::shared_ptr<ir::Stmt> end, std::size_t &num_locals){
+        return translate_rec(ctx, end, num_locals, 0);
+    }
+    std::shared_ptr<ir::Stmt> Block::translate_rec(Context &ctx, std::shared_ptr<ir::Stmt> end, std::size_t &num_locals, std::size_t stmt){
+        if(stmt == stmts.size()){
+            return end;
+        }
+        auto decl = dynamic_cast<DeclLocal *>(stmts[stmt].get());
+        std::string_view name;
+        std::optional<Context::Local> prev;
+        if(decl){
+            auto [pat, type] = decl->get_prototype(ctx, num_locals);
+            name = dynamic_cast<ast::IdPat &>(pat).name;
+            auto it = ctx.locals.find(name);
+            if(it == ctx.locals.end()){
+                ctx.locals.emplace(name, std::make_pair(std::cref(type), num_locals));
+            }else{
+                prev = it->second;
+                it->second = std::make_pair(std::cref(type), num_locals);
+            }
+            num_locals++;
+        }
+        auto next = translate_rec(ctx, end, num_locals, stmt + 1);
+        if(decl){
+            auto it = ctx.locals.find(name);
+            if(prev){
+                it->second = prev.value();
+            }else{
+                ctx.locals.erase(it);
+            }
+        }
+        return stmts[stmt]->translate(ctx, next, num_locals);
+    }
     If::If(pos::Range pos, std::unique_ptr<Expr> cond, std::unique_ptr<Stmt> stmt_true, std::unique_ptr<Stmt> stmt_false):
         Stmt(std::move(pos)),
         cond(std::move(cond)),
@@ -158,16 +249,72 @@ namespace ast {
     /**
      * @brief コンストラクタ．
      * @param pos 位置．
+     * @param lhs 左辺．
+     * @param type 型．rhs が nullptr でなければ， type は nullptr でもよい．
+     * @param rhs 右辺．type が nullptr でなければ， rhs は nullptr でもよい．
+     */
+    DeclLocal::DeclLocal(pos::Range pos, std::unique_ptr<Pat> lhs, std::unique_ptr<Type> type, std::unique_ptr<Expr> rhs):
+        Stmt(std::move(pos)),
+        lhs(std::move(lhs)),
+        type(std::move(type)),
+        rhs(std::move(rhs)) {}
+    std::pair<Pat &, const type::Type &> DeclLocal::get_prototype(Context &ctx, std::size_t idx){
+        index = idx;
+        auto res = rhs->translate(ctx);
+        translated_rhs = std::move(res.second);
+        return {*lhs, type ? type->get(ctx) : res.first};
+    }
+    std::shared_ptr<ir::Stmt> DeclLocal::translate(Context &ctx, std::shared_ptr<ir::Stmt> end, std::size_t &num_locals){
+        // 行うのは代入のみ．
+        std::vector<std::unique_ptr<ir::Expr>> args(2);
+        args[0] = std::make_unique<ir::Local>(index);
+        args[1] = std::move(translated_rhs);
+        return std::make_shared<ir::ExprStmt>(
+            std::make_unique<ir::Call>(
+                std::make_unique<ir::Imm>(ctx.assign),
+                std::move(args)
+            ),
+            end
+        );
+    }
+    /**
+     * @brief コンストラクタ．
+     * @param pos 位置．
      * @param left 左辺．
      * @param type 型．right が nullptr でなければ， type は nullptr でもよい．
      * @param right 右辺．type が nullptr でなければ， right は nullptr でもよい．
      */
-    Decl::Decl(pos::Range pos, std::unique_ptr<Pat> left, std::unique_ptr<Type> type, std::unique_ptr<Expr> right):
-        Stmt(std::move(pos)),
+    DeclGlobal::DeclGlobal(pos::Range pos, std::unique_ptr<Pat> left, std::unique_ptr<Type> type, std::unique_ptr<Expr> right):
+        Item(std::move(pos)),
         left(std::move(left)),
         type(std::move(type)),
         right(std::move(right)) {}
-    std::shared_ptr<ir::Stmt> Decl::translate(Context &, std::shared_ptr<ir::Stmt>, std::size_t &){}
+    void DeclGlobal::run(Context &ctx, ir::Env &env){
+        // グローバル変数の宣言
+        // シャドーイングを許可する場合，ctx.globals と env.global のサイズは一致しない
+        auto name = dynamic_cast<IdPat &>(*left).name;
+        auto pos = env.global.size();
+        env.global.emplace_back();
+        const type::Type *ty = nullptr;
+        if(right){
+            auto tmp = std::make_unique<ir::FuncDef>();
+            std::vector<std::unique_ptr<ir::Expr>> args(2);
+            args[0] = std::make_unique<ir::Imm>(ir::GlobalAddr(pos));
+            auto right_expr = right->translate(ctx);
+            ty = &right_expr.first;
+            args[1] = std::move(right_expr.second);
+            tmp->entry = std::make_shared<ir::ExprStmt>(
+                std::make_unique<ir::Call>(
+                    std::make_unique<ir::Imm>(ctx.assign),
+                    std::move(args)
+                ),
+                nullptr
+            );
+            tmp->invoke(env, {});
+        }
+        if(!ty) ty = &type->get(ctx);
+        ctx.globals.insert_or_assign(name, std::make_pair(std::cref(*ty), pos));
+    }
 }
 
 #ifdef DEBUG
@@ -298,8 +445,14 @@ namespace ast {
         std::cout << indent(depth) << get_pos() << " return" << std::endl;
         if(expr) expr->debug_print(depth + 1);
     }
-    void Decl::debug_print(int depth) const {
-        std::cout << indent(depth) << get_pos() << " decl" << std::endl;
+    void DeclLocal::debug_print(int depth) const {
+        std::cout << indent(depth) << get_pos() << " declaration (local)" << std::endl;
+        lhs->debug_print(depth + 1);
+        if(type) type->debug_print(depth + 1);
+        if(rhs) rhs->debug_print(depth + 1);
+    }
+    void DeclGlobal::debug_print(int depth) const {
+        std::cout << indent(depth) << get_pos() << " declaration (global)" << std::endl;
         left->debug_print(depth + 1);
         if(type) type->debug_print(depth + 1);
         if(right) right->debug_print(depth + 1);

@@ -202,6 +202,34 @@ namespace error {
         pos.eprint(log);
     }
 
+    TermNotType::TermNotType(pos::Range term):
+        term(std::move(term)) {}
+    void TermNotType::eprint(const std::deque<std::string> &log) const {
+        std::cerr << "expression cannot be recognized as a type" << std::endl;
+        term.eprint(log);
+    }
+
+    InvalidLHSOfDecl::InvalidLHSOfDecl(pos::Range term):
+        term(std::move(term)) {}
+    void InvalidLHSOfDecl::eprint(const std::deque<std::string> &log) const {
+        std::cerr << "invalid left hand side of declaration" << std::endl;
+        term.eprint(log);
+    }
+
+    DeclWithoutTypeOrRHS::DeclWithoutTypeOrRHS(pos::Range pos):
+        pos(std::move(pos)) {}
+    void DeclWithoutTypeOrRHS::eprint(const std::deque<std::string> &log) const {
+        std::cerr << "declaration requires either type or right hand side" << std::endl;
+        pos.eprint(log);
+    }
+
+    UndefinedVariable::UndefinedVariable(pos::Range pos):
+        pos(std::move(pos)) {}
+    void UndefinedVariable::eprint(const std::deque<std::string> &log) const {
+        std::cerr << "undefined variable at " << pos << std::endl;
+        pos.eprint(log);
+    }
+
     Unimplemented::Unimplemented(const char *file, unsigned line):
         file(file),
         line(line) {}

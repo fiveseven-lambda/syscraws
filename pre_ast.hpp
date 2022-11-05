@@ -28,7 +28,6 @@ namespace pre_ast {
     };
 
     struct State {
-        bool toplevel;
         State();
     };
 
@@ -42,7 +41,8 @@ namespace pre_ast {
         virtual std::unique_ptr<ast::Expr> to_expr() = 0;
         virtual std::unique_ptr<ast::Type> to_type();
         virtual std::unique_ptr<ast::Pat> to_pat();
-        virtual std::unique_ptr<ast::Stmt> to_stmt(pos::Range, bool);
+        virtual std::unique_ptr<ast::Stmt> to_stmt(pos::Range);
+        virtual std::unique_ptr<ast::Item> to_item(pos::Range);
 #ifdef DEBUG
         virtual void debug_print(int) const = 0;
 #endif
@@ -208,6 +208,9 @@ namespace pre_ast {
         ForwardShiftAssign, ///< 先送り代入
         BackwardShiftAssign, ///< 巻戻し代入
     };
+
+    using DeclTriple = std::tuple<std::unique_ptr<Term>, std::unique_ptr<ast::Type>, std::unique_ptr<ast::Expr>>;
+
     /**
      * @brief 二項演算．
      */
@@ -218,7 +221,9 @@ namespace pre_ast {
     public:
         BinaryOperation(pos::Range, BinaryOperator, std::unique_ptr<Term>, std::unique_ptr<Term>);
         std::unique_ptr<ast::Expr> to_expr() override;
-        std::unique_ptr<ast::Stmt> to_stmt(pos::Range, bool) override;
+        std::optional<DeclTriple> to_decl_or_def();
+        std::unique_ptr<ast::Stmt> to_stmt(pos::Range) override;
+        std::unique_ptr<ast::Item> to_item(pos::Range) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -247,7 +252,8 @@ namespace pre_ast {
     public:
         pos::Range pos;
         virtual ~Stmt();
-        virtual std::unique_ptr<ast::Stmt> to_ast(State = State()) = 0;
+        virtual std::unique_ptr<ast::Item> to_item();
+        virtual std::unique_ptr<ast::Stmt> to_stmt(State) = 0;
 #ifdef DEBUG
         virtual void debug_print(int) const = 0;
 #endif
@@ -260,7 +266,8 @@ namespace pre_ast {
         std::unique_ptr<Term> term;
     public:
         TermStmt(std::unique_ptr<Term>);
-        std::unique_ptr<ast::Stmt> to_ast(State) override;
+        std::unique_ptr<ast::Item> to_item() override;
+        std::unique_ptr<ast::Stmt> to_stmt(State) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -274,7 +281,7 @@ namespace pre_ast {
         std::vector<std::unique_ptr<Stmt>> stmts;
     public:
         Block(std::unique_ptr<Term>, std::vector<std::unique_ptr<Stmt>>);
-        std::unique_ptr<ast::Stmt> to_ast(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(State) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -288,7 +295,7 @@ namespace pre_ast {
         std::unique_ptr<Stmt> stmt_true, stmt_false;
     public:
         If(std::unique_ptr<Term>, std::unique_ptr<Stmt>, std::unique_ptr<Stmt>);
-        std::unique_ptr<ast::Stmt> to_ast(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(State) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -302,7 +309,7 @@ namespace pre_ast {
         std::unique_ptr<Stmt> stmt;
     public:
         While(std::unique_ptr<Term>, std::unique_ptr<Stmt>);
-        std::unique_ptr<ast::Stmt> to_ast(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(State) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -313,7 +320,7 @@ namespace pre_ast {
      */
     class Break : public Stmt {
     public:
-        std::unique_ptr<ast::Stmt> to_ast(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(State) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -324,7 +331,7 @@ namespace pre_ast {
      */
     class Continue : public Stmt {
     public:
-        std::unique_ptr<ast::Stmt> to_ast(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(State) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -337,7 +344,7 @@ namespace pre_ast {
         std::unique_ptr<Term> term;
     public:
         Return(std::unique_ptr<Term>);
-        std::unique_ptr<ast::Stmt> to_ast(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(State) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif

@@ -83,14 +83,15 @@ namespace pre_ast {
         term(std::move(term)) {}
 
     std::unique_ptr<ast::Type> Term::to_type(){
-        // 型を表せない Term に対して to_type() を呼び出したので，エラー
-        TODO;
+        throw error::make<error::TermNotType>(std::move(pos));
     }
     std::unique_ptr<ast::Pat> Term::to_pat(){
-        // パターンを表せない Term に対して to_pat() を呼び出したので，エラー
-        TODO;
+        return nullptr;
     }
-    std::unique_ptr<ast::Stmt> Term::to_stmt(pos::Range pos_stmt, bool){
+    std::unique_ptr<ast::Item> Term::to_item(pos::Range pos_stmt){
+        return to_stmt(std::move(pos_stmt));
+    }
+    std::unique_ptr<ast::Stmt> Term::to_stmt(pos::Range pos_stmt){
         return std::make_unique<ast::ExprStmt>(std::move(pos_stmt), to_expr());
     }
     std::unique_ptr<ast::Expr> Identifier::to_expr(){
@@ -235,33 +236,34 @@ namespace pre_ast {
         args.push_back(right->to_expr());
         return std::make_unique<ast::Call>(std::move(pos), std::move(op_expr), std::move(args));
     }
-    std::unique_ptr<ast::Stmt> BinaryOperation::to_stmt(pos::Range pos_stmt, bool toplevel){
+    std::optional<DeclTriple> BinaryOperation::to_decl_or_def(){
         if(op == BinaryOperator::Type){
-            // 右辺のない Decl，DefExpr
-            if(auto id = dynamic_cast<Identifier *>(left.get())){
-                // Decl
-                if(!right) TODO;
-                auto type = right->to_type();
-                auto left_pat = id->to_pat();
-                return std::make_unique<ast::Decl>(std::move(pos_stmt), std::move(left_pat), std::move(type), nullptr);
-            }else{
-                TODO;
-            }
+            if(!right) throw error::make<error::DeclWithoutTypeOrRHS>(std::move(pos));
+            return std::make_optional<DeclTriple>(std::move(left), right->to_type(), nullptr);
         }else if(op == BinaryOperator::Assign){
             auto lhs = dynamic_cast<BinaryOperation *>(left.get());
             if(lhs && lhs->op == BinaryOperator::Type){
-                // 右辺のある Decl，DefExpr
-                if(auto id = dynamic_cast<Identifier *>(lhs->left.get())){
-                    // Decl
-                    // いずれ a := b := 10; みたいなのも可能にしたい
-                    auto right_expr = right->to_expr();
-                    auto type = lhs->right ? lhs->right->to_type() : nullptr;
-                    auto left_pat = id->to_pat();
-                    return std::make_unique<ast::Decl>(std::move(pos_stmt), std::move(left_pat), std::move(type), std::move(right_expr));
-                }else{
-                    TODO;
-                }
+                auto type = lhs->right ? lhs->right->to_type() : nullptr;
+                return std::make_optional<DeclTriple>(std::move(lhs->left), std::move(type), right->to_expr());
             }
+        }
+        return std::nullopt;
+    }
+    std::unique_ptr<ast::Item> BinaryOperation::to_item(pos::Range pos_stmt){
+        if(auto decl_triple = to_decl_or_def()){
+            auto [lhs, type, rhs] = std::move(decl_triple.value());
+            auto pat = lhs->to_pat();
+            if(!pat) throw error::make<error::InvalidLHSOfDecl>(std::move(lhs->pos));
+            return std::make_unique<ast::DeclGlobal>(std::move(pos_stmt), std::move(pat), std::move(type), std::move(rhs));
+        }
+        return std::make_unique<ast::ExprStmt>(std::move(pos_stmt), to_expr());
+    }
+    std::unique_ptr<ast::Stmt> BinaryOperation::to_stmt(pos::Range pos_stmt){
+        if(auto decl_triple = to_decl_or_def()){
+            auto [lhs, type, rhs] = std::move(decl_triple.value());
+            auto pat = lhs->to_pat();
+            if(!pat) throw error::make<error::InvalidLHSOfDecl>(std::move(lhs->pos));
+            return std::make_unique<ast::DeclLocal>(std::move(pos_stmt), std::move(pat), std::move(type), std::move(rhs));
         }
         return std::make_unique<ast::ExprStmt>(std::move(pos_stmt), to_expr());
     }
@@ -295,17 +297,34 @@ namespace pre_ast {
         }
     }
 
-    State::State():
-        toplevel(false) {}
-    std::unique_ptr<ast::Stmt> TermStmt::to_ast(State state){
-        return term->to_stmt(std::move(pos), state.toplevel);
+    State::State() {}
+    std::unique_ptr<ast::Item> Stmt::to_item(){
+        return to_stmt(State());
     }
-    std::unique_ptr<ast::Stmt> Block::to_ast(State){}
-    std::unique_ptr<ast::Stmt> If::to_ast(State){}
-    std::unique_ptr<ast::Stmt> While::to_ast(State){}
-    std::unique_ptr<ast::Stmt> Break::to_ast(State){}
-    std::unique_ptr<ast::Stmt> Continue::to_ast(State){}
-    std::unique_ptr<ast::Stmt> Return::to_ast(State){}
+    std::unique_ptr<ast::Item> TermStmt::to_item(){
+        return term->to_item(std::move(pos));
+    }
+    std::unique_ptr<ast::Stmt> TermStmt::to_stmt(State){
+        return term->to_stmt(std::move(pos));
+    }
+    std::unique_ptr<ast::Stmt> Block::to_stmt(State state){
+        if(term){
+            // 関数定義
+        }else{
+            // ブロック
+            std::vector<std::unique_ptr<ast::Stmt>> stmts_ast;
+            stmts_ast.reserve(stmts.size());
+            for(auto &stmt : stmts){
+                stmts_ast.push_back(stmt->to_stmt(state));
+            }
+            return std::make_unique<ast::Block>(std::move(pos), std::move(stmts_ast));
+        }
+    }
+    std::unique_ptr<ast::Stmt> If::to_stmt(State){}
+    std::unique_ptr<ast::Stmt> While::to_stmt(State){}
+    std::unique_ptr<ast::Stmt> Break::to_stmt(State){}
+    std::unique_ptr<ast::Stmt> Continue::to_stmt(State){}
+    std::unique_ptr<ast::Stmt> Return::to_stmt(State){}
 }
 
 #ifdef DEBUG

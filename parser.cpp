@@ -191,6 +191,15 @@ std::unique_ptr<token::Token> consume(lexer::Lexer &lexer, bool (token::Token::*
     return token;
 }
 
+/**
+ * @brief pre_ast::Stmt をパースする．
+ *
+ * @retval nullptr 先頭のトークンが文の開始でなかった（EOF 含む）．
+ * @throws error::UnexpectedEOFAfterKeyword `if`，`while`，`break`，`continue` の直後に EOF が続いた．
+ * @throws error::UnexpectedTokenAfterKeyword `if`，`while`，`break`，`continue` の直後に予期せぬトークンが続いた．
+ * @throws error::EOFAtEndOfStmt 文の終わりにセミコロンがなく，代わりに EOF が続いた．
+ * @throws error::UnexpectedTokenAtEndOfStmt 文の終わりににセミコロンがなく，代わりに予期せぬトークンが続いた．
+ */
 static std::unique_ptr<pre_ast::Stmt> parse_stmt(lexer::Lexer &lexer){
     auto &token_ref = lexer.peek();
     if(!token_ref){
@@ -269,7 +278,7 @@ static std::unique_ptr<pre_ast::Stmt> parse_stmt(lexer::Lexer &lexer){
             ret->pos = pos + semicolon->pos;
             return ret;
         }else{
-            throw error::make<error::UnexpectedTokenAtBeginningOfStmt>(std::move(lexer.next()->pos));
+            return nullptr;
         }
     }
     auto term = parse_term(lexer);

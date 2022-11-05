@@ -79,10 +79,12 @@ namespace ast {
         using Global = std::pair<std::reference_wrapper<const type::Type>, std::size_t>;
         std::unordered_map<std::string_view, Global> globals;
         using Local = std::pair<std::reference_wrapper<const type::Type>, std::size_t>;
-        std::unordered_map<std::string_view, std::vector<Local>> locals;
+        std::unordered_map<std::string_view, Local> locals;
         using Func = std::pair<std::reference_wrapper<const type::Func>, std::shared_ptr<ir::Func>>;
         std::unordered_map<std::string_view, std::vector<Func>> funcs;
         std::vector<std::vector<Func>> ops;
+        std::shared_ptr<ir::Deref> deref;
+        std::shared_ptr<ir::Assign> assign;
         Context();
     };
 
@@ -95,8 +97,8 @@ namespace ast {
         Expr(pos::Range);
         virtual ~Expr();
         const pos::Range &get_pos() const;
-        virtual std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &) = 0;
-        virtual std::pair<const type::Func &, std::unique_ptr<ir::Expr>> translate_func(Context &, std::vector<std::reference_wrapper<const type::Type>>);
+        virtual std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &, bool = false) = 0;
+        virtual std::pair<const type::Func &, std::unique_ptr<ir::Expr>> translate_func(Context &, const std::vector<std::reference_wrapper<const type::Type>> &);
 #ifdef DEBUG
         virtual void debug_print(int) const = 0;
 #endif
@@ -109,7 +111,8 @@ namespace ast {
         std::string_view name;
     public:
         Identifier(pos::Range, std::string_view);
-        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &) override;
+        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &, bool) override;
+        std::pair<const type::Func &, std::unique_ptr<ir::Expr>> translate_func(Context &, const std::vector<std::reference_wrapper<const type::Type>> &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -122,7 +125,7 @@ namespace ast {
         std::int32_t value;
     public:
         Int(pos::Range, std::int32_t);
-        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &) override;
+        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &, bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -135,7 +138,7 @@ namespace ast {
         double value;
     public:
         Float(pos::Range, double);
-        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &) override;
+        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &, bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -148,7 +151,7 @@ namespace ast {
         std::string value;
     public:
         String(pos::Range, std::string);
-        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &) override;
+        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &, bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -162,7 +165,7 @@ namespace ast {
         std::vector<std::unique_ptr<Expr>> args;
     public:
         Call(pos::Range, std::unique_ptr<Expr>, std::vector<std::unique_ptr<Expr>>);
-        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &) override;
+        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &, bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -175,8 +178,8 @@ namespace ast {
         Operator op;
     public:
         OperatorExpr(pos::Range, Operator);
-        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &) override;
-        std::pair<const type::Func &, std::unique_ptr<ir::Expr>> translate_func(Context &, std::vector<std::reference_wrapper<const type::Type>>) override;
+        std::pair<const type::Type &, std::unique_ptr<ir::Expr>> translate(Context &, bool) override;
+        std::pair<const type::Func &, std::unique_ptr<ir::Expr>> translate_func(Context &, const std::vector<std::reference_wrapper<const type::Type>> &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -191,6 +194,7 @@ namespace ast {
         Type(pos::Range);
         virtual ~Type();
         const pos::Range &get_pos() const;
+        virtual const type::Type &get(Context &) = 0;
 #ifdef DEBUG
         virtual void debug_print(int) const = 0;
 #endif
@@ -203,6 +207,7 @@ namespace ast {
         std::string_view name;
     public:
         TypeName(pos::Range, std::string_view);
+        const type::Type &get(Context &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -226,23 +231,23 @@ namespace ast {
      * @brief 単一の変数名からなるパターン．
      */
     class IdPat : public Pat {
-        std::string_view name;
     public:
+        std::string_view name;
         IdPat(pos::Range, std::string_view);
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
     };
 
-    /**
-     * @brief 全てのトップレベルアイテムの基底クラス．
+    /** 
+     * @brief 全てのトップレベルアイテムの基底クラス
      */
     class Item {
         pos::Range pos;
     public:
         Item(pos::Range);
-        virtual ~Item();
         const pos::Range &get_pos() const;
+        virtual ~Item();
         virtual void run(Context &, ir::Env &) = 0;
 #ifdef DEBUG
         virtual void debug_print(int) const = 0;
@@ -283,6 +288,8 @@ namespace ast {
         std::vector<std::unique_ptr<Stmt>> stmts;
     public:
         Block(pos::Range, std::vector<std::unique_ptr<Stmt>>);
+        std::shared_ptr<ir::Stmt> translate(Context &, std::shared_ptr<ir::Stmt>, std::size_t &) override;
+        std::shared_ptr<ir::Stmt> translate_rec(Context &, std::shared_ptr<ir::Stmt>, std::size_t &, std::size_t);
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -349,19 +356,36 @@ namespace ast {
     };
 
     /**
-     * @brief 変数の定義
+     * @brief ローカル変数の定義
+     */
+    class DeclLocal : public Stmt {
+        std::unique_ptr<Pat> lhs;
+        std::unique_ptr<Type> type;
+        std::unique_ptr<Expr> rhs;
+        std::unique_ptr<ir::Expr> translated_rhs;
+        std::size_t index;
+    public:
+        DeclLocal(pos::Range, std::unique_ptr<Pat>, std::unique_ptr<Type>, std::unique_ptr<Expr>);
+        std::pair<Pat &, const type::Type &> get_prototype(Context &, std::size_t);
+        std::shared_ptr<ir::Stmt> translate(Context &, std::shared_ptr<ir::Stmt>, std::size_t &) override;
+#ifdef DEBUG
+        void debug_print(int) const override;
+#endif
+    };
+    /**
+     * @brief グローバル変数の定義
      *
      * 今のところ right は std::unique_ptr<Expr> だけど，
      * `a := b := c;` みたいなのも可能にしたい
      * （その場合 `b := c` のもつ位置情報にセミコロンを含めないことに注意）．
      */
-    class Decl : public Stmt {
+    class DeclGlobal : public Item {
         std::unique_ptr<Pat> left;
         std::unique_ptr<Type> type;
         std::unique_ptr<Expr> right;
     public:
-        Decl(pos::Range, std::unique_ptr<Pat>, std::unique_ptr<Type>, std::unique_ptr<Expr>);
-        std::shared_ptr<ir::Stmt> translate(Context &, std::shared_ptr<ir::Stmt>, std::size_t &) override;
+        DeclGlobal(pos::Range, std::unique_ptr<Pat>, std::unique_ptr<Type>, std::unique_ptr<Expr>);
+        void run(Context &, ir::Env &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
