@@ -27,10 +27,6 @@ namespace pre_ast {
         Square,
     };
 
-    struct State {
-        State();
-    };
-
     /**
      * @brief 全ての式の基底クラス．
      */
@@ -253,7 +249,7 @@ namespace pre_ast {
         pos::Range pos;
         virtual ~Stmt();
         virtual std::unique_ptr<ast::Item> to_item();
-        virtual std::unique_ptr<ast::Stmt> to_stmt(State) = 0;
+        virtual std::unique_ptr<ast::Stmt> to_stmt(bool) = 0;
 #ifdef DEBUG
         virtual void debug_print(int) const = 0;
 #endif
@@ -267,7 +263,7 @@ namespace pre_ast {
     public:
         TermStmt(std::unique_ptr<Term>);
         std::unique_ptr<ast::Item> to_item() override;
-        std::unique_ptr<ast::Stmt> to_stmt(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -281,7 +277,7 @@ namespace pre_ast {
         std::vector<std::unique_ptr<Stmt>> stmts;
     public:
         Block(std::unique_ptr<Term>, std::vector<std::unique_ptr<Stmt>>);
-        std::unique_ptr<ast::Stmt> to_stmt(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -295,7 +291,7 @@ namespace pre_ast {
         std::unique_ptr<Stmt> stmt_true, stmt_false;
     public:
         If(std::unique_ptr<Term>, std::unique_ptr<Stmt>, std::unique_ptr<Stmt>);
-        std::unique_ptr<ast::Stmt> to_stmt(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -309,7 +305,7 @@ namespace pre_ast {
         std::unique_ptr<Stmt> stmt;
     public:
         While(std::unique_ptr<Term>, std::unique_ptr<Stmt>);
-        std::unique_ptr<ast::Stmt> to_stmt(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -320,7 +316,7 @@ namespace pre_ast {
      */
     class Break : public Stmt {
     public:
-        std::unique_ptr<ast::Stmt> to_stmt(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -331,7 +327,7 @@ namespace pre_ast {
      */
     class Continue : public Stmt {
     public:
-        std::unique_ptr<ast::Stmt> to_stmt(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -344,7 +340,7 @@ namespace pre_ast {
         std::unique_ptr<Term> term;
     public:
         Return(std::unique_ptr<Term>);
-        std::unique_ptr<ast::Stmt> to_stmt(State) override;
+        std::unique_ptr<ast::Stmt> to_stmt(bool) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif

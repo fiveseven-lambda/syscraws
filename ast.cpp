@@ -65,7 +65,7 @@ namespace ast {
             return {ty, std::make_unique<ir::Call>(std::make_unique<ir::Imm>(ctx.deref), std::move(args))};
         }
     }
-    std::pair<const type::Func &, std::unique_ptr<ir::Expr>> resolve_overload(const std::vector<Context::Func> &candidates, const std::vector<std::reference_wrapper<const type::Type>> &expected_args){
+    static std::pair<const type::Func &, std::unique_ptr<ir::Expr>> resolve_overload(const std::vector<Context::Func> &candidates, const std::vector<std::reference_wrapper<const type::Type>> &expected_args){
         std::size_t expected_num_args = expected_args.size();
         for(auto &[ty, func] : candidates){
             auto &args = ty.get().get_args();
@@ -178,7 +178,7 @@ namespace ast {
     void Stmt::run(Context &ctx, ir::Env &env){
         // これローカル変数 ir::FuncDef tmp; だと何故かダメっぽい？
         auto tmp = std::make_unique<ir::FuncDef>();
-        tmp->entry = translate(ctx, nullptr, tmp->num_locals);
+        tmp->entry = translate(ctx, Dests(), tmp->num_locals);
         // ir::debug_print(*tmp->entry, 0);
         tmp->invoke(env, {});
     }
@@ -191,18 +191,18 @@ namespace ast {
     ExprStmt::ExprStmt(pos::Range pos, std::unique_ptr<Expr> expr):
         Stmt(std::move(pos)),
         expr(std::move(expr)) {}
-    std::shared_ptr<ir::Stmt> ExprStmt::translate(Context &ctx, std::shared_ptr<ir::Stmt> end, std::size_t &){
-        return std::make_shared<ir::ExprStmt>(expr->translate(ctx).second, end);
+    std::shared_ptr<ir::Stmt> ExprStmt::translate(Context &ctx, Dests dests, std::size_t &){
+        return std::make_shared<ir::ExprStmt>(expr->translate(ctx).second, dests.next);
     }
     Block::Block(pos::Range pos, std::vector<std::unique_ptr<Stmt>> stmts):
         Stmt(std::move(pos)),
         stmts(std::move(stmts)) {}
-    std::shared_ptr<ir::Stmt> Block::translate(Context &ctx, std::shared_ptr<ir::Stmt> end, std::size_t &num_locals){
-        return translate_rec(ctx, end, num_locals, 0);
+    std::shared_ptr<ir::Stmt> Block::translate(Context &ctx, Dests dests, std::size_t &num_locals){
+        return translate_rec(ctx, dests, num_locals, 0);
     }
-    std::shared_ptr<ir::Stmt> Block::translate_rec(Context &ctx, std::shared_ptr<ir::Stmt> end, std::size_t &num_locals, std::size_t stmt){
+    std::shared_ptr<ir::Stmt> Block::translate_rec(Context &ctx, Dests dests, std::size_t &num_locals, std::size_t stmt){
         if(stmt == stmts.size()){
-            return end;
+            return dests.next;
         }
         auto decl = dynamic_cast<DeclLocal *>(stmts[stmt].get());
         std::string_view name;
@@ -219,7 +219,7 @@ namespace ast {
             }
             num_locals++;
         }
-        auto next = translate_rec(ctx, end, num_locals, stmt + 1);
+        auto next = translate_rec(ctx, dests, num_locals, stmt + 1);
         if(decl){
             auto it = ctx.locals.find(name);
             if(prev){
@@ -228,21 +228,41 @@ namespace ast {
                 ctx.locals.erase(it);
             }
         }
-        return stmts[stmt]->translate(ctx, next, num_locals);
+        return stmts[stmt]->translate(ctx, dests, num_locals);
     }
     If::If(pos::Range pos, std::unique_ptr<Expr> cond, std::unique_ptr<Stmt> stmt_true, std::unique_ptr<Stmt> stmt_false):
         Stmt(std::move(pos)),
         cond(std::move(cond)),
         stmt_true(std::move(stmt_true)),
         stmt_false(std::move(stmt_false)) {}
+    std::shared_ptr<ir::Stmt> If::translate(Context &ctx, Dests dests, std::size_t &num_locals){
+        auto cond_ir = cond->translate(ctx).second;
+        auto next_true = stmt_true->translate(ctx, dests, num_locals);
+        auto next_false = stmt_false ? stmt_false->translate(ctx, dests, num_locals) : dests.next;
+        return std::make_shared<ir::BrStmt>(std::move(cond_ir), next_true, next_false);
+    }
     While::While(pos::Range pos, std::unique_ptr<Expr> cond, std::unique_ptr<Stmt> stmt):
         Stmt(std::move(pos)),
         cond(std::move(cond)),
         stmt(std::move(stmt)) {}
+    std::shared_ptr<ir::Stmt> While::translate(Context &ctx, Dests dests, std::size_t &num_locals){
+        auto cond_ir = cond->translate(ctx).second;
+        auto ret = std::make_shared<ir::BrStmt>(std::move(cond_ir), nullptr, dests.next);
+        dests.brk = dests.next;
+        dests.ctn = ret;
+        ret->next_true = stmt->translate(ctx, dests, num_locals);
+        return ret;
+    }
     Break::Break(pos::Range pos):
         Stmt(std::move(pos)) {}
+    std::shared_ptr<ir::Stmt> Break::translate(Context &, Dests dests, std::size_t &){
+        return dests.brk;
+    }
     Continue::Continue(pos::Range pos):
         Stmt(std::move(pos)) {}
+    std::shared_ptr<ir::Stmt> Continue::translate(Context &, Dests dests, std::size_t &){
+        return dests.ctn;
+    }
     Return::Return(pos::Range pos, std::unique_ptr<Expr> expr):
         Stmt(std::move(pos)),
         expr(std::move(expr)) {}
@@ -264,7 +284,7 @@ namespace ast {
         translated_rhs = std::move(res.second);
         return {*lhs, type ? type->get(ctx) : res.first};
     }
-    std::shared_ptr<ir::Stmt> DeclLocal::translate(Context &ctx, std::shared_ptr<ir::Stmt> end, std::size_t &num_locals){
+    std::shared_ptr<ir::Stmt> DeclLocal::translate(Context &ctx, Dests dests, std::size_t &num_locals){
         // 行うのは代入のみ．
         std::vector<std::unique_ptr<ir::Expr>> args(2);
         args[0] = std::make_unique<ir::Local>(index);
@@ -274,7 +294,7 @@ namespace ast {
                 std::make_unique<ir::Imm>(ctx.assign),
                 std::move(args)
             ),
-            end
+            dests.next
         );
     }
     /**

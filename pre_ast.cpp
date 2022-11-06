@@ -297,17 +297,16 @@ namespace pre_ast {
         }
     }
 
-    State::State() {}
     std::unique_ptr<ast::Item> Stmt::to_item(){
-        return to_stmt(State());
+        return to_stmt(false);
     }
     std::unique_ptr<ast::Item> TermStmt::to_item(){
         return term->to_item(std::move(pos));
     }
-    std::unique_ptr<ast::Stmt> TermStmt::to_stmt(State){
+    std::unique_ptr<ast::Stmt> TermStmt::to_stmt(bool){
         return term->to_stmt(std::move(pos));
     }
-    std::unique_ptr<ast::Stmt> Block::to_stmt(State state){
+    std::unique_ptr<ast::Stmt> Block::to_stmt(bool loop){
         if(term){
             // 関数定義
         }else{
@@ -315,16 +314,29 @@ namespace pre_ast {
             std::vector<std::unique_ptr<ast::Stmt>> stmts_ast;
             stmts_ast.reserve(stmts.size());
             for(auto &stmt : stmts){
-                stmts_ast.push_back(stmt->to_stmt(state));
+                stmts_ast.push_back(stmt->to_stmt(loop));
             }
             return std::make_unique<ast::Block>(std::move(pos), std::move(stmts_ast));
         }
     }
-    std::unique_ptr<ast::Stmt> If::to_stmt(State){}
-    std::unique_ptr<ast::Stmt> While::to_stmt(State){}
-    std::unique_ptr<ast::Stmt> Break::to_stmt(State){}
-    std::unique_ptr<ast::Stmt> Continue::to_stmt(State){}
-    std::unique_ptr<ast::Stmt> Return::to_stmt(State){}
+    std::unique_ptr<ast::Stmt> If::to_stmt(bool loop){
+        auto ast_cond = cond->to_expr();
+        auto ast_stmt_true = stmt_true->to_stmt(loop);
+        auto ast_stmt_false = stmt_true ? stmt_true->to_stmt(loop) : nullptr;
+        return std::make_unique<ast::If>(std::move(pos), std::move(ast_cond), std::move(ast_stmt_true), std::move(ast_stmt_false));
+    }
+    std::unique_ptr<ast::Stmt> While::to_stmt(bool){
+        auto ast_cond = cond->to_expr();
+        auto ast_stmt = stmt->to_stmt(true);
+        return std::make_unique<ast::While>(std::move(pos), std::move(ast_cond), std::move(ast_stmt));
+    }
+    std::unique_ptr<ast::Stmt> Break::to_stmt(bool){
+        return std::make_unique<ast::Break>(std::move(pos));
+    }
+    std::unique_ptr<ast::Stmt> Continue::to_stmt(bool){
+        return std::make_unique<ast::Continue>(std::move(pos));
+    }
+    std::unique_ptr<ast::Stmt> Return::to_stmt(bool){}
 }
 
 #ifdef DEBUG

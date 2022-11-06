@@ -254,6 +254,10 @@ namespace ast {
 #endif
     };
 
+    struct Dests {
+        std::shared_ptr<ir::Stmt> next, brk, ctn;
+    };
+
     /**
      * @brief 全ての文の基底クラス
      */
@@ -262,7 +266,7 @@ namespace ast {
         Stmt(pos::Range);
         virtual ~Stmt() override;
         void run(Context &, ir::Env &) override;
-        virtual std::shared_ptr<ir::Stmt> translate(Context &, std::shared_ptr<ir::Stmt>, std::size_t &) = 0;
+        virtual std::shared_ptr<ir::Stmt> translate(Context &, Dests, std::size_t &) = 0;
 #ifdef DEBUG
         virtual void debug_print(int) const override = 0;
 #endif
@@ -275,7 +279,7 @@ namespace ast {
         std::unique_ptr<Expr> expr;
     public:
         ExprStmt(pos::Range, std::unique_ptr<Expr>);
-        std::shared_ptr<ir::Stmt> translate(Context &, std::shared_ptr<ir::Stmt>, std::size_t &) override;
+        std::shared_ptr<ir::Stmt> translate(Context &, Dests, std::size_t &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -288,8 +292,8 @@ namespace ast {
         std::vector<std::unique_ptr<Stmt>> stmts;
     public:
         Block(pos::Range, std::vector<std::unique_ptr<Stmt>>);
-        std::shared_ptr<ir::Stmt> translate(Context &, std::shared_ptr<ir::Stmt>, std::size_t &) override;
-        std::shared_ptr<ir::Stmt> translate_rec(Context &, std::shared_ptr<ir::Stmt>, std::size_t &, std::size_t);
+        std::shared_ptr<ir::Stmt> translate(Context &, Dests, std::size_t &) override;
+        std::shared_ptr<ir::Stmt> translate_rec(Context &, Dests, std::size_t &, std::size_t);
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -304,6 +308,7 @@ namespace ast {
         std::unique_ptr<Stmt> stmt_false;
     public:
         If(pos::Range, std::unique_ptr<Expr>, std::unique_ptr<Stmt>, std::unique_ptr<Stmt>);
+        std::shared_ptr<ir::Stmt> translate(Context &, Dests, std::size_t &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -317,6 +322,7 @@ namespace ast {
         std::unique_ptr<Stmt> stmt;
     public:
         While(pos::Range, std::unique_ptr<Expr>, std::unique_ptr<Stmt>);
+        std::shared_ptr<ir::Stmt> translate(Context &, Dests, std::size_t &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -328,6 +334,7 @@ namespace ast {
     class Break : public Stmt {
     public:
         Break(pos::Range);
+        std::shared_ptr<ir::Stmt> translate(Context &, Dests, std::size_t &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -337,7 +344,9 @@ namespace ast {
      * @brief continue 文
      */
     class Continue : public Stmt {
+    public:
         Continue(pos::Range);
+        std::shared_ptr<ir::Stmt> translate(Context &, Dests, std::size_t &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
@@ -367,7 +376,7 @@ namespace ast {
     public:
         DeclLocal(pos::Range, std::unique_ptr<Pat>, std::unique_ptr<Type>, std::unique_ptr<Expr>);
         std::pair<Pat &, const type::Type &> get_prototype(Context &, std::size_t);
-        std::shared_ptr<ir::Stmt> translate(Context &, std::shared_ptr<ir::Stmt>, std::size_t &) override;
+        std::shared_ptr<ir::Stmt> translate(Context &, Dests, std::size_t &) override;
 #ifdef DEBUG
         void debug_print(int) const override;
 #endif
