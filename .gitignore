@@ -1,4 +1,1 @@
-syscraws
-*.o
-*.d
-html
+/target
