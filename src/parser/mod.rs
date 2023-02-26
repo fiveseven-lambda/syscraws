@@ -13,7 +13,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Syscraws. If not, see <https://www.gnu.org/licenses/>. 
+ * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
 use crate::pre_ast::{BinaryOperator, BracketKind, PStmt, PTerm, Stmt, Term, UnaryOperator};
@@ -24,17 +24,9 @@ use std::iter;
 mod token_seq;
 use token_seq::TokenSeq;
 
-pub fn parse(input: &str, tokens: &[Token]) -> Result<PStmt, Error> {
+pub fn parse(input: &str, tokens: &[Token]) -> Result<Vec<PStmt>, Error> {
     let mut tokens = TokenSeq::new(tokens);
-    let stmts =
-        iter::from_fn(|| parse_stmt(input, &mut tokens).transpose()).collect::<Result<_, _>>()?;
-    Ok(PStmt::new(
-        Range::new(0, tokens.prev_end()),
-        Stmt::Block {
-            antecedent: None,
-            stmts,
-        },
-    ))
+    iter::from_fn(|| parse_stmt(input, &mut tokens).transpose()).collect()
 }
 
 pub fn parse_stmt(input: &str, tokens: &mut TokenSeq) -> Result<Option<PStmt>, Error> {

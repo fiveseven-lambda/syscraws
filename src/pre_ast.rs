@@ -13,7 +13,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Syscraws. If not, see <https://www.gnu.org/licenses/>. 
+ * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
 use crate::ast;
@@ -100,12 +100,12 @@ impl PTerm {
     pub fn pos(self) -> Range {
         self.pos
     }
-    pub fn into_expr(self, errors: &mut Vec<Error>) -> Result<ast::PExpr, ()> {
+    fn into_expr(self, errors: &mut Vec<Error>) -> Result<ast::PExprWithSymbol, ()> {
         let expr = match self.term {
-            Term::Identifier(name) => ast::Expr::Identifier(name),
-            Term::Integer(value) => ast::Expr::Integer(value),
-            Term::Float(value) => ast::Expr::Float(value),
-            Term::String(value) => ast::Expr::String(value),
+            Term::Identifier(name) => ast::ExprWithSymbol::Identifier(name),
+            Term::Integer(value) => ast::ExprWithSymbol::Integer(value),
+            Term::Float(value) => ast::ExprWithSymbol::Float(value),
+            Term::String(value) => ast::ExprWithSymbol::String(value),
             Term::Assign {
                 pos_equal,
                 left_hand_side,
@@ -135,7 +135,7 @@ impl PTerm {
                                     }
                                 }
                             })?;
-                        ast::Expr::Decl(name, Some(right_hand_side?.into()))
+                        ast::ExprWithSymbol::Decl(name, Some(right_hand_side?.into()))
                     }
                     Term::BinaryOperation {
                         right_operand: None,
@@ -167,16 +167,23 @@ impl PTerm {
                                 errors.push(Error::EmptyLeftOperand(pos_operator.clone()))
                             })
                             .and_then(|term| term.into_expr(errors));
-                        ast::Expr::Call(
-                            ast::PExpr::new(pos_operator, ast::Expr::Operator(operator?)).into(),
+                        ast::ExprWithSymbol::Call(
+                            ast::PExprWithSymbol::new(
+                                pos_operator,
+                                ast::ExprWithSymbol::Operator(operator?),
+                            )
+                            .into(),
                             vec![left_operand?, right_hand_side?],
                         )
                     }
                     _ => {
                         let left_hand_side = left_hand_side.into_expr(errors);
-                        ast::Expr::Call(
-                            ast::PExpr::new(pos_equal, ast::Expr::Operator(ast::Operator::Assign))
-                                .into(),
+                        ast::ExprWithSymbol::Call(
+                            ast::PExprWithSymbol::new(
+                                pos_equal,
+                                ast::ExprWithSymbol::Operator(ast::Operator::Assign),
+                            )
+                            .into(),
                             vec![left_hand_side?, right_hand_side?],
                         )
                     }
@@ -200,8 +207,12 @@ impl PTerm {
                 let operand = operand
                     .ok_or_else(|| errors.push(Error::EmptyUnaryOperand(pos_operator.clone())))
                     .and_then(|term| term.into_expr(errors));
-                ast::Expr::Call(
-                    ast::PExpr::new(pos_operator, ast::Expr::Operator(operator)).into(),
+                ast::ExprWithSymbol::Call(
+                    ast::PExprWithSymbol::new(
+                        pos_operator,
+                        ast::ExprWithSymbol::Operator(operator),
+                    )
+                    .into(),
                     vec![operand?],
                 )
             }
@@ -240,8 +251,12 @@ impl PTerm {
                 let right_operand = right_operand
                     .ok_or_else(|| errors.push(Error::EmptyRightOperand(pos_operator.clone())))
                     .and_then(|term| term.into_expr(errors));
-                ast::Expr::Call(
-                    ast::PExpr::new(pos_operator, ast::Expr::Operator(operator)).into(),
+                ast::ExprWithSymbol::Call(
+                    ast::PExprWithSymbol::new(
+                        pos_operator,
+                        ast::ExprWithSymbol::Operator(operator),
+                    )
+                    .into(),
                     vec![left_operand?, right_operand?],
                 )
             }
@@ -261,11 +276,11 @@ impl PTerm {
                 });
                 let args: Result<_, _> = iter.by_ref().collect();
                 for _ in iter {}
-                ast::Expr::Call(func?.into(), args?)
+                ast::ExprWithSymbol::Call(func?.into(), args?)
             }
             Term::Bracket { .. } => todo!(),
         };
-        Ok(ast::PExpr::new(self.pos, expr))
+        Ok(ast::PExprWithSymbol::new(self.pos, expr))
     }
 }
 
@@ -298,12 +313,12 @@ impl PStmt {
     pub fn new(pos: Range, stmt: Stmt) -> PStmt {
         PStmt { pos, stmt }
     }
-    pub fn into_ast(self, errors: &mut Vec<Error>) -> Result<ast::PStmt, ()> {
+    fn into_ast(self, errors: &mut Vec<Error>) -> Result<ast::PStmtWithSymbol, ()> {
         let stmt = match self.stmt {
-            Stmt::Term(Some(term)) => ast::Stmt::Expr(Some(term.into_expr(errors)?)),
-            Stmt::Term(None) => ast::Stmt::Expr(None),
-            Stmt::Return(Some(term)) => ast::Stmt::Return(Some(term.into_expr(errors)?)),
-            Stmt::Return(None) => ast::Stmt::Return(None),
+            Stmt::Term(Some(term)) => ast::StmtWithSymbol::Expr(Some(term.into_expr(errors)?)),
+            Stmt::Term(None) => ast::StmtWithSymbol::Expr(None),
+            Stmt::Return(Some(term)) => ast::StmtWithSymbol::Return(Some(term.into_expr(errors)?)),
+            Stmt::Return(None) => ast::StmtWithSymbol::Return(None),
             Stmt::If {
                 cond,
                 pos_if,
@@ -324,7 +339,7 @@ impl PStmt {
                             .and_then(|stmt| stmt.into_ast(errors))
                     })
                     .transpose();
-                ast::Stmt::If(cond?, stmt_then?.into(), stmt_else?.map(Box::new))
+                ast::StmtWithSymbol::If(cond?, stmt_then?.into(), stmt_else?.map(Box::new))
             }
             Stmt::While {
                 cond,
@@ -337,7 +352,7 @@ impl PStmt {
                 let stmt = stmt
                     .ok_or_else(|| errors.push(Error::EmptyStatementWhile(pos_while.clone())))
                     .and_then(|stmt| stmt.into_ast(errors));
-                ast::Stmt::While(cond?, stmt?.into())
+                ast::StmtWithSymbol::While(cond?, stmt?.into())
             }
             Stmt::Block {
                 antecedent: None,
@@ -346,27 +361,25 @@ impl PStmt {
                 let mut iter = stmts.into_iter().map(|stmt| stmt.into_ast(errors));
                 let stmts: Result<_, _> = iter.by_ref().collect();
                 for _ in iter {}
-                ast::Stmt::Block(stmts?)
+                ast::StmtWithSymbol::Block(stmts?)
             }
             Stmt::Block {
                 antecedent: Some(func),
                 stmts,
             } => match func.term {
                 Term::Bracket {
-                    antecedent: name,
+                    antecedent: Some(name),
                     bracket_kind: BracketKind::Round,
                     elements: args,
                     has_trailing_comma: _,
                 } => {
-                    let name = name
-                        .ok_or_else(|| errors.push(Error::EmptyFunctionName(func.pos)))
-                        .and_then(|name| match name.term {
-                            Term::Identifier(name) => Ok(name),
-                            _ => {
-                                errors.push(Error::InvalidFunctionName(name.pos));
-                                Err(())
-                            }
-                        });
+                    let name = match name.term {
+                        Term::Identifier(name) => Ok(name),
+                        _ => {
+                            errors.push(Error::InvalidFunctionName(name.pos));
+                            Err(())
+                        }
+                    };
                     let mut args_iter = args.into_iter().map(|arg| match arg {
                         Ok(PTerm {
                             term: Term::Identifier(arg),
@@ -386,7 +399,7 @@ impl PStmt {
                     let mut stmts_iter = stmts.into_iter().map(|stmt| stmt.into_ast(errors));
                     let stmts: Result<_, _> = stmts_iter.by_ref().collect();
                     for _ in stmts_iter {}
-                    ast::Stmt::Def {
+                    ast::StmtWithSymbol::Def {
                         name: name?,
                         args: args?,
                         body: stmts?,
@@ -398,8 +411,16 @@ impl PStmt {
                 }
             },
         };
-        Ok(ast::PStmt::new(self.pos, stmt))
+        Ok(ast::PStmtWithSymbol::new(self.pos, stmt))
     }
+}
+
+pub fn into_ast(pre_ast: Vec<PStmt>) -> Result<Vec<ast::PStmtWithSymbol>, Vec<Error>> {
+    let mut errors = Vec::new();
+    let mut iter = pre_ast.into_iter().map(|stmt| stmt.into_ast(&mut errors));
+    let ast: Result<_, _> = iter.by_ref().collect();
+    for _ in iter {}
+    ast.map_err(|()| errors)
 }
 
 #[derive(Debug)]
@@ -419,7 +440,6 @@ pub enum Error {
     EmptyConditionWhile(Range),
     EmptyStatementWhile(Range),
     UnexpectedExpressionBeforeBlock(Range),
-    EmptyFunctionName(Range),
     InvalidFunctionName(Range),
     InvalidArgumentInDef(Range),
     EmptyArgumentInDef(Range),

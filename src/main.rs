@@ -13,7 +13,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Syscraws. If not, see <https://www.gnu.org/licenses/>. 
+ * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
 #![feature(char_indices_offset)]
@@ -34,12 +34,23 @@ fn main() {
     std::io::stdin().read_to_string(&mut input).unwrap();
     let tokens = lexer::tokenize(&input).unwrap();
     let pre_ast = parser::parse(&input, &tokens).unwrap();
-    let mut errors = Vec::new();
-    let Ok(ast) = pre_ast.into_ast(&mut errors) else {
-        for error in errors {
-            println!("{error:?}");
+    let ast = match pre_ast::into_ast(pre_ast) {
+        Ok(ast) => ast,
+        Err(errors) => {
+            for error in errors {
+                println!("{error:?}");
+            }
+            return;
         }
-        return;
     };
-    ast.debug_print(0);
+    let (stmts, funcs) = ast::resolve_symbol(ast);
+    for stmt in &stmts {
+        stmt.debug_print(0);
+    }
+    for (i, defs) in funcs.iter().enumerate() {
+        println!("[{i}]");
+        for def in defs {
+            def.debug_print();
+        }
+    }
 }
