@@ -20,6 +20,7 @@
 #![feature(is_some_and)]
 
 mod ast;
+mod ast_with_symbol;
 mod ir;
 mod lexer;
 mod parser;
@@ -43,7 +44,7 @@ fn main() {
             return;
         }
     };
-    let (stmts, funcs) = ast::resolve_symbol(ast);
+    let (stmts, funcs) = ast_with_symbol::resolve_symbol(ast);
     for stmt in &stmts {
         stmt.debug_print(0);
     }

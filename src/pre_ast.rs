@@ -17,6 +17,7 @@
  */
 
 use crate::ast;
+use crate::ast_with_symbol;
 use crate::range::Range;
 use num::BigInt;
 
@@ -61,51 +62,51 @@ pub enum BracketKind {
     Square,
 }
 
-pub enum Term {
-    Identifier(String),
+pub enum Term<'id> {
+    Identifier(&'id str),
     Integer(BigInt),
     Float(f64),
     String(String),
     UnaryOperation {
         operator: UnaryOperator,
         pos_operator: Range,
-        operand: Option<Box<PTerm>>,
+        operand: Option<Box<PTerm<'id>>>,
     },
     BinaryOperation {
         operator: BinaryOperator,
         pos_operator: Range,
-        left_operand: Option<Box<PTerm>>,
-        right_operand: Option<Box<PTerm>>,
+        left_operand: Option<Box<PTerm<'id>>>,
+        right_operand: Option<Box<PTerm<'id>>>,
     },
     Bracket {
-        antecedent: Option<Box<PTerm>>,
+        antecedent: Option<Box<PTerm<'id>>>,
         bracket_kind: BracketKind,
-        elements: Vec<Result<PTerm, Range>>,
+        elements: Vec<Result<PTerm<'id>, Range>>,
         has_trailing_comma: bool,
     },
     Assign {
         pos_equal: Range,
-        left_hand_side: Option<Box<PTerm>>,
-        right_hand_side: Option<Box<PTerm>>,
+        left_hand_side: Option<Box<PTerm<'id>>>,
+        right_hand_side: Option<Box<PTerm<'id>>>,
     },
 }
-pub struct PTerm {
+pub struct PTerm<'id> {
     pos: Range,
-    term: Term,
+    term: Term<'id>,
 }
-impl PTerm {
+impl<'id> PTerm<'id> {
     pub fn new(pos: Range, term: Term) -> PTerm {
         PTerm { pos, term }
     }
     pub fn pos(self) -> Range {
         self.pos
     }
-    fn into_expr(self, errors: &mut Vec<Error>) -> Result<ast::PExprWithSymbol, ()> {
+    fn into_expr(self, errors: &mut Vec<Error>) -> Result<ast_with_symbol::PExpr<'id>, ()> {
         let expr = match self.term {
-            Term::Identifier(name) => ast::ExprWithSymbol::Identifier(name),
-            Term::Integer(value) => ast::ExprWithSymbol::Integer(value),
-            Term::Float(value) => ast::ExprWithSymbol::Float(value),
-            Term::String(value) => ast::ExprWithSymbol::String(value),
+            Term::Identifier(name) => ast_with_symbol::Expr::Identifier(name),
+            Term::Integer(value) => ast_with_symbol::Expr::Integer(value),
+            Term::Float(value) => ast_with_symbol::Expr::Float(value),
+            Term::String(value) => ast_with_symbol::Expr::String(value),
             Term::Assign {
                 pos_equal,
                 left_hand_side,
@@ -135,7 +136,7 @@ impl PTerm {
                                     }
                                 }
                             })?;
-                        ast::ExprWithSymbol::Decl(name, Some(right_hand_side?.into()))
+                        ast_with_symbol::Expr::Decl(name, Some(right_hand_side?.into()))
                     }
                     Term::BinaryOperation {
                         right_operand: None,
@@ -167,10 +168,10 @@ impl PTerm {
                                 errors.push(Error::EmptyLeftOperand(pos_operator.clone()))
                             })
                             .and_then(|term| term.into_expr(errors));
-                        ast::ExprWithSymbol::Call(
-                            ast::PExprWithSymbol::new(
+                        ast_with_symbol::Expr::Call(
+                            ast_with_symbol::PExpr::new(
                                 pos_operator,
-                                ast::ExprWithSymbol::Operator(operator?),
+                                ast_with_symbol::Expr::Operator(operator?),
                             )
                             .into(),
                             vec![left_operand?, right_hand_side?],
@@ -178,10 +179,10 @@ impl PTerm {
                     }
                     _ => {
                         let left_hand_side = left_hand_side.into_expr(errors);
-                        ast::ExprWithSymbol::Call(
-                            ast::PExprWithSymbol::new(
+                        ast_with_symbol::Expr::Call(
+                            ast_with_symbol::PExpr::new(
                                 pos_equal,
-                                ast::ExprWithSymbol::Operator(ast::Operator::Assign),
+                                ast_with_symbol::Expr::Operator(ast::Operator::Assign),
                             )
                             .into(),
                             vec![left_hand_side?, right_hand_side?],
@@ -207,10 +208,10 @@ impl PTerm {
                 let operand = operand
                     .ok_or_else(|| errors.push(Error::EmptyUnaryOperand(pos_operator.clone())))
                     .and_then(|term| term.into_expr(errors));
-                ast::ExprWithSymbol::Call(
-                    ast::PExprWithSymbol::new(
+                ast_with_symbol::Expr::Call(
+                    ast_with_symbol::PExpr::new(
                         pos_operator,
-                        ast::ExprWithSymbol::Operator(operator),
+                        ast_with_symbol::Expr::Operator(operator),
                     )
                     .into(),
                     vec![operand?],
@@ -251,10 +252,10 @@ impl PTerm {
                 let right_operand = right_operand
                     .ok_or_else(|| errors.push(Error::EmptyRightOperand(pos_operator.clone())))
                     .and_then(|term| term.into_expr(errors));
-                ast::ExprWithSymbol::Call(
-                    ast::PExprWithSymbol::new(
+                ast_with_symbol::Expr::Call(
+                    ast_with_symbol::PExpr::new(
                         pos_operator,
-                        ast::ExprWithSymbol::Operator(operator),
+                        ast_with_symbol::Expr::Operator(operator),
                     )
                     .into(),
                     vec![left_operand?, right_operand?],
@@ -276,49 +277,51 @@ impl PTerm {
                 });
                 let args: Result<_, _> = iter.by_ref().collect();
                 for _ in iter {}
-                ast::ExprWithSymbol::Call(func?.into(), args?)
+                ast_with_symbol::Expr::Call(func?.into(), args?)
             }
             Term::Bracket { .. } => todo!(),
         };
-        Ok(ast::PExprWithSymbol::new(self.pos, expr))
+        Ok(ast_with_symbol::PExpr::new(self.pos, expr))
     }
 }
 
-pub enum Stmt {
-    Term(Option<PTerm>),
-    Return(Option<PTerm>),
+pub enum Stmt<'id> {
+    Term(Option<PTerm<'id>>),
+    Return(Option<PTerm<'id>>),
     If {
-        cond: Option<PTerm>,
+        cond: Option<PTerm<'id>>,
         pos_if: Range,
-        stmt_then: Option<Box<PStmt>>,
+        stmt_then: Option<Box<PStmt<'id>>>,
         pos_else: Option<Range>,
-        stmt_else: Option<Box<PStmt>>,
+        stmt_else: Option<Box<PStmt<'id>>>,
     },
     While {
-        cond: Option<PTerm>,
+        cond: Option<PTerm<'id>>,
         pos_while: Range,
-        stmt: Option<Box<PStmt>>,
+        stmt: Option<Box<PStmt<'id>>>,
     },
     Block {
-        antecedent: Option<PTerm>,
-        stmts: Vec<PStmt>,
+        antecedent: Option<PTerm<'id>>,
+        stmts: Vec<PStmt<'id>>,
     },
 }
 
-pub struct PStmt {
+pub struct PStmt<'id> {
     pos: Range,
-    stmt: Stmt,
+    stmt: Stmt<'id>,
 }
-impl PStmt {
+impl<'id> PStmt<'id> {
     pub fn new(pos: Range, stmt: Stmt) -> PStmt {
         PStmt { pos, stmt }
     }
-    fn into_ast(self, errors: &mut Vec<Error>) -> Result<ast::PStmtWithSymbol, ()> {
+    fn into_ast(self, errors: &mut Vec<Error>) -> Result<ast_with_symbol::PStmt<'id>, ()> {
         let stmt = match self.stmt {
-            Stmt::Term(Some(term)) => ast::StmtWithSymbol::Expr(Some(term.into_expr(errors)?)),
-            Stmt::Term(None) => ast::StmtWithSymbol::Expr(None),
-            Stmt::Return(Some(term)) => ast::StmtWithSymbol::Return(Some(term.into_expr(errors)?)),
-            Stmt::Return(None) => ast::StmtWithSymbol::Return(None),
+            Stmt::Term(Some(term)) => ast_with_symbol::Stmt::Expr(Some(term.into_expr(errors)?)),
+            Stmt::Term(None) => ast_with_symbol::Stmt::Expr(None),
+            Stmt::Return(Some(term)) => {
+                ast_with_symbol::Stmt::Return(Some(term.into_expr(errors)?))
+            }
+            Stmt::Return(None) => ast_with_symbol::Stmt::Return(None),
             Stmt::If {
                 cond,
                 pos_if,
@@ -339,7 +342,7 @@ impl PStmt {
                             .and_then(|stmt| stmt.into_ast(errors))
                     })
                     .transpose();
-                ast::StmtWithSymbol::If(cond?, stmt_then?.into(), stmt_else?.map(Box::new))
+                ast_with_symbol::Stmt::If(cond?, stmt_then?.into(), stmt_else?.map(Box::new))
             }
             Stmt::While {
                 cond,
@@ -352,7 +355,7 @@ impl PStmt {
                 let stmt = stmt
                     .ok_or_else(|| errors.push(Error::EmptyStatementWhile(pos_while.clone())))
                     .and_then(|stmt| stmt.into_ast(errors));
-                ast::StmtWithSymbol::While(cond?, stmt?.into())
+                ast_with_symbol::Stmt::While(cond?, stmt?.into())
             }
             Stmt::Block {
                 antecedent: None,
@@ -361,7 +364,7 @@ impl PStmt {
                 let mut iter = stmts.into_iter().map(|stmt| stmt.into_ast(errors));
                 let stmts: Result<_, _> = iter.by_ref().collect();
                 for _ in iter {}
-                ast::StmtWithSymbol::Block(stmts?)
+                ast_with_symbol::Stmt::Block(stmts?)
             }
             Stmt::Block {
                 antecedent: Some(func),
@@ -399,7 +402,7 @@ impl PStmt {
                     let mut stmts_iter = stmts.into_iter().map(|stmt| stmt.into_ast(errors));
                     let stmts: Result<_, _> = stmts_iter.by_ref().collect();
                     for _ in stmts_iter {}
-                    ast::StmtWithSymbol::Def {
+                    ast_with_symbol::Stmt::Def {
                         name: name?,
                         args: args?,
                         body: stmts?,
@@ -411,11 +414,11 @@ impl PStmt {
                 }
             },
         };
-        Ok(ast::PStmtWithSymbol::new(self.pos, stmt))
+        Ok(ast_with_symbol::PStmt::new(self.pos, stmt))
     }
 }
 
-pub fn into_ast(pre_ast: Vec<PStmt>) -> Result<Vec<ast::PStmtWithSymbol>, Vec<Error>> {
+pub fn into_ast(pre_ast: Vec<PStmt>) -> Result<Vec<ast_with_symbol::PStmt>, Vec<Error>> {
     let mut errors = Vec::new();
     let mut iter = pre_ast.into_iter().map(|stmt| stmt.into_ast(&mut errors));
     let ast: Result<_, _> = iter.by_ref().collect();

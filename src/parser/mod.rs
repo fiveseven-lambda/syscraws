@@ -24,12 +24,15 @@ use std::iter;
 mod token_seq;
 use token_seq::TokenSeq;
 
-pub fn parse(input: &str, tokens: &[Token]) -> Result<Vec<PStmt>, Error> {
+pub fn parse<'id>(input: &'id str, tokens: &[Token]) -> Result<Vec<PStmt<'id>>, Error> {
     let mut tokens = TokenSeq::new(tokens);
     iter::from_fn(|| parse_stmt(input, &mut tokens).transpose()).collect()
 }
 
-pub fn parse_stmt(input: &str, tokens: &mut TokenSeq) -> Result<Option<PStmt>, Error> {
+pub fn parse_stmt<'id>(
+    input: &'id str,
+    tokens: &mut TokenSeq,
+) -> Result<Option<PStmt<'id>>, Error> {
     let Some(Token {token_kind: first_token_kind, start: first_token_start, end: first_token_end}) = tokens.peek() else {
         return Ok(None);
     };
@@ -168,7 +171,7 @@ pub fn parse_stmt(input: &str, tokens: &mut TokenSeq) -> Result<Option<PStmt>, E
     }
 }
 
-fn parse_assign(input: &str, tokens: &mut TokenSeq) -> Result<Option<PTerm>, Error> {
+fn parse_assign<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PTerm<'id>>, Error> {
     let Some(start) = tokens.next_start() else {
         return Ok(None);
     };
@@ -194,11 +197,11 @@ fn parse_assign(input: &str, tokens: &mut TokenSeq) -> Result<Option<PTerm>, Err
     }
 }
 
-fn parse_binary_operator(
-    input: &str,
+fn parse_binary_operator<'id>(
+    input: &'id str,
     tokens: &mut TokenSeq,
     current_precedence: Precedence,
-) -> Result<Option<PTerm>, Error> {
+) -> Result<Option<PTerm<'id>>, Error> {
     let Some(next_precedence) = current_precedence.next() else {
         return parse_factor(input, tokens);
     };
@@ -228,13 +231,13 @@ fn parse_binary_operator(
     }
 }
 
-fn parse_factor(input: &str, tokens: &mut TokenSeq) -> Result<Option<PTerm>, Error> {
+fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PTerm<'id>>, Error> {
     let Some(Token {token_kind, start, end}) = tokens.peek() else {
         return Ok(None);
     };
     let mut antecedent = 'ant: {
         let term = if token_kind == TokenKind::Identifier {
-            Term::Identifier(unsafe { input.get_unchecked(start..end) }.to_string())
+            Term::Identifier(unsafe { input.get_unchecked(start..end) })
         } else if token_kind == TokenKind::Number {
             let value: String = unsafe { input.get_unchecked(start..end) }
                 .chars()
