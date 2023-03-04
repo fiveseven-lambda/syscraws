@@ -122,7 +122,8 @@ impl<'id> PTerm<'id> {
                     Term::BinaryOperation {
                         operator: BinaryOperator::Type,
                         left_operand,
-                        ..
+                        right_operand,
+                        pos_operator: _,
                     } => {
                         let name = left_operand
                             .ok_or_else(|| errors.push(Error::EmptyLeftHandSideDecl(pos_equal)))
@@ -135,8 +136,9 @@ impl<'id> PTerm<'id> {
                                         Err(())
                                     }
                                 }
-                            })?;
-                        ast_with_symbol::Expr::Decl(name, Some(right_hand_side?.into()))
+                            });
+                        let ty = right_operand.map(|term| term.into_ty(errors)).transpose();
+                        ast_with_symbol::Expr::Decl(name?, ty?, Some(right_hand_side?.into()))
                     }
                     Term::BinaryOperation {
                         right_operand: None,
@@ -279,9 +281,41 @@ impl<'id> PTerm<'id> {
                 for _ in iter {}
                 ast_with_symbol::Expr::Call(func?.into(), args?)
             }
+            Term::Bracket {
+                antecedent: None,
+                bracket_kind: BracketKind::Round,
+                mut elements,
+                has_trailing_comma: false,
+            } if elements.len() == 1 => {
+                return unsafe { elements.pop().unwrap_unchecked().unwrap_unchecked() }
+                    .into_expr(errors)
+            }
             Term::Bracket { .. } => todo!(),
         };
         Ok(ast_with_symbol::PExpr::new(self.pos, expr))
+    }
+    fn into_ty(self, errors: &mut Vec<Error>) -> Result<ast_with_symbol::PTy<'id>, ()> {
+        let ty = match self.term {
+            Term::Identifier(name) => ast_with_symbol::Ty { name, args: vec![] },
+            Term::Bracket {
+                antecedent,
+                bracket_kind: BracketKind::Square,
+                elements: args,
+                has_trailing_comma: _,
+            } => {
+                let name = match antecedent.unwrap().term {
+                    Term::Identifier(name) => name,
+                    _ => panic!(),
+                };
+                let args: Result<_, _> = args
+                    .into_iter()
+                    .map(|arg| arg.unwrap().into_ty(errors))
+                    .collect();
+                ast_with_symbol::Ty { name, args: args? }
+            }
+            _ => panic!(),
+        };
+        Ok(ast_with_symbol::PTy::new(self.pos, ty))
     }
 }
 

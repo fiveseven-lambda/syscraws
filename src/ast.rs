@@ -16,6 +16,8 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use crate::{ir, ty};
+use enum_iterator::Sequence;
 use num::BigInt;
 
 pub enum Expr {
@@ -25,11 +27,10 @@ pub enum Expr {
     Integer(BigInt),
     Float(f64),
     String(String),
-    Operator(Operator),
     Call(Box<Expr>, Vec<Expr>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub enum Operator {
     Plus,
     Minus,
@@ -84,15 +85,113 @@ pub enum Stmt {
 
 pub struct FuncDef {
     num_args: usize,
-    num_locals: usize,
+    tys: Vec<Option<ty::Ty>>,
     body: Vec<Stmt>,
 }
+
+pub enum Func {
+    Builtin(unsafe fn(Vec<ir::Value>) -> ir::Value),
+    UserDefined(FuncDef),
+}
+
 impl FuncDef {
-    pub fn new(num_args: usize, num_locals: usize, body: Vec<Stmt>) -> FuncDef {
+    pub fn new(num_args: usize, tys: Vec<Option<ty::Ty>>, body: Vec<Stmt>) -> FuncDef {
         FuncDef {
             num_args,
-            num_locals,
+            tys,
             body,
+        }
+    }
+}
+
+pub fn operators() -> Vec<Vec<(Option<ty::Func>, Func)>> {
+    let mut ret: Vec<_> = (0..Operator::CARDINALITY).map(|_| Vec::new()).collect();
+    ret[Operator::Add as usize].push((
+        Some(ty::Func {
+            args: vec![ty::Ty::integer(), ty::Ty::integer()],
+            ret: ty::Ty::integer(),
+        }),
+        Func::Builtin(ir::add_integer),
+    ));
+    ret[Operator::Add as usize].push((
+        Some(ty::Func {
+            args: vec![ty::Ty::float(), ty::Ty::float()],
+            ret: ty::Ty::float(),
+        }),
+        Func::Builtin(ir::add_float),
+    ));
+    ret[Operator::Assign as usize].push((
+        Some(ty::Func {
+            args: vec![ty::Ty::reference(ty::Ty::integer()), ty::Ty::integer()],
+            ret: ty::Ty::reference(ty::Ty::integer()),
+        }),
+        Func::Builtin(ir::add_integer),
+    ));
+    ret
+}
+
+pub fn translate(
+    stmts: Vec<Stmt>,
+    funcs: &[Vec<(Option<ty::Func>, Func)>],
+    tys: &[Option<ty::Ty>],
+    target: &mut Vec<ir::Stmt>,
+    next: Option<usize>,
+) {
+    for (i, stmt) in stmts.into_iter().enumerate() {
+        match stmt {
+            Stmt::Expr(expr) => {
+                target.push(ir::Stmt::Expr(expr.translate(funcs, tys).1, Some(i + 1)));
+            }
+            _ => todo!(),
+        }
+    }
+}
+impl Expr {
+    fn translate(
+        self,
+        funcs: &[Vec<(Option<ty::Func>, Func)>],
+        tys: &[Option<ty::Ty>],
+    ) -> (ty::Ty, ir::Expr) {
+        match self {
+            Expr::Variable(id) => (
+                ty::Ty::reference(tys[id].clone().unwrap()),
+                ir::Expr::Local(id),
+            ),
+            Expr::Integer(value) => (ty::Ty::integer(), ir::Expr::Imm(ir::Value::Integer(value))),
+            Expr::Float(value) => (ty::Ty::float(), ir::Expr::Imm(ir::Value::Float(value))),
+            Expr::Call(func, args) => match *func {
+                Expr::Func(id) => {
+                    let (args_ty, args_expr): (Vec<_>, Vec<_>) = args
+                        .into_iter()
+                        .map(|arg| arg.translate(funcs, tys))
+                        .unzip();
+                    for (func_ty, func) in &funcs[id] {
+                        let func_ty = func_ty.as_ref().unwrap();
+                        println!("{:?}", func_ty);
+
+                        if func_ty
+                            .args
+                            .iter()
+                            .zip(&args_ty)
+                            .all(|(expected_ty, ty)| expected_ty == ty)
+                        {
+                            let Func::Builtin(func) = func else {
+                                todo!();
+                            };
+                            return (
+                                func_ty.ret.clone(),
+                                ir::Expr::Call(
+                                    ir::Expr::Imm(ir::Value::Func(*func)).into(),
+                                    args_expr,
+                                ),
+                            );
+                        }
+                    }
+                    panic!();
+                }
+                _ => todo!(),
+            },
+            _ => todo!(),
         }
     }
 }
@@ -107,7 +206,6 @@ impl Expr {
             Expr::Integer(value) => println!("{indent}integer({value})"),
             Expr::Float(value) => println!("{indent}float({value})"),
             Expr::String(value) => println!("{indent}string({value})"),
-            Expr::Operator(operator) => println!("{indent}operator({operator:?})"),
             Expr::Call(func, args) => {
                 println!("{indent}call");
                 func.debug_print(depth + 1);
@@ -157,7 +255,7 @@ impl Stmt {
 }
 impl FuncDef {
     pub fn debug_print(&self) {
-        println!("{} args, {} locals", self.num_args, self.num_locals);
+        println!("{} args, {} locals", self.num_args, self.tys.len());
         for stmt in &self.body {
             stmt.debug_print(0);
         }

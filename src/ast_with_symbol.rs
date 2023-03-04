@@ -18,11 +18,12 @@
 
 use crate::ast;
 use crate::range::Range;
+use crate::ty;
 use num::BigInt;
 
 pub enum Expr<'id> {
     Identifier(&'id str),
-    Decl(&'id str, Option<Box<PExpr<'id>>>),
+    Decl(&'id str, Option<PTy<'id>>, Option<Box<PExpr<'id>>>),
     Integer(BigInt),
     Float(f64),
     String(String),
@@ -63,6 +64,21 @@ impl<'id> PStmt<'id> {
     }
 }
 
+pub struct Ty<'id> {
+    pub name: &'id str,
+    pub args: Vec<PTy<'id>>,
+}
+
+pub struct PTy<'id> {
+    pos: Range,
+    ty: Ty<'id>,
+}
+impl<'id> PTy<'id> {
+    pub fn new(pos: Range, ty: Ty) -> PTy {
+        PTy { pos, ty }
+    }
+}
+
 use std::collections::HashMap;
 struct Variables<'id> {
     names: HashMap<&'id str, Vec<usize>>,
@@ -90,16 +106,16 @@ impl<'id> Variables<'id> {
 }
 struct Funcs<'id> {
     names: HashMap<&'id str, usize>,
-    defs: Vec<Vec<ast::FuncDef>>,
+    defs: Vec<Vec<(Option<ty::Func>, ast::Func)>>,
 }
 impl<'id> Funcs<'id> {
     fn new() -> Funcs<'id> {
         Funcs {
             names: HashMap::new(),
-            defs: Vec::new(),
+            defs: ast::operators(),
         }
     }
-    fn insert(&mut self, name: &'id str) -> usize {
+    fn get_or_insert(&mut self, name: &'id str) -> usize {
         *self.names.entry(name).or_insert_with(|| {
             let id = self.defs.len();
             self.defs.push(Vec::new());
@@ -114,20 +130,24 @@ impl<'id> PExpr<'id> {
         funcs: &mut Funcs<'id>,
         globals: Option<&Variables<'id>>,
         variables_in_current_scope: &mut Vec<&'id str>,
+        tys: &mut Vec<Option<ty::Ty>>,
     ) -> ast::Expr {
         match self.expr {
-            Expr::Decl(name, right_hand_side) => {
+            Expr::Decl(name, ty, right_hand_side) => {
                 // TODO: 右辺のない宣言に対応
                 let right_hand_side = right_hand_side.unwrap().resolve_symbol(
                     variables,
                     funcs,
                     globals,
                     variables_in_current_scope,
+                    tys,
                 );
                 let id = variables.insert(name);
+                assert_eq!(tys.len(), id);
+                tys.push(ty.map(|ty| ty.resolve_symbol()));
                 variables_in_current_scope.push(name);
                 ast::Expr::Call(
-                    ast::Expr::Operator(ast::Operator::Assign).into(),
+                    ast::Expr::Func(ast::Operator::Assign as usize).into(),
                     vec![ast::Expr::Variable(id), right_hand_side],
                 )
             }
@@ -137,21 +157,27 @@ impl<'id> PExpr<'id> {
                 } else if let Some(id) = globals.and_then(|variables| variables.get(name)) {
                     ast::Expr::Global(id)
                 } else {
-                    let id = funcs.insert(name);
+                    let id = funcs.get_or_insert(name);
                     ast::Expr::Func(id)
                 }
             }
             Expr::Integer(value) => ast::Expr::Integer(value),
             Expr::Float(value) => ast::Expr::Float(value),
             Expr::String(value) => ast::Expr::String(value),
-            Expr::Operator(operator) => ast::Expr::Operator(operator),
+            Expr::Operator(operator) => ast::Expr::Func(operator as usize),
             Expr::Call(func, args) => {
                 let func =
-                    func.resolve_symbol(variables, funcs, globals, variables_in_current_scope);
+                    func.resolve_symbol(variables, funcs, globals, variables_in_current_scope, tys);
                 let args = args
                     .into_iter()
                     .map(|arg| {
-                        arg.resolve_symbol(variables, funcs, globals, variables_in_current_scope)
+                        arg.resolve_symbol(
+                            variables,
+                            funcs,
+                            globals,
+                            variables_in_current_scope,
+                            tys,
+                        )
                     })
                     .collect();
                 ast::Expr::Call(func.into(), args)
@@ -166,6 +192,7 @@ impl<'id> PStmt<'id> {
         funcs: &mut Funcs<'id>,
         globals: Option<&Variables<'id>>,
         variables_in_current_scope: &mut Vec<&'id str>,
+        tys: &mut Vec<Option<ty::Ty>>,
         is_toplevel: bool,
     ) -> Vec<ast::Stmt> {
         match self.stmt {
@@ -174,6 +201,7 @@ impl<'id> PStmt<'id> {
                 funcs,
                 globals,
                 variables_in_current_scope,
+                tys,
             ))],
             Stmt::Expr(None) => vec![],
             Stmt::Def { name, args, body } => {
@@ -181,9 +209,10 @@ impl<'id> PStmt<'id> {
                     // TODO: push error
                     return vec![];
                 }
-                let id = funcs.insert(name);
+                let id = funcs.get_or_insert(name);
                 let mut variables_in_current_scope = Vec::new();
                 let mut locals = Variables::new();
+                let mut tys = Vec::new();
                 for arg in &args {
                     locals.insert(arg);
                 }
@@ -195,15 +224,20 @@ impl<'id> PStmt<'id> {
                             funcs,
                             Some(variables),
                             &mut variables_in_current_scope,
+                            &mut tys,
                             false,
                         )
                     })
                     .collect();
-                funcs.defs[id].push(ast::FuncDef::new(args.len(), locals.num, body));
+                assert_eq!(locals.num, tys.len());
+                funcs.defs[id].push((
+                    None,
+                    ast::Func::UserDefined(ast::FuncDef::new(args.len(), tys, body)),
+                ));
                 vec![]
             }
             Stmt::Block(stmts) => {
-                let mut variables_in_current_scope = Vec::new();
+                let mut variables_in_block = Vec::new();
                 let stmts = stmts
                     .into_iter()
                     .flat_map(|stmt| {
@@ -211,41 +245,45 @@ impl<'id> PStmt<'id> {
                             variables,
                             funcs,
                             globals,
-                            &mut variables_in_current_scope,
+                            &mut variables_in_block,
+                            tys,
                             false,
                         )
                     })
                     .collect();
-                for variable in variables_in_current_scope {
+                for variable in variables_in_block {
                     variables.remove(variable);
                 }
                 stmts
             }
             Stmt::If(cond, stmt_then, stmt_else) => {
+                let mut variables_in_cond = Vec::new();
                 let cond =
-                    cond.resolve_symbol(variables, funcs, globals, variables_in_current_scope);
-                let mut variables_in_current_scope = Vec::new();
+                    cond.resolve_symbol(variables, funcs, globals, &mut variables_in_cond, tys);
+                let mut variables_in_stmt_then = Vec::new();
                 let stmt_then = stmt_then.resolve_symbol(
                     variables,
                     funcs,
                     globals,
-                    &mut variables_in_current_scope,
+                    &mut variables_in_stmt_then,
+                    tys,
                     false,
                 );
-                for variable in variables_in_current_scope {
+                for variable in variables_in_stmt_then {
                     variables.remove(variable);
                 }
                 let stmt_else = match stmt_else {
                     Some(stmt_else) => {
-                        let mut variables_in_current_scope = Vec::new();
+                        let mut variables_in_stmt_else = Vec::new();
                         let stmt_else = stmt_else.resolve_symbol(
                             variables,
                             funcs,
                             globals,
-                            &mut variables_in_current_scope,
+                            &mut variables_in_stmt_else,
+                            tys,
                             false,
                         );
-                        for variable in variables_in_current_scope {
+                        for variable in variables_in_stmt_else {
                             variables.remove(variable);
                         }
                         stmt_else
@@ -254,45 +292,81 @@ impl<'id> PStmt<'id> {
                         vec![]
                     }
                 };
+                for variable in variables_in_cond {
+                    variables.remove(variable);
+                }
                 vec![ast::Stmt::If(cond, stmt_then, stmt_else)]
             }
             Stmt::While(cond, stmt) => {
+                let mut variables_in_cond = Vec::new();
                 let cond =
-                    cond.resolve_symbol(variables, funcs, globals, variables_in_current_scope);
-                let mut variables_in_current_scope = Vec::new();
+                    cond.resolve_symbol(variables, funcs, globals, &mut variables_in_cond, tys);
+                let mut variables_in_stmt = Vec::new();
                 let stmt = stmt.resolve_symbol(
                     variables,
                     funcs,
                     globals,
-                    &mut variables_in_current_scope,
+                    &mut variables_in_stmt,
+                    tys,
                     false,
                 );
-                for variable in variables_in_current_scope {
+                for variable in variables_in_stmt {
+                    variables.remove(variable);
+                }
+                for variable in variables_in_cond {
                     variables.remove(variable);
                 }
                 vec![ast::Stmt::While(cond, stmt)]
             }
             Stmt::Return(expr) => {
                 let expr = expr.map(|expr| {
-                    expr.resolve_symbol(variables, funcs, globals, variables_in_current_scope)
+                    expr.resolve_symbol(variables, funcs, globals, variables_in_current_scope, tys)
                 });
                 vec![ast::Stmt::Return(expr)]
             }
         }
     }
 }
-pub fn resolve_symbol(stmts: Vec<PStmt>) -> (Vec<ast::Stmt>, Vec<Vec<ast::FuncDef>>) {
+impl<'id> PTy<'id> {
+    fn resolve_symbol(self) -> ty::Ty {
+        match self.ty.name {
+            "int" => ty::Ty::integer(),
+            "float" => ty::Ty::float(),
+            "bool" => ty::Ty::boolean(),
+            "string" => ty::Ty::string(),
+            _ => panic!(),
+        }
+    }
+}
+pub fn resolve_symbol(
+    stmts: Vec<PStmt>,
+) -> (
+    Vec<ast::Stmt>,
+    Vec<Vec<(Option<ty::Func>, ast::Func)>>,
+    Vec<Option<ty::Ty>>,
+) {
     let mut globals = Variables::new();
     let mut funcs = Funcs::new();
     let mut variables = Vec::new();
+    let mut tys = Vec::new();
     let stmts = stmts
         .into_iter()
-        .flat_map(|stmt| stmt.resolve_symbol(&mut globals, &mut funcs, None, &mut variables, true))
+        .flat_map(|stmt| {
+            stmt.resolve_symbol(
+                &mut globals,
+                &mut funcs,
+                None,
+                &mut variables,
+                &mut tys,
+                true,
+            )
+        })
         .collect();
     for (&name, &index) in &funcs.names {
         if funcs.defs[index].is_empty() {
             eprintln!("`{name}` is not defined");
         }
     }
-    (stmts, funcs.defs)
+    assert_eq!(tys.len(), globals.num);
+    (stmts, funcs.defs, tys)
 }

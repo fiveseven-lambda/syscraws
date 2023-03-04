@@ -27,6 +27,7 @@ mod parser;
 mod pre_ast;
 mod range;
 mod token;
+mod ty;
 
 use std::io::Read;
 
@@ -44,14 +45,14 @@ fn main() {
             return;
         }
     };
-    let (stmts, funcs) = ast_with_symbol::resolve_symbol(ast);
+    let (stmts, funcs, tys) = ast_with_symbol::resolve_symbol(ast);
     for stmt in &stmts {
         stmt.debug_print(0);
     }
-    for (i, defs) in funcs.iter().enumerate() {
-        println!("[{i}]");
-        for def in defs {
-            def.debug_print();
-        }
+    for (i, ty) in tys.iter().enumerate() {
+        println!("{i}: {ty:?}");
     }
+    let mut ir = Vec::new();
+    ast::translate(stmts, &funcs, &tys, &mut ir, None);
+    ir::debug_print(&ir);
 }
