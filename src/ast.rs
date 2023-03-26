@@ -127,25 +127,27 @@ pub fn operators() -> Vec<Vec<(Option<ty::Func>, Func)>> {
             args: vec![ty::Ty::integer(), ty::Ty::reference(ty::Ty::integer())],
             ret: ty::Ty::reference(ty::Ty::integer()),
         }),
-        Func::Builtin(ir::add_integer),
+        Func::Builtin(ir::assign),
     ));
     ret
 }
 
 pub fn translate(
-    stmts: Vec<Stmt>,
+    stmts: &mut impl Iterator<Item = Stmt>,
     funcs: &[Vec<(Option<ty::Func>, Func)>],
     tys: &[Option<ty::Ty>],
     target: &mut Vec<ir::Stmt>,
     next: Option<usize>,
-) {
-    for (i, stmt) in stmts.into_iter().enumerate() {
-        match stmt {
-            Stmt::Expr(expr) => {
-                target.push(ir::Stmt::Expr(expr.translate(funcs, tys).1, Some(i + 1)));
-            }
-            _ => todo!(),
+) -> Option<usize> {
+    match stmts.next() {
+        Some(Stmt::Expr(expr)) => {
+            let next = translate(stmts, funcs, tys, target, next);
+            let this = target.len();
+            target.push(ir::Stmt::Expr(expr.translate(funcs, tys).1, next));
+            Some(this)
         }
+        Some(_) => todo!(),
+        None => next,
     }
 }
 
@@ -158,7 +160,6 @@ pub fn converter(from: &ty::Ty, to: &ty::Ty) -> Option<Vec<Func>> {
         }),
         (ty::Kind::Integer, ty::Kind::Integer) => Some(Vec::new()),
         (ty::Kind::Float, ty::Kind::Float) => Some(Vec::new()),
-        (ty::Kind::Integer, ty::Kind::Float) => Some(vec![Func::Builtin(ir::integer_to_float)]),
         _ => None,
     }
 }

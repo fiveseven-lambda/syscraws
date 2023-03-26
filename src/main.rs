@@ -62,6 +62,11 @@ fn main() {
         }
     }
     let mut ir = Vec::new();
-    ast::translate(stmts, &funcs, &tys, &mut ir, None);
+    let entry = ast::translate(&mut stmts.into_iter(), &funcs, &tys, &mut ir, None);
     ir::debug_print(&ir);
+    let func = ir::Func::new(tys.len(), entry, ir);
+    let mut memory = ir::Memory::new();
+    unsafe {
+        func.run(&mut memory, &[]);
+    }
 }

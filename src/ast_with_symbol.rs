@@ -110,10 +110,22 @@ struct Funcs<'id> {
 }
 impl<'id> Funcs<'id> {
     fn new() -> Funcs<'id> {
-        Funcs {
+        let mut ret = Funcs {
             names: HashMap::new(),
             defs: ast::operators(),
-        }
+        };
+        let print = ret.get_or_insert("print");
+        ret.defs[print].push((
+            Some(ty::Func {
+                args: vec![ty::Ty::integer()],
+                ret: ty::Ty {
+                    kind: ty::Kind::Tuple,
+                    args: vec![],
+                },
+            }),
+            ast::Func::Builtin(crate::ir::print_integer),
+        ));
+        ret
     }
     fn get_or_insert(&mut self, name: &'id str) -> usize {
         *self.names.entry(name).or_insert_with(|| {

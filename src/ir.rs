@@ -23,6 +23,7 @@ use num::BigInt;
 
 #[derive(Clone)]
 pub enum Value {
+    Void,
     Integer(BigInt),
     Boolean(bool),
     Address(Address),
@@ -35,25 +36,25 @@ impl Value {
     unsafe fn into_integer_unchecked(self) -> BigInt {
         match self {
             Value::Integer(value) => value,
-            _ => unsafe { unreachable_unchecked() },
+            _ => panic!(),
         }
     }
     unsafe fn into_boolean_unchecked(self) -> bool {
         match self {
             Value::Boolean(value) => value,
-            _ => unsafe { unreachable_unchecked() },
+            _ => panic!(),
         }
     }
     unsafe fn into_float_unchecked(self) -> f64 {
         match self {
             Value::Float(value) => value,
-            _ => unsafe { unreachable_unchecked() },
+            _ => panic!(),
         }
     }
     unsafe fn into_address_unchecked(self) -> Address {
         match self {
             Value::Address(addr) => addr,
-            _ => unsafe { unreachable_unchecked() },
+            _ => panic!(),
         }
     }
 }
@@ -63,6 +64,12 @@ pub unsafe fn add_integer(args: Vec<Value>, _: &mut Memory) -> Value {
     let first = args.next().unwrap_unchecked().into_integer_unchecked();
     let second = args.next().unwrap_unchecked().into_integer_unchecked();
     Value::Integer(first + second)
+}
+pub unsafe fn print_integer(args: Vec<Value>, _: &mut Memory) -> Value {
+    let mut args = args.into_iter();
+    let value = args.next().unwrap_unchecked().into_integer_unchecked();
+    println!("{value}");
+    Value::Void
 }
 use num::ToPrimitive;
 pub unsafe fn integer_to_float(args: Vec<Value>, _: &mut Memory) -> Value {
@@ -85,7 +92,7 @@ pub unsafe fn assign(args: Vec<Value>, memory: &mut Memory) -> Value {
     let mut args = args.into_iter();
     let src = args.next().unwrap_unchecked();
     let dest = args.next().unwrap_unchecked().into_address_unchecked();
-    *memory.get_mut(dest) = src.clone();
+    memory.set(src.clone(), dest);
     src
 }
 
@@ -124,15 +131,23 @@ pub enum Stmt {
 
 pub struct Func {
     num_locals: usize,
+    entry: Option<usize>,
     stmts: Vec<Stmt>,
 }
 
 impl Func {
-    unsafe fn run(&self, memory: &mut Memory, funcs: &[Func]) -> Option<Value> {
+    pub fn new(num_locals: usize, entry: Option<usize>, stmts: Vec<Stmt>) -> Func {
+        Func {
+            num_locals,
+            entry,
+            stmts,
+        }
+    }
+    pub unsafe fn run(&self, memory: &mut Memory, funcs: &[Func]) -> Option<Value> {
         let stack_id = memory.num_stack;
         memory.num_stack += 1;
-        memory.stacks.insert(stack_id, Vec::new());
-        let mut counter = Some(0);
+        memory.stacks.insert(stack_id, vec![None; self.num_locals]);
+        let mut counter = self.entry;
         let ret = loop {
             counter = match counter {
                 Some(counter) => match self.stmts[counter] {
@@ -159,6 +174,7 @@ impl Func {
     }
 }
 
+#[derive(Debug)]
 pub struct Memory {
     num_stack: usize,
     stacks: HashMap<usize, Vec<Option<Value>>>,
@@ -167,11 +183,17 @@ pub struct Memory {
 type Address = (usize, usize);
 
 impl Memory {
+    pub fn new() -> Memory {
+        Memory {
+            num_stack: 0,
+            stacks: HashMap::new(),
+        }
+    }
     fn get(&self, (stack, pos): Address) -> Value {
         self.stacks[&stack][pos].clone().unwrap()
     }
-    fn get_mut(&mut self, (stack, pos): Address) -> &mut Value {
-        self.stacks.get_mut(&stack).unwrap()[pos].as_mut().unwrap()
+    fn set(&mut self, value: Value, (stack, pos): Address) {
+        self.stacks.get_mut(&stack).unwrap()[pos] = Some(value)
     }
 }
 
@@ -179,6 +201,7 @@ use std::fmt;
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Value::Void => write!(f, "void"),
             Value::Integer(value) => write!(f, "{value}"),
             Value::Boolean(value) => write!(f, "{value}"),
             Value::Address((stack, pos)) => write!(f, "{stack}:{pos}"),

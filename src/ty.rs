@@ -23,6 +23,7 @@ pub enum Kind {
     Boolean,
     String,
     Reference,
+    Tuple,
     Function,
 }
 
