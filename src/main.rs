@@ -50,7 +50,16 @@ fn main() {
         stmt.debug_print(0);
     }
     for (i, ty) in tys.iter().enumerate() {
-        println!("{i}: {ty:?}");
+        println!("variable #{i}: {ty:?}");
+    }
+    for (i, funcs) in funcs.iter().enumerate() {
+        println!("func #{i}");
+        for (func_ty, func) in funcs {
+            match func {
+                ast::Func::Builtin(ptr) => println!("{func_ty:?} {ptr:p}"),
+                ast::Func::UserDefined(def) => def.debug_print(),
+            }
+        }
     }
     let mut ir = Vec::new();
     ast::translate(stmts, &funcs, &tys, &mut ir, None);

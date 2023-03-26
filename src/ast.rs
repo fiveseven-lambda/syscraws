@@ -16,7 +16,10 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::{ir, ty};
+use crate::{
+    ir::{self, BuiltinFunc},
+    ty,
+};
 use enum_iterator::Sequence;
 use num::BigInt;
 
@@ -60,7 +63,6 @@ pub enum Operator {
     NotEqual,
     LogicalAnd,
     LogicalOr,
-    Cast,
     Assign,
     ForwardShiftAssign,
     BackwardShiftAssign,
@@ -90,7 +92,7 @@ pub struct FuncDef {
 }
 
 pub enum Func {
-    Builtin(unsafe fn(Vec<ir::Value>) -> ir::Value),
+    Builtin(ir::BuiltinFunc),
     UserDefined(FuncDef),
 }
 
@@ -122,7 +124,7 @@ pub fn operators() -> Vec<Vec<(Option<ty::Func>, Func)>> {
     ));
     ret[Operator::Assign as usize].push((
         Some(ty::Func {
-            args: vec![ty::Ty::reference(ty::Ty::integer()), ty::Ty::integer()],
+            args: vec![ty::Ty::integer(), ty::Ty::reference(ty::Ty::integer())],
             ret: ty::Ty::reference(ty::Ty::integer()),
         }),
         Func::Builtin(ir::add_integer),
@@ -146,6 +148,21 @@ pub fn translate(
         }
     }
 }
+
+pub fn converter(from: &ty::Ty, to: &ty::Ty) -> Option<Vec<Func>> {
+    match (from.kind, to.kind) {
+        (ty::Kind::Reference, ty::Kind::Reference) => (from.args == to.args).then_some(Vec::new()),
+        (ty::Kind::Reference, _) => converter(&from.args[0], to).map(|mut fns| {
+            fns.push(Func::Builtin(ir::deref));
+            fns
+        }),
+        (ty::Kind::Integer, ty::Kind::Integer) => Some(Vec::new()),
+        (ty::Kind::Float, ty::Kind::Float) => Some(Vec::new()),
+        (ty::Kind::Integer, ty::Kind::Float) => Some(vec![Func::Builtin(ir::integer_to_float)]),
+        _ => None,
+    }
+}
+
 impl Expr {
     fn translate(
         self,
@@ -165,29 +182,51 @@ impl Expr {
                         .into_iter()
                         .map(|arg| arg.translate(funcs, tys))
                         .unzip();
-                    for (func_ty, func) in &funcs[id] {
+                    let mut candidates = Vec::new();
+                    'candidate: for (i, (func_ty, _)) in funcs[id].iter().enumerate() {
                         let func_ty = func_ty.as_ref().unwrap();
-                        println!("{:?}", func_ty);
-
-                        if func_ty
-                            .args
-                            .iter()
-                            .zip(&args_ty)
-                            .all(|(expected_ty, ty)| expected_ty == ty)
-                        {
-                            let Func::Builtin(func) = func else {
-                                todo!();
-                            };
-                            return (
-                                func_ty.ret.clone(),
-                                ir::Expr::Call(
-                                    ir::Expr::Imm(ir::Value::Func(*func)).into(),
-                                    args_expr,
-                                ),
-                            );
+                        let mut converters = Vec::with_capacity(args_ty.len());
+                        for (expected_ty, ty) in func_ty.args.iter().zip(&args_ty) {
+                            match converter(ty, expected_ty) {
+                                Some(funcs) => converters.push(funcs),
+                                None => continue 'candidate,
+                            }
                         }
+                        candidates.push((i, converters))
                     }
-                    panic!();
+                    if candidates.len() == 1 {
+                        let (chosen, converters) = candidates.pop().unwrap();
+                        match funcs[id][chosen] {
+                            (ref func_ty, Func::Builtin(func)) => {
+                                let args = args_expr
+                                    .into_iter()
+                                    .zip(converters)
+                                    .map(|(arg, converters)| {
+                                        converters.into_iter().fold(arg, |arg, converter| {
+                                            let func = match converter {
+                                                Func::Builtin(func) => func,
+                                                _ => panic!(),
+                                            };
+                                            ir::Expr::Call(
+                                                ir::Expr::Imm(ir::Value::BuiltinFunc(func)).into(),
+                                                vec![arg],
+                                            )
+                                        })
+                                    })
+                                    .collect();
+                                (
+                                    func_ty.as_ref().unwrap().ret.clone(),
+                                    ir::Expr::Call(
+                                        ir::Expr::Imm(ir::Value::BuiltinFunc(func)).into(),
+                                        args,
+                                    ),
+                                )
+                            }
+                            _ => panic!(),
+                        }
+                    } else {
+                        panic!("{}", candidates.len());
+                    }
                 }
                 _ => todo!(),
             },

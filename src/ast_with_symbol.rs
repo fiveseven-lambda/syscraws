@@ -23,7 +23,7 @@ use num::BigInt;
 
 pub enum Expr<'id> {
     Identifier(&'id str),
-    Decl(&'id str, Option<PTy<'id>>, Option<Box<PExpr<'id>>>),
+    Decl(&'id str, Option<PTy<'id>>),
     Integer(BigInt),
     Float(f64),
     String(String),
@@ -64,9 +64,9 @@ impl<'id> PStmt<'id> {
     }
 }
 
-pub struct Ty<'id> {
-    pub name: &'id str,
-    pub args: Vec<PTy<'id>>,
+pub enum Ty<'id> {
+    Name(&'id str, Vec<PTy<'id>>),
+    TypeOf(Box<PExpr<'id>>),
 }
 
 pub struct PTy<'id> {
@@ -133,23 +133,12 @@ impl<'id> PExpr<'id> {
         tys: &mut Vec<Option<ty::Ty>>,
     ) -> ast::Expr {
         match self.expr {
-            Expr::Decl(name, ty, right_hand_side) => {
-                // TODO: 右辺のない宣言に対応
-                let right_hand_side = right_hand_side.unwrap().resolve_symbol(
-                    variables,
-                    funcs,
-                    globals,
-                    variables_in_current_scope,
-                    tys,
-                );
+            Expr::Decl(name, ty) => {
                 let id = variables.insert(name);
                 assert_eq!(tys.len(), id);
                 tys.push(ty.map(|ty| ty.resolve_symbol()));
                 variables_in_current_scope.push(name);
-                ast::Expr::Call(
-                    ast::Expr::Func(ast::Operator::Assign as usize).into(),
-                    vec![ast::Expr::Variable(id), right_hand_side],
-                )
+                ast::Expr::Variable(id)
             }
             Expr::Identifier(name) => {
                 if let Some(id) = variables.get(name) {
@@ -329,11 +318,11 @@ impl<'id> PStmt<'id> {
 }
 impl<'id> PTy<'id> {
     fn resolve_symbol(self) -> ty::Ty {
-        match self.ty.name {
-            "int" => ty::Ty::integer(),
-            "float" => ty::Ty::float(),
-            "bool" => ty::Ty::boolean(),
-            "string" => ty::Ty::string(),
+        match self.ty {
+            Ty::Name("int", _) => ty::Ty::integer(),
+            Ty::Name("float", _) => ty::Ty::float(),
+            Ty::Name("bool", _) => ty::Ty::boolean(),
+            Ty::Name("string", _) => ty::Ty::string(),
             _ => panic!(),
         }
     }

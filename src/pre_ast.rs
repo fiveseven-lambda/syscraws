@@ -102,201 +102,152 @@ impl<'id> PTerm<'id> {
         self.pos
     }
     fn into_expr(self, errors: &mut Vec<Error>) -> Result<ast_with_symbol::PExpr<'id>, ()> {
-        let expr = match self.term {
-            Term::Identifier(name) => ast_with_symbol::Expr::Identifier(name),
-            Term::Integer(value) => ast_with_symbol::Expr::Integer(value),
-            Term::Float(value) => ast_with_symbol::Expr::Float(value),
-            Term::String(value) => ast_with_symbol::Expr::String(value),
-            Term::Assign {
-                pos_equal,
-                left_hand_side,
-                right_hand_side,
-            } => {
-                let left_hand_side = left_hand_side
-                    .ok_or_else(|| errors.push(Error::EmptyLeftHandSide(pos_equal.clone())));
-                let right_hand_side = right_hand_side
-                    .ok_or_else(|| errors.push(Error::EmptyRightHandSide(pos_equal.clone())))
-                    .and_then(|term| term.into_expr(errors));
-                let left_hand_side = left_hand_side?;
-                match left_hand_side.term {
-                    Term::BinaryOperation {
-                        operator: BinaryOperator::Type,
-                        left_operand,
-                        right_operand,
-                        pos_operator: _,
-                    } => {
-                        let name = left_operand
-                            .ok_or_else(|| errors.push(Error::EmptyLeftHandSideDecl(pos_equal)))
-                            .and_then(|operand| {
-                                let PTerm { pos, term } = *operand;
-                                match term {
+        let expr = 'expr: {
+            match self.term {
+                Term::Identifier(name) => ast_with_symbol::Expr::Identifier(name),
+                Term::Integer(value) => ast_with_symbol::Expr::Integer(value),
+                Term::Float(value) => ast_with_symbol::Expr::Float(value),
+                Term::String(value) => ast_with_symbol::Expr::String(value),
+                Term::Assign {
+                    pos_equal,
+                    left_hand_side,
+                    right_hand_side,
+                } => {
+                    let left_hand_side = left_hand_side
+                        .ok_or_else(|| errors.push(Error::EmptyLeftHandSide(pos_equal.clone())))
+                        .and_then(|term| term.into_expr(errors));
+                    let right_hand_side = right_hand_side
+                        .ok_or_else(|| errors.push(Error::EmptyRightHandSide(pos_equal.clone())))
+                        .and_then(|term| term.into_expr(errors));
+                    ast_with_symbol::Expr::Call(
+                        ast_with_symbol::PExpr::new(
+                            pos_equal,
+                            ast_with_symbol::Expr::Operator(ast::Operator::Assign),
+                        )
+                        .into(),
+                        vec![right_hand_side?, left_hand_side?],
+                    )
+                }
+                Term::UnaryOperation {
+                    operator,
+                    pos_operator,
+                    operand,
+                } => {
+                    let operator = match operator {
+                        UnaryOperator::Plus => ast::Operator::Plus,
+                        UnaryOperator::Minus => ast::Operator::Minus,
+                        UnaryOperator::LogicalNot => ast::Operator::LogicalNot,
+                        UnaryOperator::BitNot => ast::Operator::BitNot,
+                        UnaryOperator::PreInc => ast::Operator::PreInc,
+                        UnaryOperator::PreDec => ast::Operator::PreDec,
+                        UnaryOperator::PostInc => ast::Operator::PostInc,
+                        UnaryOperator::PostDec => ast::Operator::PostDec,
+                    };
+                    let operand = operand
+                        .ok_or_else(|| errors.push(Error::EmptyUnaryOperand(pos_operator.clone())))
+                        .and_then(|term| term.into_expr(errors));
+                    ast_with_symbol::Expr::Call(
+                        ast_with_symbol::PExpr::new(
+                            pos_operator,
+                            ast_with_symbol::Expr::Operator(operator),
+                        )
+                        .into(),
+                        vec![operand?],
+                    )
+                }
+                Term::BinaryOperation {
+                    operator,
+                    pos_operator,
+                    left_operand,
+                    right_operand,
+                } => {
+                    let operator = match operator {
+                        BinaryOperator::ForwardShift => ast::Operator::ForwardShift,
+                        BinaryOperator::BackwardShift => ast::Operator::BackwardShift,
+                        BinaryOperator::Mul => ast::Operator::Mul,
+                        BinaryOperator::Div => ast::Operator::Div,
+                        BinaryOperator::Rem => ast::Operator::Rem,
+                        BinaryOperator::Add => ast::Operator::Add,
+                        BinaryOperator::Sub => ast::Operator::Sub,
+                        BinaryOperator::RightShift => ast::Operator::RightShift,
+                        BinaryOperator::LeftShift => ast::Operator::LeftShift,
+                        BinaryOperator::BitAnd => ast::Operator::BitAnd,
+                        BinaryOperator::BitXor => ast::Operator::BitXor,
+                        BinaryOperator::BitOr => ast::Operator::BitOr,
+                        BinaryOperator::Greater => ast::Operator::Greater,
+                        BinaryOperator::GreaterEqual => ast::Operator::GreaterEqual,
+                        BinaryOperator::Less => ast::Operator::Less,
+                        BinaryOperator::LessEqual => ast::Operator::LessEqual,
+                        BinaryOperator::Equal => ast::Operator::Equal,
+                        BinaryOperator::NotEqual => ast::Operator::NotEqual,
+                        BinaryOperator::LogicalAnd => ast::Operator::LogicalAnd,
+                        BinaryOperator::LogicalOr => ast::Operator::LogicalOr,
+                        BinaryOperator::Type => {
+                            let name = left_operand
+                                .ok_or_else(|| {
+                                    errors.push(Error::EmptyLeftHandSideDecl(pos_operator.clone()))
+                                })
+                                .and_then(|lhs| match lhs.term {
                                     Term::Identifier(name) => Ok(name),
                                     _ => {
-                                        errors.push(Error::InvalidLeftHandSideDecl(pos));
+                                        errors.push(Error::InvalidLeftHandSideDecl(lhs.pos));
                                         Err(())
                                     }
-                                }
-                            });
-                        let ty = right_operand.map(|term| term.into_ty(errors)).transpose();
-                        ast_with_symbol::Expr::Decl(name?, ty?, Some(right_hand_side?.into()))
-                    }
-                    Term::BinaryOperation {
-                        right_operand: None,
-                        operator,
-                        pos_operator,
-                        left_operand,
-                    } => {
-                        let pos_operator = pos_operator + pos_equal;
-                        let operator = match operator {
-                            BinaryOperator::ForwardShift => Ok(ast::Operator::ForwardShiftAssign),
-                            BinaryOperator::BackwardShift => Ok(ast::Operator::BackwardShiftAssign),
-                            BinaryOperator::Mul => Ok(ast::Operator::MulAssign),
-                            BinaryOperator::Div => Ok(ast::Operator::DivAssign),
-                            BinaryOperator::Rem => Ok(ast::Operator::RemAssign),
-                            BinaryOperator::Add => Ok(ast::Operator::AddAssign),
-                            BinaryOperator::Sub => Ok(ast::Operator::SubAssign),
-                            BinaryOperator::RightShift => Ok(ast::Operator::RightShiftAssign),
-                            BinaryOperator::LeftShift => Ok(ast::Operator::LeftShiftAssign),
-                            BinaryOperator::BitAnd => Ok(ast::Operator::BitAndAssign),
-                            BinaryOperator::BitXor => Ok(ast::Operator::BitXorAssign),
-                            BinaryOperator::BitOr => Ok(ast::Operator::BitOrAssign),
-                            _ => {
-                                errors.push(Error::InvalidCompoundOperator(pos_operator.clone()));
-                                Err(())
-                            }
-                        };
-                        let left_operand = left_operand
-                            .ok_or_else(|| {
-                                errors.push(Error::EmptyLeftOperand(pos_operator.clone()))
-                            })
-                            .and_then(|term| term.into_expr(errors));
-                        ast_with_symbol::Expr::Call(
-                            ast_with_symbol::PExpr::new(
-                                pos_operator,
-                                ast_with_symbol::Expr::Operator(operator?),
-                            )
-                            .into(),
-                            vec![left_operand?, right_hand_side?],
+                                });
+                            let ty = right_operand.map(|term| term.into_ty(errors)).transpose();
+                            break 'expr ast_with_symbol::Expr::Decl(name?, ty?);
+                        }
+                    };
+                    let left_operand = left_operand
+                        .ok_or_else(|| errors.push(Error::EmptyLeftOperand(pos_operator.clone())))
+                        .and_then(|term| term.into_expr(errors));
+                    let right_operand = right_operand
+                        .ok_or_else(|| errors.push(Error::EmptyRightOperand(pos_operator.clone())))
+                        .and_then(|term| term.into_expr(errors));
+                    ast_with_symbol::Expr::Call(
+                        ast_with_symbol::PExpr::new(
+                            pos_operator,
+                            ast_with_symbol::Expr::Operator(operator),
                         )
-                    }
-                    _ => {
-                        let left_hand_side = left_hand_side.into_expr(errors);
-                        ast_with_symbol::Expr::Call(
-                            ast_with_symbol::PExpr::new(
-                                pos_equal,
-                                ast_with_symbol::Expr::Operator(ast::Operator::Assign),
-                            )
-                            .into(),
-                            vec![left_hand_side?, right_hand_side?],
-                        )
-                    }
+                        .into(),
+                        vec![left_operand?, right_operand?],
+                    )
                 }
+                Term::Bracket {
+                    antecedent: Some(func),
+                    bracket_kind: BracketKind::Round,
+                    elements: args,
+                    has_trailing_comma: _,
+                } => {
+                    let func = func.into_expr(errors);
+                    let mut iter = args.into_iter().map(|arg| match arg {
+                        Ok(expr) => expr.into_expr(errors),
+                        Err(pos_comma) => {
+                            errors.push(Error::EmptyArgument(pos_comma));
+                            Err(())
+                        }
+                    });
+                    let args: Result<_, _> = iter.by_ref().collect();
+                    for _ in iter {}
+                    ast_with_symbol::Expr::Call(func?.into(), args?)
+                }
+                Term::Bracket {
+                    antecedent: None,
+                    bracket_kind: BracketKind::Round,
+                    mut elements,
+                    has_trailing_comma: false,
+                } if elements.len() == 1 => {
+                    return unsafe { elements.pop().unwrap_unchecked().unwrap_unchecked() }
+                        .into_expr(errors)
+                }
+                Term::Bracket { .. } => todo!(),
             }
-            Term::UnaryOperation {
-                operator,
-                pos_operator,
-                operand,
-            } => {
-                let operator = match operator {
-                    UnaryOperator::Plus => ast::Operator::Plus,
-                    UnaryOperator::Minus => ast::Operator::Minus,
-                    UnaryOperator::LogicalNot => ast::Operator::LogicalNot,
-                    UnaryOperator::BitNot => ast::Operator::BitNot,
-                    UnaryOperator::PreInc => ast::Operator::PreInc,
-                    UnaryOperator::PreDec => ast::Operator::PreDec,
-                    UnaryOperator::PostInc => ast::Operator::PostInc,
-                    UnaryOperator::PostDec => ast::Operator::PostDec,
-                };
-                let operand = operand
-                    .ok_or_else(|| errors.push(Error::EmptyUnaryOperand(pos_operator.clone())))
-                    .and_then(|term| term.into_expr(errors));
-                ast_with_symbol::Expr::Call(
-                    ast_with_symbol::PExpr::new(
-                        pos_operator,
-                        ast_with_symbol::Expr::Operator(operator),
-                    )
-                    .into(),
-                    vec![operand?],
-                )
-            }
-            Term::BinaryOperation {
-                operator,
-                pos_operator,
-                left_operand,
-                right_operand,
-            } => {
-                let operator = match operator {
-                    BinaryOperator::ForwardShift => ast::Operator::ForwardShift,
-                    BinaryOperator::BackwardShift => ast::Operator::BackwardShift,
-                    BinaryOperator::Mul => ast::Operator::Mul,
-                    BinaryOperator::Div => ast::Operator::Div,
-                    BinaryOperator::Rem => ast::Operator::Rem,
-                    BinaryOperator::Add => ast::Operator::Add,
-                    BinaryOperator::Sub => ast::Operator::Sub,
-                    BinaryOperator::RightShift => ast::Operator::RightShift,
-                    BinaryOperator::LeftShift => ast::Operator::LeftShift,
-                    BinaryOperator::BitAnd => ast::Operator::BitAnd,
-                    BinaryOperator::BitXor => ast::Operator::BitXor,
-                    BinaryOperator::BitOr => ast::Operator::BitOr,
-                    BinaryOperator::Greater => ast::Operator::Greater,
-                    BinaryOperator::GreaterEqual => ast::Operator::GreaterEqual,
-                    BinaryOperator::Less => ast::Operator::Less,
-                    BinaryOperator::LessEqual => ast::Operator::LessEqual,
-                    BinaryOperator::Equal => ast::Operator::Equal,
-                    BinaryOperator::NotEqual => ast::Operator::NotEqual,
-                    BinaryOperator::LogicalAnd => ast::Operator::LogicalAnd,
-                    BinaryOperator::LogicalOr => ast::Operator::LogicalOr,
-                    BinaryOperator::Type => ast::Operator::Cast,
-                };
-                let left_operand = left_operand
-                    .ok_or_else(|| errors.push(Error::EmptyLeftOperand(pos_operator.clone())))
-                    .and_then(|term| term.into_expr(errors));
-                let right_operand = right_operand
-                    .ok_or_else(|| errors.push(Error::EmptyRightOperand(pos_operator.clone())))
-                    .and_then(|term| term.into_expr(errors));
-                ast_with_symbol::Expr::Call(
-                    ast_with_symbol::PExpr::new(
-                        pos_operator,
-                        ast_with_symbol::Expr::Operator(operator),
-                    )
-                    .into(),
-                    vec![left_operand?, right_operand?],
-                )
-            }
-            Term::Bracket {
-                antecedent: Some(func),
-                bracket_kind: BracketKind::Round,
-                elements: args,
-                has_trailing_comma: _,
-            } => {
-                let func = func.into_expr(errors);
-                let mut iter = args.into_iter().map(|arg| match arg {
-                    Ok(expr) => expr.into_expr(errors),
-                    Err(pos_comma) => {
-                        errors.push(Error::EmptyArgument(pos_comma));
-                        Err(())
-                    }
-                });
-                let args: Result<_, _> = iter.by_ref().collect();
-                for _ in iter {}
-                ast_with_symbol::Expr::Call(func?.into(), args?)
-            }
-            Term::Bracket {
-                antecedent: None,
-                bracket_kind: BracketKind::Round,
-                mut elements,
-                has_trailing_comma: false,
-            } if elements.len() == 1 => {
-                return unsafe { elements.pop().unwrap_unchecked().unwrap_unchecked() }
-                    .into_expr(errors)
-            }
-            Term::Bracket { .. } => todo!(),
         };
         Ok(ast_with_symbol::PExpr::new(self.pos, expr))
     }
     fn into_ty(self, errors: &mut Vec<Error>) -> Result<ast_with_symbol::PTy<'id>, ()> {
         let ty = match self.term {
-            Term::Identifier(name) => ast_with_symbol::Ty { name, args: vec![] },
+            Term::Identifier(name) => ast_with_symbol::Ty::Name(name, vec![]),
             Term::Bracket {
                 antecedent,
                 bracket_kind: BracketKind::Square,
@@ -311,7 +262,7 @@ impl<'id> PTerm<'id> {
                     .into_iter()
                     .map(|arg| arg.unwrap().into_ty(errors))
                     .collect();
-                ast_with_symbol::Ty { name, args: args? }
+                ast_with_symbol::Ty::Name(name, args?)
             }
             _ => panic!(),
         };
