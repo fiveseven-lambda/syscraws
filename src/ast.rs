@@ -113,21 +113,21 @@ pub fn operators() -> Vec<Vec<(Option<ty::Func>, Func)>> {
             args: vec![ty::Ty::integer(), ty::Ty::integer()],
             ret: ty::Ty::integer(),
         }),
-        Func::Builtin(ir::add_integer),
+        Func::Builtin(ir::BuiltinFunc::AddInteger),
     ));
     ret[Operator::Add as usize].push((
         Some(ty::Func {
             args: vec![ty::Ty::float(), ty::Ty::float()],
             ret: ty::Ty::float(),
         }),
-        Func::Builtin(ir::add_float),
+        Func::Builtin(ir::BuiltinFunc::AddFloat),
     ));
     ret[Operator::Assign as usize].push((
         Some(ty::Func {
             args: vec![ty::Ty::integer(), ty::Ty::reference(ty::Ty::integer())],
             ret: ty::Ty::reference(ty::Ty::integer()),
         }),
-        Func::Builtin(ir::assign),
+        Func::Builtin(ir::BuiltinFunc::Assign),
     ));
     ret
 }
@@ -155,7 +155,7 @@ pub fn converter(from: &ty::Ty, to: &ty::Ty) -> Option<Vec<Func>> {
     match (from.kind, to.kind) {
         (ty::Kind::Reference, ty::Kind::Reference) => (from.args == to.args).then_some(Vec::new()),
         (ty::Kind::Reference, _) => converter(&from.args[0], to).map(|mut fns| {
-            fns.push(Func::Builtin(ir::deref));
+            fns.push(Func::Builtin(ir::BuiltinFunc::Deref));
             fns
         }),
         (ty::Kind::Integer, ty::Kind::Integer) => Some(Vec::new()),

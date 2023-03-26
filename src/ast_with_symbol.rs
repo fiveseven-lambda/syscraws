@@ -123,7 +123,7 @@ impl<'id> Funcs<'id> {
                     args: vec![],
                 },
             }),
-            ast::Func::Builtin(crate::ir::print_integer),
+            ast::Func::Builtin(crate::ir::BuiltinFunc::PrintInteger),
         ));
         ret
     }

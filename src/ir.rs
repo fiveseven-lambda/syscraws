@@ -59,44 +59,47 @@ impl Value {
     }
 }
 
-pub unsafe fn add_integer(args: Vec<Value>, _: &mut Memory) -> Value {
-    let mut args = args.into_iter();
-    let first = args.next().unwrap_unchecked().into_integer_unchecked();
-    let second = args.next().unwrap_unchecked().into_integer_unchecked();
-    Value::Integer(first + second)
+#[derive(Clone, Copy, Debug)]
+pub enum BuiltinFunc {
+    AddInteger,
+    PrintInteger,
+    AddFloat,
+    Assign,
+    Deref,
 }
-pub unsafe fn print_integer(args: Vec<Value>, _: &mut Memory) -> Value {
-    let mut args = args.into_iter();
-    let value = args.next().unwrap_unchecked().into_integer_unchecked();
-    println!("{value}");
-    Value::Void
+impl BuiltinFunc {
+    unsafe fn call(self, args: Vec<Value>, memory: &mut Memory) -> Value {
+        let mut args = args.into_iter();
+        let mut arg = || args.next().unwrap_unchecked();
+        match self {
+            BuiltinFunc::AddInteger => {
+                let first = arg().into_integer_unchecked();
+                let second = arg().into_integer_unchecked();
+                Value::Integer(first + second)
+            }
+            BuiltinFunc::PrintInteger => {
+                let value = arg().into_integer_unchecked();
+                println!("{value}");
+                Value::Void
+            }
+            BuiltinFunc::AddFloat => {
+                let first = arg().into_float_unchecked();
+                let second = arg().into_float_unchecked();
+                Value::Float(first + second)
+            }
+            BuiltinFunc::Assign => {
+                let src = arg();
+                let dest = arg().into_address_unchecked();
+                memory.set(src.clone(), dest);
+                src
+            }
+            BuiltinFunc::Deref => {
+                let ptr = arg().into_address_unchecked();
+                memory.get(ptr)
+            }
+        }
+    }
 }
-use num::ToPrimitive;
-pub unsafe fn integer_to_float(args: Vec<Value>, _: &mut Memory) -> Value {
-    let mut args = args.into_iter();
-    let value = args.next().unwrap_unchecked().into_integer_unchecked();
-    Value::Float(value.to_f64().unwrap_or(f64::INFINITY))
-}
-pub unsafe fn add_float(args: Vec<Value>, _: &mut Memory) -> Value {
-    let mut args = args.into_iter();
-    let first = args.next().unwrap_unchecked().into_float_unchecked();
-    let second = args.next().unwrap_unchecked().into_float_unchecked();
-    Value::Float(first + second)
-}
-pub unsafe fn deref(args: Vec<Value>, memory: &mut Memory) -> Value {
-    let mut args = args.into_iter();
-    let addr = args.next().unwrap_unchecked().into_address_unchecked();
-    memory.get(addr)
-}
-pub unsafe fn assign(args: Vec<Value>, memory: &mut Memory) -> Value {
-    let mut args = args.into_iter();
-    let src = args.next().unwrap_unchecked();
-    let dest = args.next().unwrap_unchecked().into_address_unchecked();
-    memory.set(src.clone(), dest);
-    src
-}
-
-pub type BuiltinFunc = unsafe fn(Vec<Value>, &mut Memory) -> Value;
 
 pub enum Expr {
     Imm(Value),
@@ -114,7 +117,7 @@ impl Expr {
                         .iter()
                         .map(|expr| expr.eval(memory, stack_id, funcs))
                         .collect();
-                    func(args, memory)
+                    func.call(args, memory)
                 }
                 Value::UserDefinedFunc(id) => todo!(),
                 _ => unsafe { unreachable_unchecked() },
@@ -206,8 +209,8 @@ impl fmt::Debug for Value {
             Value::Boolean(value) => write!(f, "{value}"),
             Value::Address((stack, pos)) => write!(f, "{stack}:{pos}"),
             Value::Float(value) => write!(f, "{value}"),
-            Value::BuiltinFunc(ptr) => write!(f, "builtin func {ptr:p}"),
-            Value::UserDefinedFunc(id) => write!(f, "func {id}"),
+            Value::BuiltinFunc(ptr) => write!(f, "{ptr:?}"),
+            Value::UserDefinedFunc(id) => write!(f, "func #{id}"),
         }
     }
 }
