@@ -17,8 +17,10 @@
  */
 
 use crate::ast;
+use crate::ir;
 use crate::range::Range;
 use crate::ty;
+use enum_iterator::Sequence;
 use num::BigInt;
 
 pub enum Expr<'id> {
@@ -27,7 +29,7 @@ pub enum Expr<'id> {
     Integer(BigInt),
     Float(f64),
     String(String),
-    Operator(ast::Operator),
+    Operator(Operator),
     Call(Box<PExpr<'id>>, Vec<PExpr<'id>>),
 }
 pub struct PExpr<'id> {
@@ -79,7 +81,53 @@ impl<'id> PTy<'id> {
     }
 }
 
+#[derive(Debug, Clone, Sequence)]
+pub enum Operator {
+    Plus,
+    Minus,
+    LogicalNot,
+    BitNot,
+    PreInc,
+    PreDec,
+    PostInc,
+    PostDec,
+    ForwardShift,
+    BackwardShift,
+    Mul,
+    Div,
+    Rem,
+    Add,
+    Sub,
+    RightShift,
+    LeftShift,
+    BitAnd,
+    BitXor,
+    BitOr,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
+    Equal,
+    NotEqual,
+    LogicalAnd,
+    LogicalOr,
+    Assign,
+    ForwardShiftAssign,
+    BackwardShiftAssign,
+    MulAssign,
+    DivAssign,
+    RemAssign,
+    AddAssign,
+    SubAssign,
+    RightShiftAssign,
+    LeftShiftAssign,
+    BitAndAssign,
+    BitXorAssign,
+    BitOrAssign,
+}
+
 use std::collections::HashMap;
+use std::iter;
 struct Variables<'id> {
     names: HashMap<&'id str, Vec<usize>>,
     num: usize,
@@ -108,23 +156,55 @@ struct Funcs<'id> {
     names: HashMap<&'id str, usize>,
     defs: Vec<Vec<(Option<ty::Func>, ast::Func)>>,
 }
+
 impl<'id> Funcs<'id> {
     fn new() -> Funcs<'id> {
         let mut ret = Funcs {
             names: HashMap::new(),
-            defs: ast::operators(),
+            defs: iter::repeat_with(Vec::new)
+                .take(Operator::CARDINALITY)
+                .collect(),
         };
+        use ty::Ty;
+        macro_rules! add_builtin {
+            ($op:ident : $func:ident ($($args:expr),*) -> $ret:expr) => {
+                add_builtin!((Operator::$op as usize) : $func ($($args),*) -> $ret)
+            };
+            (($id:expr) : $func:ident ($($args:expr),*) -> $ret:expr) => {
+                ret.defs[$id].push((
+                    Some(ty::Func {
+                        args: vec![$($args),*],
+                        ret: $ret
+                    }),
+                    ast::Func::Builtin(ir::BuiltinFunc::$func)
+                ))
+            };
+        }
+        add_builtin!(Add: AddFloat(Ty::float(), Ty::float()) -> Ty::float());
+        add_builtin!(Add: AddInteger(Ty::integer(), Ty::integer()) -> Ty::integer());
+        add_builtin!(Sub: SubFloat(Ty::float(), Ty::float()) -> Ty::float());
+        add_builtin!(Sub: SubInteger(Ty::integer(), Ty::integer()) -> Ty::integer());
+        add_builtin!(Mul: MulFloat(Ty::float(), Ty::float()) -> Ty::float());
+        add_builtin!(Mul: MulInteger(Ty::integer(), Ty::integer()) -> Ty::integer());
+        add_builtin!(Div: DivFloat(Ty::float(), Ty::float()) -> Ty::float());
+        add_builtin!(Div: DivInteger(Ty::integer(), Ty::integer()) -> Ty::integer());
+        add_builtin!(Rem: RemFloat(Ty::float(), Ty::float()) -> Ty::float());
+        add_builtin!(Rem: RemInteger(Ty::integer(), Ty::integer()) -> Ty::integer());
+        add_builtin!(Equal: EqualInteger(Ty::integer(), Ty::integer()) -> Ty::boolean());
+        add_builtin!(NotEqual: NotEqualInteger(Ty::integer(), Ty::integer()) -> Ty::boolean());
+        add_builtin!(Greater: GreaterInteger(Ty::integer(), Ty::integer()) -> Ty::boolean());
+        add_builtin!(
+            GreaterEqual: GreaterEqualInteger(Ty::integer(), Ty::integer()) -> Ty::boolean()
+        );
+        add_builtin!(Less: LessInteger(Ty::integer(), Ty::integer()) -> Ty::boolean());
+        add_builtin!(LessEqual: LessEqualInteger(Ty::integer(), Ty::integer()) -> Ty::boolean());
+        add_builtin!(Assign: Assign(Ty::float(), Ty::reference(Ty::float())) -> Ty::float());
+        add_builtin!(Assign: Assign(Ty::integer(), Ty::reference(Ty::integer())) -> Ty::integer());
+        add_builtin!(Assign: Assign(Ty::boolean(), Ty::reference(Ty::boolean())) -> Ty::boolean());
         let print = ret.get_or_insert("print");
-        ret.defs[print].push((
-            Some(ty::Func {
-                args: vec![ty::Ty::integer()],
-                ret: ty::Ty {
-                    kind: ty::Kind::Tuple,
-                    args: vec![],
-                },
-            }),
-            ast::Func::Builtin(crate::ir::BuiltinFunc::PrintInteger),
-        ));
+        add_builtin!((print): PrintFloat(Ty::float()) -> Ty::tuple(vec![]));
+        add_builtin!((print): PrintInteger(Ty::integer()) -> Ty::tuple(vec![]));
+        add_builtin!((print): PrintBoolean(Ty::boolean()) -> Ty::tuple(vec![]));
         ret
     }
     fn get_or_insert(&mut self, name: &'id str) -> usize {

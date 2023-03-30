@@ -16,7 +16,6 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::ast;
 use crate::ast_with_symbol;
 use crate::range::Range;
 use num::BigInt;
@@ -122,7 +121,7 @@ impl<'id> PTerm<'id> {
                     ast_with_symbol::Expr::Call(
                         ast_with_symbol::PExpr::new(
                             pos_equal,
-                            ast_with_symbol::Expr::Operator(ast::Operator::Assign),
+                            ast_with_symbol::Expr::Operator(ast_with_symbol::Operator::Assign),
                         )
                         .into(),
                         vec![right_hand_side?, left_hand_side?],
@@ -134,14 +133,14 @@ impl<'id> PTerm<'id> {
                     operand,
                 } => {
                     let operator = match operator {
-                        UnaryOperator::Plus => ast::Operator::Plus,
-                        UnaryOperator::Minus => ast::Operator::Minus,
-                        UnaryOperator::LogicalNot => ast::Operator::LogicalNot,
-                        UnaryOperator::BitNot => ast::Operator::BitNot,
-                        UnaryOperator::PreInc => ast::Operator::PreInc,
-                        UnaryOperator::PreDec => ast::Operator::PreDec,
-                        UnaryOperator::PostInc => ast::Operator::PostInc,
-                        UnaryOperator::PostDec => ast::Operator::PostDec,
+                        UnaryOperator::Plus => ast_with_symbol::Operator::Plus,
+                        UnaryOperator::Minus => ast_with_symbol::Operator::Minus,
+                        UnaryOperator::LogicalNot => ast_with_symbol::Operator::LogicalNot,
+                        UnaryOperator::BitNot => ast_with_symbol::Operator::BitNot,
+                        UnaryOperator::PreInc => ast_with_symbol::Operator::PreInc,
+                        UnaryOperator::PreDec => ast_with_symbol::Operator::PreDec,
+                        UnaryOperator::PostInc => ast_with_symbol::Operator::PostInc,
+                        UnaryOperator::PostDec => ast_with_symbol::Operator::PostDec,
                     };
                     let operand = operand
                         .ok_or_else(|| errors.push(Error::EmptyUnaryOperand(pos_operator.clone())))
@@ -162,26 +161,26 @@ impl<'id> PTerm<'id> {
                     right_operand,
                 } => {
                     let operator = match operator {
-                        BinaryOperator::ForwardShift => ast::Operator::ForwardShift,
-                        BinaryOperator::BackwardShift => ast::Operator::BackwardShift,
-                        BinaryOperator::Mul => ast::Operator::Mul,
-                        BinaryOperator::Div => ast::Operator::Div,
-                        BinaryOperator::Rem => ast::Operator::Rem,
-                        BinaryOperator::Add => ast::Operator::Add,
-                        BinaryOperator::Sub => ast::Operator::Sub,
-                        BinaryOperator::RightShift => ast::Operator::RightShift,
-                        BinaryOperator::LeftShift => ast::Operator::LeftShift,
-                        BinaryOperator::BitAnd => ast::Operator::BitAnd,
-                        BinaryOperator::BitXor => ast::Operator::BitXor,
-                        BinaryOperator::BitOr => ast::Operator::BitOr,
-                        BinaryOperator::Greater => ast::Operator::Greater,
-                        BinaryOperator::GreaterEqual => ast::Operator::GreaterEqual,
-                        BinaryOperator::Less => ast::Operator::Less,
-                        BinaryOperator::LessEqual => ast::Operator::LessEqual,
-                        BinaryOperator::Equal => ast::Operator::Equal,
-                        BinaryOperator::NotEqual => ast::Operator::NotEqual,
-                        BinaryOperator::LogicalAnd => ast::Operator::LogicalAnd,
-                        BinaryOperator::LogicalOr => ast::Operator::LogicalOr,
+                        BinaryOperator::ForwardShift => ast_with_symbol::Operator::ForwardShift,
+                        BinaryOperator::BackwardShift => ast_with_symbol::Operator::BackwardShift,
+                        BinaryOperator::Mul => ast_with_symbol::Operator::Mul,
+                        BinaryOperator::Div => ast_with_symbol::Operator::Div,
+                        BinaryOperator::Rem => ast_with_symbol::Operator::Rem,
+                        BinaryOperator::Add => ast_with_symbol::Operator::Add,
+                        BinaryOperator::Sub => ast_with_symbol::Operator::Sub,
+                        BinaryOperator::RightShift => ast_with_symbol::Operator::RightShift,
+                        BinaryOperator::LeftShift => ast_with_symbol::Operator::LeftShift,
+                        BinaryOperator::BitAnd => ast_with_symbol::Operator::BitAnd,
+                        BinaryOperator::BitXor => ast_with_symbol::Operator::BitXor,
+                        BinaryOperator::BitOr => ast_with_symbol::Operator::BitOr,
+                        BinaryOperator::Greater => ast_with_symbol::Operator::Greater,
+                        BinaryOperator::GreaterEqual => ast_with_symbol::Operator::GreaterEqual,
+                        BinaryOperator::Less => ast_with_symbol::Operator::Less,
+                        BinaryOperator::LessEqual => ast_with_symbol::Operator::LessEqual,
+                        BinaryOperator::Equal => ast_with_symbol::Operator::Equal,
+                        BinaryOperator::NotEqual => ast_with_symbol::Operator::NotEqual,
+                        BinaryOperator::LogicalAnd => ast_with_symbol::Operator::LogicalAnd,
+                        BinaryOperator::LogicalOr => ast_with_symbol::Operator::LogicalOr,
                         BinaryOperator::Type => {
                             let name = left_operand
                                 .ok_or_else(|| {

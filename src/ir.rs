@@ -62,8 +62,25 @@ impl Value {
 #[derive(Clone, Copy, Debug)]
 pub enum BuiltinFunc {
     AddInteger,
+    SubInteger,
+    MulInteger,
+    DivInteger,
+    RemInteger,
     PrintInteger,
     AddFloat,
+    SubFloat,
+    MulFloat,
+    DivFloat,
+    RemFloat,
+    PrintFloat,
+    EqualInteger,
+    NotEqualInteger,
+    GreaterInteger,
+    GreaterEqualInteger,
+    LessInteger,
+    LessEqualInteger,
+    IntegerToFloat,
+    PrintBoolean,
     Assign,
     Deref,
 }
@@ -72,20 +89,75 @@ impl BuiltinFunc {
         let mut args = args.into_iter();
         let mut arg = || args.next().unwrap_unchecked();
         match self {
-            BuiltinFunc::AddInteger => {
+            BuiltinFunc::AddInteger
+            | BuiltinFunc::SubInteger
+            | BuiltinFunc::MulInteger
+            | BuiltinFunc::DivInteger
+            | BuiltinFunc::RemInteger => {
                 let first = arg().into_integer_unchecked();
                 let second = arg().into_integer_unchecked();
-                Value::Integer(first + second)
+                Value::Integer(match self {
+                    BuiltinFunc::AddInteger => first + second,
+                    BuiltinFunc::SubInteger => first - second,
+                    BuiltinFunc::MulInteger => first * second,
+                    BuiltinFunc::DivInteger => first / second,
+                    BuiltinFunc::RemInteger => first % second,
+                    _ => unreachable_unchecked(),
+                })
+            }
+            BuiltinFunc::EqualInteger
+            | BuiltinFunc::NotEqualInteger
+            | BuiltinFunc::GreaterInteger
+            | BuiltinFunc::GreaterEqualInteger
+            | BuiltinFunc::LessInteger
+            | BuiltinFunc::LessEqualInteger => {
+                let first = arg().into_integer_unchecked();
+                let second = arg().into_integer_unchecked();
+                Value::Boolean(match self {
+                    BuiltinFunc::EqualInteger => first == second,
+                    BuiltinFunc::NotEqualInteger => first != second,
+                    BuiltinFunc::GreaterInteger => first > second,
+                    BuiltinFunc::GreaterEqualInteger => first >= second,
+                    BuiltinFunc::LessInteger => first < second,
+                    BuiltinFunc::LessEqualInteger => first <= second,
+                    _ => unreachable_unchecked(),
+                })
             }
             BuiltinFunc::PrintInteger => {
                 let value = arg().into_integer_unchecked();
                 println!("{value}");
                 Value::Void
             }
-            BuiltinFunc::AddFloat => {
+            BuiltinFunc::AddFloat
+            | BuiltinFunc::SubFloat
+            | BuiltinFunc::MulFloat
+            | BuiltinFunc::DivFloat
+            | BuiltinFunc::RemFloat => {
                 let first = arg().into_float_unchecked();
                 let second = arg().into_float_unchecked();
-                Value::Float(first + second)
+                Value::Float(match self {
+                    BuiltinFunc::AddFloat => first + second,
+                    BuiltinFunc::SubFloat => first - second,
+                    BuiltinFunc::MulFloat => first * second,
+                    BuiltinFunc::DivFloat => first / second,
+                    BuiltinFunc::RemFloat => first % second,
+                    _ => unreachable_unchecked(),
+                })
+            }
+            BuiltinFunc::PrintFloat => {
+                let value = arg().into_float_unchecked();
+                println!("{value}");
+                Value::Void
+            }
+            BuiltinFunc::IntegerToFloat => {
+                use num::ToPrimitive;
+                let value = arg().into_integer_unchecked();
+                Value::Float(value.to_f64().unwrap())
+            }
+            BuiltinFunc::PrintBoolean => {
+                let value = arg().into_boolean_unchecked();
+                println!("{value}");
+                Value::Void
             }
             BuiltinFunc::Assign => {
                 let src = arg();
@@ -242,7 +314,11 @@ pub fn debug_print(stmts: &[Stmt]) {
                 expr.debug_print(0);
                 println!("-> {next:?}");
             }
-            Stmt::Branch(expr, next_true, next_false) => todo!(),
+            Stmt::Branch(cond, next_true, next_false) => {
+                cond.debug_print(0);
+                println!("true -> {next_true:?}");
+                println!("false -> {next_false:?}");
+            }
         }
     }
 }

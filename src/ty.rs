@@ -58,6 +58,12 @@ impl Ty {
             args: vec![],
         }
     }
+    pub fn tuple(args: Vec<Ty>) -> Ty {
+        Ty {
+            kind: Kind::Tuple,
+            args,
+        }
+    }
     pub fn reference(arg: Ty) -> Ty {
         Ty {
             kind: Kind::Reference,

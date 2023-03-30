@@ -56,7 +56,7 @@ fn main() {
         println!("func #{i}");
         for (func_ty, func) in funcs {
             match func {
-                ast::Func::Builtin(ptr) => println!("{func_ty:?} {ptr:p}"),
+                ast::Func::Builtin(name) => println!("{func_ty:?} {name:?}"),
                 ast::Func::UserDefined(def) => def.debug_print(),
             }
         }

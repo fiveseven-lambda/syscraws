@@ -16,11 +16,9 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::{
-    ir::{self, BuiltinFunc},
-    ty,
-};
-use enum_iterator::Sequence;
+//! 抽象構文木 AST を定義する．
+
+use crate::{ir, ty};
 use num::BigInt;
 
 pub enum Expr {
@@ -31,51 +29,6 @@ pub enum Expr {
     Float(f64),
     String(String),
     Call(Box<Expr>, Vec<Expr>),
-}
-
-#[derive(Debug, Clone, Sequence)]
-pub enum Operator {
-    Plus,
-    Minus,
-    LogicalNot,
-    BitNot,
-    PreInc,
-    PreDec,
-    PostInc,
-    PostDec,
-    ForwardShift,
-    BackwardShift,
-    Mul,
-    Div,
-    Rem,
-    Add,
-    Sub,
-    RightShift,
-    LeftShift,
-    BitAnd,
-    BitXor,
-    BitOr,
-    Greater,
-    GreaterEqual,
-    Less,
-    LessEqual,
-    Equal,
-    NotEqual,
-    LogicalAnd,
-    LogicalOr,
-    Assign,
-    ForwardShiftAssign,
-    BackwardShiftAssign,
-    MulAssign,
-    DivAssign,
-    RemAssign,
-    AddAssign,
-    SubAssign,
-    RightShiftAssign,
-    LeftShiftAssign,
-    BitAndAssign,
-    BitXorAssign,
-    BitOrAssign,
 }
 
 pub enum Stmt {
@@ -106,32 +59,6 @@ impl FuncDef {
     }
 }
 
-pub fn operators() -> Vec<Vec<(Option<ty::Func>, Func)>> {
-    let mut ret: Vec<_> = (0..Operator::CARDINALITY).map(|_| Vec::new()).collect();
-    ret[Operator::Add as usize].push((
-        Some(ty::Func {
-            args: vec![ty::Ty::integer(), ty::Ty::integer()],
-            ret: ty::Ty::integer(),
-        }),
-        Func::Builtin(ir::BuiltinFunc::AddInteger),
-    ));
-    ret[Operator::Add as usize].push((
-        Some(ty::Func {
-            args: vec![ty::Ty::float(), ty::Ty::float()],
-            ret: ty::Ty::float(),
-        }),
-        Func::Builtin(ir::BuiltinFunc::AddFloat),
-    ));
-    ret[Operator::Assign as usize].push((
-        Some(ty::Func {
-            args: vec![ty::Ty::integer(), ty::Ty::reference(ty::Ty::integer())],
-            ret: ty::Ty::reference(ty::Ty::integer()),
-        }),
-        Func::Builtin(ir::BuiltinFunc::Assign),
-    ));
-    ret
-}
-
 pub fn translate(
     stmts: &mut impl Iterator<Item = Stmt>,
     funcs: &[Vec<(Option<ty::Func>, Func)>],
@@ -146,6 +73,17 @@ pub fn translate(
             target.push(ir::Stmt::Expr(expr.translate(funcs, tys).1, next));
             Some(this)
         }
+        Some(Stmt::If(cond, stmts_then, stmts_else)) => {
+            let next_then = translate(&mut stmts_then.into_iter(), funcs, tys, target, next);
+            let next_else = translate(&mut stmts_else.into_iter(), funcs, tys, target, next);
+            let this = target.len();
+            target.push(ir::Stmt::Branch(
+                cond.translate(funcs, tys).1,
+                next_then,
+                next_else,
+            ));
+            Some(this)
+        }
         Some(_) => todo!(),
         None => next,
     }
@@ -153,13 +91,15 @@ pub fn translate(
 
 pub fn converter(from: &ty::Ty, to: &ty::Ty) -> Option<Vec<Func>> {
     match (from.kind, to.kind) {
-        (ty::Kind::Reference, ty::Kind::Reference) => (from.args == to.args).then_some(Vec::new()),
+        (t1, t2) if t1 == t2 => Some(Vec::new()),
+        (ty::Kind::Reference, ty::Kind::Reference) => None,
         (ty::Kind::Reference, _) => converter(&from.args[0], to).map(|mut fns| {
             fns.push(Func::Builtin(ir::BuiltinFunc::Deref));
             fns
         }),
-        (ty::Kind::Integer, ty::Kind::Integer) => Some(Vec::new()),
-        (ty::Kind::Float, ty::Kind::Float) => Some(Vec::new()),
+        (ty::Kind::Integer, ty::Kind::Float) => {
+            Some(vec![Func::Builtin(ir::BuiltinFunc::IntegerToFloat)])
+        }
         _ => None,
     }
 }
@@ -195,7 +135,7 @@ impl Expr {
                         }
                         candidates.push((i, converters))
                     }
-                    if candidates.len() == 1 {
+                    if !candidates.is_empty() {
                         let (chosen, converters) = candidates.pop().unwrap();
                         match funcs[id][chosen] {
                             (ref func_ty, Func::Builtin(func)) => {
@@ -203,7 +143,7 @@ impl Expr {
                                     .into_iter()
                                     .zip(converters)
                                     .map(|(arg, converters)| {
-                                        converters.into_iter().fold(arg, |arg, converter| {
+                                        converters.into_iter().rev().fold(arg, |arg, converter| {
                                             let func = match converter {
                                                 Func::Builtin(func) => func,
                                                 _ => panic!(),
@@ -226,7 +166,7 @@ impl Expr {
                             _ => panic!(),
                         }
                     } else {
-                        panic!("{}", candidates.len());
+                        panic!("{} candidates", candidates.len());
                     }
                 }
                 _ => todo!(),
