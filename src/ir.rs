@@ -200,52 +200,44 @@ impl Expr {
 
 pub enum Stmt {
     Return(Expr),
-    Expr(Expr, Option<usize>),
-    Branch(Expr, Option<usize>, Option<usize>),
+    Expr(Expr, usize),
+    Branch(Expr, usize, usize),
 }
 
 pub struct Func {
     num_locals: usize,
-    entry: Option<usize>,
     stmts: Vec<Stmt>,
 }
 
 impl Func {
-    pub fn new(num_locals: usize, entry: Option<usize>, stmts: Vec<Stmt>) -> Func {
-        Func {
-            num_locals,
-            entry,
-            stmts,
-        }
+    pub fn new(num_locals: usize, stmts: Vec<Stmt>) -> Func {
+        Func { num_locals, stmts }
     }
     pub unsafe fn run(&self, memory: &mut Memory, funcs: &[Func]) -> Option<Value> {
         let stack_id = memory.num_stack;
         memory.num_stack += 1;
         memory.stacks.insert(stack_id, vec![None; self.num_locals]);
-        let mut counter = self.entry;
-        let ret = loop {
-            counter = match counter {
-                Some(counter) => match self.stmts[counter] {
-                    Stmt::Expr(ref expr, next) => {
-                        expr.eval(memory, stack_id, funcs);
-                        next
+        let mut counter = 0;
+        while let Some(stmt) = self.stmts.get(counter) {
+            counter = match stmt {
+                Stmt::Expr(expr, next) => {
+                    expr.eval(memory, stack_id, funcs);
+                    *next
+                }
+                Stmt::Return(expr) => {
+                    break;
+                }
+                Stmt::Branch(cond, next_true, next_false) => {
+                    if cond.eval(memory, stack_id, funcs).into_boolean_unchecked() {
+                        *next_true
+                    } else {
+                        *next_false
                     }
-                    Stmt::Return(ref expr) => {
-                        break Some(expr.eval(memory, stack_id, funcs));
-                    }
-                    Stmt::Branch(ref cond, next_true, next_false) => {
-                        if cond.eval(memory, stack_id, funcs).into_boolean_unchecked() {
-                            next_true
-                        } else {
-                            next_false
-                        }
-                    }
-                },
-                None => break None,
-            };
-        };
+                }
+            }
+        }
         memory.stacks.remove(&stack_id);
-        ret
+        None
     }
 }
 

@@ -20,6 +20,7 @@
 
 use crate::{ir, ty};
 use num::BigInt;
+use std::iter;
 
 pub enum Expr {
     Variable(usize),
@@ -32,16 +33,98 @@ pub enum Expr {
 }
 
 pub enum Stmt {
-    Expr(Expr),
+    Expr(Option<Expr>),
     Return(Option<Expr>),
-    If(Expr, Vec<Stmt>, Vec<Stmt>),
-    While(Expr, Vec<Stmt>),
+    If(Expr, Box<StmtWithSize>, Box<StmtWithSize>),
+    While(Expr, Box<StmtWithSize>),
+    Block(Vec<StmtWithSize>),
+}
+pub struct StmtWithSize {
+    stmt: Stmt,
+    size: Option<usize>,
+}
+
+impl StmtWithSize {
+    pub fn new(stmt: Stmt) -> StmtWithSize {
+        StmtWithSize { stmt, size: None }
+    }
+    pub fn calc_size(&mut self) -> usize {
+        let size = match &mut self.stmt {
+            Stmt::Expr(Some(_)) => 1,
+            Stmt::Expr(None) => 0,
+            Stmt::Return(_) => 1,
+            Stmt::If(_, stmt_then, stmt_else) => 1 + stmt_then.calc_size() + stmt_else.calc_size(),
+            Stmt::While(_, stmt) => 1 + stmt.calc_size(),
+            Stmt::Block(stmts) => stmts.iter_mut().map(StmtWithSize::calc_size).sum(),
+        };
+        self.size = Some(size);
+        size
+    }
+    pub fn translate(
+        self,
+        funcs: &[Vec<(Option<ty::Func>, Func)>],
+        tys: &[Option<ty::Ty>],
+    ) -> Vec<ir::Stmt> {
+        let size = self.size.unwrap();
+        let mut ret: Vec<_> = iter::repeat_with(|| None).take(size).collect();
+        self.translate_rec(funcs, tys, &mut ret, 0, size);
+        ret.into_iter().map(Option::unwrap).collect()
+    }
+    pub fn translate_rec(
+        self,
+        funcs: &[Vec<(Option<ty::Func>, Func)>],
+        tys: &[Option<ty::Ty>],
+        target: &mut [Option<ir::Stmt>],
+        cur: usize,
+        next: usize,
+    ) {
+        match self.stmt {
+            Stmt::Expr(Some(expr)) => {
+                assert!(target[cur].is_none());
+                target[cur] = Some(ir::Stmt::Expr(expr.translate(funcs, tys).1, next));
+            }
+            Stmt::Expr(None) => {}
+            Stmt::Return(_) => todo!(),
+            Stmt::While(cond, stmt) => {
+                let ind_stmt = cur + 1;
+                target[cur] = Some(ir::Stmt::Branch(
+                    cond.translate(funcs, tys).1,
+                    ind_stmt,
+                    next,
+                ));
+                stmt.translate_rec(funcs, tys, target, ind_stmt, cur);
+            }
+            Stmt::If(cond, stmt_then, stmt_else) => {
+                let ind_then = cur + 1;
+                let ind_else = ind_then + stmt_then.size.unwrap();
+                target[cur] = Some(ir::Stmt::Branch(
+                    cond.translate(funcs, tys).1,
+                    ind_then,
+                    ind_else,
+                ));
+                stmt_then.translate_rec(funcs, tys, target, ind_then, next);
+                stmt_else.translate_rec(funcs, tys, target, ind_else, next);
+            }
+            Stmt::Block(mut stmts) => {
+                let mut ind = cur;
+                let Some(last_stmt) = stmts.pop() else {
+                    return
+                };
+                for stmt in stmts {
+                    let ind_next = ind + stmt.size.unwrap();
+                    stmt.translate_rec(funcs, tys, target, ind, ind_next);
+                    ind = ind_next;
+                }
+                last_stmt.translate_rec(funcs, tys, target, ind, next);
+            }
+        }
+    }
 }
 
 pub struct FuncDef {
     num_args: usize,
     tys: Vec<Option<ty::Ty>>,
-    body: Vec<Stmt>,
+    body: Stmt,
 }
 
 pub enum Func {
@@ -50,42 +133,12 @@ pub enum Func {
 }
 
 impl FuncDef {
-    pub fn new(num_args: usize, tys: Vec<Option<ty::Ty>>, body: Vec<Stmt>) -> FuncDef {
+    pub fn new(num_args: usize, tys: Vec<Option<ty::Ty>>, body: Stmt) -> FuncDef {
         FuncDef {
             num_args,
             tys,
             body,
         }
-    }
-}
-
-pub fn translate(
-    stmts: &mut impl Iterator<Item = Stmt>,
-    funcs: &[Vec<(Option<ty::Func>, Func)>],
-    tys: &[Option<ty::Ty>],
-    target: &mut Vec<ir::Stmt>,
-    next: Option<usize>,
-) -> Option<usize> {
-    match stmts.next() {
-        Some(Stmt::Expr(expr)) => {
-            let next = translate(stmts, funcs, tys, target, next);
-            let this = target.len();
-            target.push(ir::Stmt::Expr(expr.translate(funcs, tys).1, next));
-            Some(this)
-        }
-        Some(Stmt::If(cond, stmts_then, stmts_else)) => {
-            let next_then = translate(&mut stmts_then.into_iter(), funcs, tys, target, next);
-            let next_else = translate(&mut stmts_else.into_iter(), funcs, tys, target, next);
-            let this = target.len();
-            target.push(ir::Stmt::Branch(
-                cond.translate(funcs, tys).1,
-                next_then,
-                next_else,
-            ));
-            Some(this)
-        }
-        Some(_) => todo!(),
-        None => next,
     }
 }
 
@@ -200,9 +253,12 @@ impl Stmt {
     pub fn debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
         match self {
-            Stmt::Expr(expr) => {
+            Stmt::Expr(Some(expr)) => {
                 println!("{indent}expression statement");
                 expr.debug_print(depth + 1);
+            }
+            Stmt::Expr(None) => {
+                println!("{indent}expression statement (empty)");
             }
             Stmt::Return(expr) => {
                 println!("{indent}return statement");
@@ -213,19 +269,16 @@ impl Stmt {
             Stmt::If(cond, stmts_then, stmts_else) => {
                 println!("{indent}if statement");
                 cond.debug_print(depth + 1);
-                println!("{indent}then");
-                for stmt in stmts_then {
-                    stmt.debug_print(depth + 1);
-                }
-                println!("{indent}else");
-                for stmt in stmts_else {
-                    stmt.debug_print(depth + 1);
-                }
+                stmts_then.debug_print(depth);
+                stmts_else.debug_print(depth);
             }
             Stmt::While(cond, stmts) => {
                 println!("{indent}while statement");
                 cond.debug_print(depth + 1);
-                println!("{indent}do");
+                stmts.debug_print(depth);
+            }
+            Stmt::Block(stmts) => {
+                println!("{indent}block");
                 for stmt in stmts {
                     stmt.debug_print(depth + 1);
                 }
@@ -233,11 +286,16 @@ impl Stmt {
         }
     }
 }
+impl StmtWithSize {
+    pub fn debug_print(&self, depth: usize) {
+        let indent = "  ".repeat(depth);
+        println!("{indent}{:?}", self.size);
+        self.stmt.debug_print(depth + 1);
+    }
+}
 impl FuncDef {
     pub fn debug_print(&self) {
         println!("{} args, {} locals", self.num_args, self.tys.len());
-        for stmt in &self.body {
-            stmt.debug_print(0);
-        }
+        self.body.debug_print(0);
     }
 }

@@ -45,10 +45,9 @@ fn main() {
             return;
         }
     };
-    let (stmts, funcs, tys) = ast_with_symbol::resolve_symbol(ast);
-    for stmt in &stmts {
-        stmt.debug_print(0);
-    }
+    let (mut ast, funcs, tys) = ast_with_symbol::resolve_symbol(ast);
+    ast.calc_size();
+    ast.debug_print(0);
     for (i, ty) in tys.iter().enumerate() {
         println!("variable #{i}: {ty:?}");
     }
@@ -61,10 +60,9 @@ fn main() {
             }
         }
     }
-    let mut ir = Vec::new();
-    let entry = ast::translate(&mut stmts.into_iter(), &funcs, &tys, &mut ir, None);
+    let ir = ast.translate(&funcs, &tys);
     ir::debug_print(&ir);
-    let func = ir::Func::new(tys.len(), entry, ir);
+    let func = ir::Func::new(tys.len(), ir);
     let mut memory = ir::Memory::new();
     unsafe {
         func.run(&mut memory, &[]);
