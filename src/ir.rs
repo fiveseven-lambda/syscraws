@@ -28,6 +28,7 @@ pub enum Value {
     Boolean(bool),
     Address(Address),
     Float(f64),
+    String(String),
     BuiltinFunc(BuiltinFunc),
     UserDefinedFunc(usize),
 }
@@ -51,6 +52,12 @@ impl Value {
             _ => panic!(),
         }
     }
+    unsafe fn into_string_unchecked(self) -> String {
+        match self {
+            Value::String(value) => value,
+            _ => panic!(),
+        }
+    }
     unsafe fn into_address_unchecked(self) -> Address {
         match self {
             Value::Address(addr) => addr,
@@ -61,6 +68,11 @@ impl Value {
 
 #[derive(Clone, Copy, Debug)]
 pub enum BuiltinFunc {
+    PlusInteger,
+    PlusFloat,
+    MinusInteger,
+    MinusFloat,
+    NotBoolean,
     AddInteger,
     SubInteger,
     MulInteger,
@@ -81,6 +93,7 @@ pub enum BuiltinFunc {
     LessEqualInteger,
     IntegerToFloat,
     PrintBoolean,
+    PrintString,
     Assign,
     Deref,
 }
@@ -89,6 +102,26 @@ impl BuiltinFunc {
         let mut args = args.into_iter();
         let mut arg = || args.next().unwrap_unchecked();
         match self {
+            BuiltinFunc::PlusInteger | BuiltinFunc::MinusInteger => {
+                let value = arg().into_integer_unchecked();
+                Value::Integer(match self {
+                    BuiltinFunc::PlusInteger => value,
+                    BuiltinFunc::MinusInteger => -value,
+                    _ => unreachable_unchecked(),
+                })
+            }
+            BuiltinFunc::PlusFloat | BuiltinFunc::MinusFloat => {
+                let value = arg().into_float_unchecked();
+                Value::Float(match self {
+                    BuiltinFunc::PlusFloat => value,
+                    BuiltinFunc::MinusFloat => -value,
+                    _ => unreachable_unchecked(),
+                })
+            }
+            BuiltinFunc::NotBoolean => {
+                let value = arg().into_boolean_unchecked();
+                Value::Boolean(!value)
+            }
             BuiltinFunc::AddInteger
             | BuiltinFunc::SubInteger
             | BuiltinFunc::MulInteger
@@ -156,6 +189,11 @@ impl BuiltinFunc {
             }
             BuiltinFunc::PrintBoolean => {
                 let value = arg().into_boolean_unchecked();
+                println!("{value}");
+                Value::Void
+            }
+            BuiltinFunc::PrintString => {
+                let value = arg().into_string_unchecked();
                 println!("{value}");
                 Value::Void
             }
@@ -273,6 +311,7 @@ impl fmt::Debug for Value {
             Value::Boolean(value) => write!(f, "{value}"),
             Value::Address((stack, pos)) => write!(f, "{stack}:{pos}"),
             Value::Float(value) => write!(f, "{value}"),
+            Value::String(value) => write!(f, "{value:?}"),
             Value::BuiltinFunc(ptr) => write!(f, "{ptr:?}"),
             Value::UserDefinedFunc(id) => write!(f, "func #{id}"),
         }

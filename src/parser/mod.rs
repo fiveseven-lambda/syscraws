@@ -249,7 +249,7 @@ fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
                 Term::Float(value.parse().unwrap())
             }
         } else if token_kind == TokenKind::String {
-            let mut chars = unsafe { input.get_unchecked(start..end) }.chars();
+            let mut chars = unsafe { input.get_unchecked(start + 1..end - 1) }.chars();
             let mut value = String::new();
             while let Some(mut ch) = chars.next() {
                 if ch == '\\' {

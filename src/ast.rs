@@ -170,6 +170,7 @@ impl Expr {
             ),
             Expr::Integer(value) => (ty::Ty::integer(), ir::Expr::Imm(ir::Value::Integer(value))),
             Expr::Float(value) => (ty::Ty::float(), ir::Expr::Imm(ir::Value::Float(value))),
+            Expr::String(value) => (ty::Ty::string(), ir::Expr::Imm(ir::Value::String(value))),
             Expr::Call(func, args) => match *func {
                 Expr::Func(id) => {
                     let (args_ty, args_expr): (Vec<_>, Vec<_>) = args

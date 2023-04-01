@@ -180,6 +180,11 @@ impl<'id> Funcs<'id> {
                 ))
             };
         }
+        add_builtin!(Plus: PlusFloat(Ty::float()) -> Ty::float());
+        add_builtin!(Plus: PlusInteger(Ty::integer()) -> Ty::integer());
+        add_builtin!(Minus: MinusFloat(Ty::float()) -> Ty::float());
+        add_builtin!(Minus: MinusInteger(Ty::integer()) -> Ty::integer());
+        add_builtin!(LogicalNot: NotBoolean(Ty::boolean()) -> Ty::boolean());
         add_builtin!(Add: AddFloat(Ty::float(), Ty::float()) -> Ty::float());
         add_builtin!(Add: AddInteger(Ty::integer(), Ty::integer()) -> Ty::integer());
         add_builtin!(Sub: SubFloat(Ty::float(), Ty::float()) -> Ty::float());
@@ -205,6 +210,7 @@ impl<'id> Funcs<'id> {
         add_builtin!((print): PrintFloat(Ty::float()) -> Ty::tuple(vec![]));
         add_builtin!((print): PrintInteger(Ty::integer()) -> Ty::tuple(vec![]));
         add_builtin!((print): PrintBoolean(Ty::boolean()) -> Ty::tuple(vec![]));
+        add_builtin!((print): PrintString(Ty::string()) -> Ty::tuple(vec![]));
         ret
     }
     fn get_or_insert(&mut self, name: &'id str) -> usize {
