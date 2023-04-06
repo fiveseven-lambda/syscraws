@@ -45,8 +45,7 @@ fn main() {
             return;
         }
     };
-    let (mut ast, funcs, tys) = ast_with_symbol::resolve_symbol(ast);
-    ast.calc_size();
+    let (ast, funcs, tys) = ast_with_symbol::resolve_symbol(ast);
     ast.debug_print(0);
     for (i, ty) in tys.iter().enumerate() {
         println!("variable #{i}: {ty:?}");

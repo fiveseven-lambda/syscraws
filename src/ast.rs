@@ -33,7 +33,8 @@ pub enum Expr {
 }
 
 pub enum Stmt {
-    Expr(Option<Expr>),
+    Empty,
+    Expr(Expr),
     Return(Option<Expr>),
     If(Expr, Box<StmtWithSize>, Box<StmtWithSize>),
     While(Expr, Box<StmtWithSize>),
@@ -41,31 +42,55 @@ pub enum Stmt {
 }
 pub struct StmtWithSize {
     stmt: Stmt,
-    size: Option<usize>,
+    size: usize,
 }
 
 impl StmtWithSize {
-    pub fn new(stmt: Stmt) -> StmtWithSize {
-        StmtWithSize { stmt, size: None }
+    pub fn new_empty() -> StmtWithSize {
+        StmtWithSize {
+            stmt: Stmt::Empty,
+            size: 0,
+        }
     }
-    pub fn calc_size(&mut self) -> usize {
-        let size = match &mut self.stmt {
-            Stmt::Expr(Some(_)) => 1,
-            Stmt::Expr(None) => 0,
-            Stmt::Return(_) => 1,
-            Stmt::If(_, stmt_then, stmt_else) => 1 + stmt_then.calc_size() + stmt_else.calc_size(),
-            Stmt::While(_, stmt) => 1 + stmt.calc_size(),
-            Stmt::Block(stmts) => stmts.iter_mut().map(StmtWithSize::calc_size).sum(),
-        };
-        self.size = Some(size);
-        size
+    pub fn new_expr(expr: Expr) -> StmtWithSize {
+        StmtWithSize {
+            stmt: Stmt::Expr(expr),
+            size: 1,
+        }
+    }
+    pub fn new_return(expr: Option<Expr>) -> StmtWithSize {
+        StmtWithSize {
+            stmt: Stmt::Return(expr),
+            size: 1,
+        }
+    }
+    pub fn new_block(stmts: Vec<StmtWithSize>) -> StmtWithSize {
+        let size: usize = stmts.iter().map(|StmtWithSize { size, .. }| size).sum();
+        StmtWithSize {
+            stmt: Stmt::Block(stmts),
+            size,
+        }
+    }
+    pub fn new_if(cond: Expr, stmt_true: StmtWithSize, stmt_false: StmtWithSize) -> StmtWithSize {
+        let size = 1 + stmt_true.size + stmt_false.size;
+        StmtWithSize {
+            stmt: Stmt::If(cond, stmt_true.into(), stmt_false.into()),
+            size,
+        }
+    }
+    pub fn new_while(cond: Expr, stmt: StmtWithSize) -> StmtWithSize {
+        let size = 1 + stmt.size;
+        StmtWithSize {
+            stmt: Stmt::While(cond, stmt.into()),
+            size,
+        }
     }
     pub fn translate(
         self,
         funcs: &[Vec<(Option<ty::Func>, Func)>],
         tys: &[Option<ty::Ty>],
     ) -> Vec<ir::Stmt> {
-        let size = self.size.unwrap();
+        let size = self.size;
         let mut ret: Vec<_> = iter::repeat_with(|| None).take(size).collect();
         self.translate_rec(funcs, tys, &mut ret, 0, size);
         ret.into_iter().map(Option::unwrap).collect()
@@ -79,11 +104,11 @@ impl StmtWithSize {
         next: usize,
     ) {
         match self.stmt {
-            Stmt::Expr(Some(expr)) => {
+            Stmt::Expr(expr) => {
                 assert!(target[cur].is_none());
                 target[cur] = Some(ir::Stmt::Expr(expr.translate(funcs, tys).1, next));
             }
-            Stmt::Expr(None) => {}
+            Stmt::Empty => {}
             Stmt::Return(_) => todo!(),
             Stmt::While(cond, stmt) => {
                 let ind_stmt = cur + 1;
@@ -96,7 +121,7 @@ impl StmtWithSize {
             }
             Stmt::If(cond, stmt_then, stmt_else) => {
                 let ind_then = cur + 1;
-                let ind_else = ind_then + stmt_then.size.unwrap();
+                let ind_else = ind_then + stmt_then.size;
                 target[cur] = Some(ir::Stmt::Branch(
                     cond.translate(funcs, tys).1,
                     ind_then,
@@ -111,7 +136,7 @@ impl StmtWithSize {
                     return
                 };
                 for stmt in stmts {
-                    let ind_next = ind + stmt.size.unwrap();
+                    let ind_next = ind + stmt.size;
                     stmt.translate_rec(funcs, tys, target, ind, ind_next);
                     ind = ind_next;
                 }
@@ -254,12 +279,12 @@ impl Stmt {
     pub fn debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
         match self {
-            Stmt::Expr(Some(expr)) => {
+            Stmt::Expr(expr) => {
                 println!("{indent}expression statement");
                 expr.debug_print(depth + 1);
             }
-            Stmt::Expr(None) => {
-                println!("{indent}expression statement (empty)");
+            Stmt::Empty => {
+                println!("{indent}empty statement");
             }
             Stmt::Return(expr) => {
                 println!("{indent}return statement");

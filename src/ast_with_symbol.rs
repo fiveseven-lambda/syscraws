@@ -280,72 +280,29 @@ impl<'id> PStmt<'id> {
         globals: Option<&Variables<'id>>,
         variables_in_current_scope: &mut Vec<&'id str>,
         tys: &mut Vec<Option<ty::Ty>>,
-        is_toplevel: bool,
-    ) -> ast::Stmt {
+    ) -> ast::StmtWithSize {
         match self.stmt {
-            Stmt::Expr(Some(expr)) => ast::Stmt::Expr(Some(expr.resolve_symbol(
+            Stmt::Expr(Some(expr)) => ast::StmtWithSize::new_expr(expr.resolve_symbol(
                 variables,
                 funcs,
                 globals,
                 variables_in_current_scope,
                 tys,
-            ))),
-            Stmt::Expr(None) => ast::Stmt::Expr(None),
-            Stmt::Def { name, args, body } => {
-                if !is_toplevel {
-                    // TODO: push error
-                    return ast::Stmt::Expr(None);
-                }
-                let id = funcs.get_or_insert(name);
-                let mut variables_in_current_scope = Vec::new();
-                let mut locals = Variables::new();
-                let mut tys = Vec::new();
-                for arg in &args {
-                    locals.insert(arg);
-                }
-                let body = body
-                    .into_iter()
-                    .map(|stmt| {
-                        ast::StmtWithSize::new(stmt.resolve_symbol(
-                            &mut locals,
-                            funcs,
-                            Some(variables),
-                            &mut variables_in_current_scope,
-                            &mut tys,
-                            false,
-                        ))
-                    })
-                    .collect();
-                assert_eq!(locals.num, tys.len());
-                funcs.defs[id].push((
-                    None,
-                    ast::Func::UserDefined(ast::FuncDef::new(
-                        args.len(),
-                        tys,
-                        ast::Stmt::Block(body),
-                    )),
-                ));
-                ast::Stmt::Expr(None)
-            }
+            )),
+            Stmt::Expr(None) => ast::StmtWithSize::new_empty(),
+            Stmt::Def { .. } => panic!(),
             Stmt::Block(stmts) => {
                 let mut variables_in_block = Vec::new();
                 let stmts = stmts
                     .into_iter()
                     .map(|stmt| {
-                        ast::StmtWithSize::new(stmt.resolve_symbol(
-                            variables,
-                            funcs,
-                            globals,
-                            &mut variables_in_block,
-                            tys,
-                            false,
-                        ))
+                        stmt.resolve_symbol(variables, funcs, globals, &mut variables_in_block, tys)
                     })
                     .collect();
                 for variable in variables_in_block {
                     variables.remove(variable);
                 }
-                ast::Stmt::Block(stmts)
+                ast::StmtWithSize::new_block(stmts)
             }
             Stmt::If(cond, stmt_then, stmt_else) => {
                 let mut variables_in_cond = Vec::new();
@@ -358,7 +315,6 @@ impl<'id> PStmt<'id> {
                     globals,
                     &mut variables_in_stmt_then,
                     tys,
-                    false,
                 );
                 for variable in variables_in_stmt_then {
                     variables.remove(variable);
@@ -372,50 +328,39 @@ impl<'id> PStmt<'id> {
                             globals,
                             &mut variables_in_stmt_else,
                             tys,
-                            false,
                         );
                         for variable in variables_in_stmt_else {
                             variables.remove(variable);
                         }
                         stmt_else
                     }
-                    None => ast::Stmt::Expr(None),
+                    None => ast::StmtWithSize::new_empty(),
                 };
                 for variable in variables_in_cond {
                     variables.remove(variable);
                 }
-                ast::Stmt::If(
-                    cond,
-                    ast::StmtWithSize::new(stmt_then).into(),
-                    ast::StmtWithSize::new(stmt_else).into(),
-                )
+                ast::StmtWithSize::new_if(cond, stmt_then, stmt_else)
             }
             Stmt::While(cond, stmt) => {
                 let mut variables_in_cond = Vec::new();
                 let cond =
                     cond.resolve_symbol(variables, funcs, globals, &mut variables_in_cond, tys);
                 let mut variables_in_stmt = Vec::new();
-                let stmt = stmt.resolve_symbol(
-                    variables,
-                    funcs,
-                    globals,
-                    &mut variables_in_stmt,
-                    tys,
-                    false,
-                );
+                let stmt =
+                    stmt.resolve_symbol(variables, funcs, globals, &mut variables_in_stmt, tys);
                 for variable in variables_in_stmt {
                     variables.remove(variable);
                 }
                 for variable in variables_in_cond {
                     variables.remove(variable);
                 }
-                ast::Stmt::While(cond, ast::StmtWithSize::new(stmt).into())
+                ast::StmtWithSize::new_while(cond, stmt)
             }
             Stmt::Return(expr) => {
                 let expr = expr.map(|expr| {
                     expr.resolve_symbol(variables, funcs, globals, variables_in_current_scope, tys)
                 });
-                ast::Stmt::Return(expr)
+                ast::StmtWithSize::new_return(expr)
             }
         }
     }
@@ -442,19 +387,23 @@ pub fn resolve_symbol(
     let mut funcs = Funcs::new();
     let mut variables = Vec::new();
     let mut tys = Vec::new();
-    let stmts = stmts
-        .into_iter()
-        .map(|stmt| {
-            ast::StmtWithSize::new(stmt.resolve_symbol(
-                &mut globals,
-                &mut funcs,
-                None,
-                &mut variables,
-                &mut tys,
-                true,
-            ))
-        })
-        .collect();
+    let mut toplevel_stmts = Vec::new();
+    for stmt in stmts {
+        match stmt.stmt {
+            Stmt::Def { name, args, body } => {
+                todo!();
+            }
+            _ => {
+                toplevel_stmts.push(stmt.resolve_symbol(
+                    &mut globals,
+                    &mut funcs,
+                    None,
+                    &mut variables,
+                    &mut tys,
+                ));
+            }
+        }
+    }
     for (&name, &index) in &funcs.names {
         if funcs.defs[index].is_empty() {
             eprintln!("`{name}` is not defined");
@@ -462,7 +411,7 @@ pub fn resolve_symbol(
     }
     assert_eq!(tys.len(), globals.num);
     (
-        ast::StmtWithSize::new(ast::Stmt::Block(stmts)),
+        ast::StmtWithSize::new_block(toplevel_stmts),
         funcs.defs,
         tys,
     )
