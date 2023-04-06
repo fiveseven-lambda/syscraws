@@ -50,7 +50,8 @@ pub enum Stmt<'id> {
     Block(Vec<PStmt<'id>>),
     Def {
         name: &'id str,
-        args: Vec<&'id str>,
+        args: Vec<(&'id str, Option<PTy<'id>>)>,
+        ret_ty: Option<PTy<'id>>,
         body: Vec<PStmt<'id>>,
     },
 }
@@ -390,8 +391,53 @@ pub fn resolve_symbol(
     let mut toplevel_stmts = Vec::new();
     for stmt in stmts {
         match stmt.stmt {
-            Stmt::Def { name, args, body } => {
-                todo!();
+            Stmt::Def {
+                name,
+                args,
+                ret_ty,
+                body,
+            } => {
+                let id = funcs.get_or_insert(name);
+                let mut variables_in_current_scope = Vec::new();
+                let mut locals = Variables::new();
+                let mut tys = Vec::new();
+                let num_args = args.len();
+                let mut args_ty = Some(Vec::new());
+                for (arg, ty) in args {
+                    locals.insert(arg);
+                    tys.push(None);
+                    if let Some(args_ty_) = &mut args_ty {
+                        if let Some(ty) = ty {
+                            args_ty_.push(ty.resolve_symbol());
+                        } else {
+                            args_ty = None;
+                        }
+                    }
+                }
+                let body = body
+                    .into_iter()
+                    .map(|stmt| {
+                        stmt.resolve_symbol(
+                            &mut locals,
+                            &mut funcs,
+                            Some(&globals),
+                            &mut variables_in_current_scope,
+                            &mut tys,
+                        )
+                    })
+                    .collect();
+                assert_eq!(locals.num, tys.len());
+                let ret_ty = ret_ty.map(|ty| ty.resolve_symbol());
+                let func_ty = (|| {
+                    Some(ty::Func {
+                        args: args_ty?,
+                        ret: ret_ty?,
+                    })
+                })();
+                funcs.defs[id].push((
+                    func_ty,
+                    ast::Func::UserDefined(ast::FuncDef::new(num_args, tys, body)),
+                ));
             }
             _ => {
                 toplevel_stmts.push(stmt.resolve_symbol(

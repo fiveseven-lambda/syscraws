@@ -354,44 +354,65 @@ impl<'id> PStmt<'id> {
                 antecedent: Some(func),
                 stmts,
             } => match func.term {
-                Term::Bracket {
-                    antecedent: Some(name),
-                    bracket_kind: BracketKind::Round,
-                    elements: args,
-                    has_trailing_comma: _,
-                } => {
-                    let name = match name.term {
-                        Term::Identifier(name) => Ok(name),
-                        _ => {
-                            errors.push(Error::InvalidFunctionName(name.pos));
-                            Err(())
+                Term::BinaryOperation {
+                    operator: BinaryOperator::Type,
+                    pos_operator,
+                    left_operand: Some(name_and_args),
+                    right_operand: Some(ret_ty),
+                } => match name_and_args.term {
+                    Term::Bracket {
+                        antecedent: Some(name),
+                        bracket_kind: BracketKind::Round,
+                        elements: args,
+                        has_trailing_comma: _,
+                    } => {
+                        let name = match name.term {
+                            Term::Identifier(name) => Ok(name),
+                            _ => {
+                                errors.push(Error::InvalidFunctionName(name.pos));
+                                Err(())
+                            }
+                        };
+                        let mut args_iter = args.into_iter().map(|arg| match arg {
+                            Ok(PTerm { term, pos }) => match term {
+                                Term::BinaryOperation {
+                                    operator: BinaryOperator::Type,
+                                    pos_operator,
+                                    left_operand: Some(arg),
+                                    right_operand: Some(arg_ty),
+                                } => {
+                                    let arg_name = match arg.term {
+                                        Term::Identifier(arg_name) => Ok(arg_name),
+                                        _ => Err(()),
+                                    };
+                                    let arg_ty = arg_ty.into_ty(errors);
+                                    match (arg_name, arg_ty) {
+                                        (Ok(arg_name), Ok(arg_ty)) => Ok((arg_name, Some(arg_ty))),
+                                        _ => Err(()),
+                                    }
+                                }
+                                _ => Err(()),
+                            },
+                            Err(pos_comma) => {
+                                errors.push(Error::EmptyArgumentInDef(pos_comma));
+                                Err(())
+                            }
+                        });
+                        let args: Result<_, _> = args_iter.by_ref().collect();
+                        for _ in args_iter {}
+                        let mut stmts_iter = stmts.into_iter().map(|stmt| stmt.into_ast(errors));
+                        let stmts: Result<_, _> = stmts_iter.by_ref().collect();
+                        for _ in stmts_iter {}
+                        let ret_ty = ret_ty.into_ty(errors);
+                        ast_with_symbol::Stmt::Def {
+                            name: name?,
+                            args: args?,
+                            ret_ty: Some(ret_ty?),
+                            body: stmts?,
                         }
-                    };
-                    let mut args_iter = args.into_iter().map(|arg| match arg {
-                        Ok(PTerm {
-                            term: Term::Identifier(arg),
-                            ..
-                        }) => Ok(arg),
-                        Ok(PTerm { pos, .. }) => {
-                            errors.push(Error::InvalidArgumentInDef(pos));
-                            Err(())
-                        }
-                        Err(pos_comma) => {
-                            errors.push(Error::EmptyArgumentInDef(pos_comma));
-                            Err(())
-                        }
-                    });
-                    let args: Result<_, _> = args_iter.by_ref().collect();
-                    for _ in args_iter {}
-                    let mut stmts_iter = stmts.into_iter().map(|stmt| stmt.into_ast(errors));
-                    let stmts: Result<_, _> = stmts_iter.by_ref().collect();
-                    for _ in stmts_iter {}
-                    ast_with_symbol::Stmt::Def {
-                        name: name?,
-                        args: args?,
-                        body: stmts?,
                     }
-                }
+                    _ => todo!(),
+                },
                 _ => {
                     errors.push(Error::UnexpectedExpressionBeforeBlock(func.pos));
                     return Err(());

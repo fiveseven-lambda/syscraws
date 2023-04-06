@@ -149,7 +149,8 @@ impl StmtWithSize {
 pub struct FuncDef {
     num_args: usize,
     tys: Vec<Option<ty::Ty>>,
-    body: Stmt,
+    body: Vec<StmtWithSize>,
+    size: usize,
 }
 
 pub enum Func {
@@ -158,11 +159,13 @@ pub enum Func {
 }
 
 impl FuncDef {
-    pub fn new(num_args: usize, tys: Vec<Option<ty::Ty>>, body: Stmt) -> FuncDef {
+    pub fn new(num_args: usize, tys: Vec<Option<ty::Ty>>, body: Vec<StmtWithSize>) -> FuncDef {
+        let size: usize = body.iter().map(|StmtWithSize { size, .. }| size).sum();
         FuncDef {
             num_args,
             tys,
             body,
+            size,
         }
     }
 }
@@ -205,6 +208,9 @@ impl Expr {
                     let mut candidates = Vec::new();
                     'candidate: for (i, (func_ty, _)) in funcs[id].iter().enumerate() {
                         let func_ty = func_ty.as_ref().unwrap();
+                        if func_ty.args.len() != args_ty.len() {
+                            continue 'candidate;
+                        }
                         let mut converters = Vec::with_capacity(args_ty.len());
                         for (expected_ty, ty) in func_ty.args.iter().zip(&args_ty) {
                             match converter(ty, expected_ty) {
@@ -217,7 +223,7 @@ impl Expr {
                     if !candidates.is_empty() {
                         let (chosen, converters) = candidates.pop().unwrap();
                         match funcs[id][chosen] {
-                            (ref func_ty, Func::Builtin(func)) => {
+                            (ref func_ty, ref func) => {
                                 let args = args_expr
                                     .into_iter()
                                     .zip(converters)
@@ -234,15 +240,15 @@ impl Expr {
                                         })
                                     })
                                     .collect();
+                                let func = match func {
+                                    &Func::Builtin(func) => ir::Value::BuiltinFunc(func),
+                                    Func::UserDefined(_) => todo!(),
+                                };
                                 (
                                     func_ty.as_ref().unwrap().ret.clone(),
-                                    ir::Expr::Call(
-                                        ir::Expr::Imm(ir::Value::BuiltinFunc(func)).into(),
-                                        args,
-                                    ),
+                                    ir::Expr::Call(ir::Expr::Imm(func).into(), args),
                                 )
                             }
-                            _ => panic!(),
                         }
                     } else {
                         panic!("{} candidates", candidates.len());
@@ -322,6 +328,11 @@ impl StmtWithSize {
 impl FuncDef {
     pub fn debug_print(&self) {
         println!("{} args, {} locals", self.num_args, self.tys.len());
-        self.body.debug_print(0);
+        for (i, ty) in self.tys.iter().enumerate() {
+            println!("{i}: {ty:?}");
+        }
+        for stmt in &self.body {
+            stmt.debug_print(0);
+        }
     }
 }

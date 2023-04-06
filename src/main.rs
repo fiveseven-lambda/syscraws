@@ -61,9 +61,9 @@ fn main() {
     }
     let ir = ast.translate(&funcs, &tys);
     ir::debug_print(&ir);
-    let func = ir::Func::new(tys.len(), ir);
+    let main = ir::Func::new(tys.len(), ir);
     let mut memory = ir::Memory::new();
     unsafe {
-        func.run(&mut memory, &[]);
+        main.run(&mut memory, &[]);
     }
 }
