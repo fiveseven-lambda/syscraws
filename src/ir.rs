@@ -18,7 +18,6 @@
 
 use std::collections::HashMap;
 use std::hint::unreachable_unchecked;
-use std::iter;
 
 use crate::ty;
 use num::BigInt;
@@ -103,6 +102,18 @@ pub enum BuiltinFunc {
 impl BuiltinFunc {
     pub fn ty(self) -> ty::Func {
         match self {
+            BuiltinFunc::PlusInteger | BuiltinFunc::MinusInteger => ty::Func {
+                args: vec![ty::Ty::integer()],
+                ret: ty::Ty::integer(),
+            },
+            BuiltinFunc::PlusFloat | BuiltinFunc::MinusFloat => ty::Func {
+                args: vec![ty::Ty::float()],
+                ret: ty::Ty::float(),
+            },
+            BuiltinFunc::NotBoolean => ty::Func {
+                args: vec![ty::Ty::boolean()],
+                ret: ty::Ty::boolean(),
+            },
             BuiltinFunc::AddInteger
             | BuiltinFunc::SubInteger
             | BuiltinFunc::MulInteger
@@ -110,6 +121,19 @@ impl BuiltinFunc {
             | BuiltinFunc::RemInteger => ty::Func {
                 args: vec![ty::Ty::integer(), ty::Ty::integer()],
                 ret: ty::Ty::integer(),
+            },
+            BuiltinFunc::IntegerToFloat => ty::Func {
+                args: vec![ty::Ty::integer()],
+                ret: ty::Ty::float(),
+            },
+            BuiltinFunc::EqualInteger
+            | BuiltinFunc::NotEqualInteger
+            | BuiltinFunc::GreaterInteger
+            | BuiltinFunc::GreaterEqualInteger
+            | BuiltinFunc::LessInteger
+            | BuiltinFunc::LessEqualInteger => ty::Func {
+                args: vec![ty::Ty::integer(), ty::Ty::integer()],
+                ret: ty::Ty::boolean(),
             },
             BuiltinFunc::AddFloat
             | BuiltinFunc::SubFloat
@@ -135,7 +159,15 @@ impl BuiltinFunc {
                 args: vec![ty::Ty::float()],
                 ret: ty::Ty::tuple(vec![]),
             },
-            _ => todo!(),
+            BuiltinFunc::PrintBoolean => ty::Func {
+                args: vec![ty::Ty::boolean()],
+                ret: ty::Ty::tuple(vec![]),
+            },
+            BuiltinFunc::PrintString => ty::Func {
+                args: vec![ty::Ty::string()],
+                ret: ty::Ty::tuple(vec![]),
+            },
+            BuiltinFunc::Deref => todo!(),
         }
     }
     unsafe fn call(self, args: Vec<Value>, memory: &mut Memory) -> Value {
@@ -365,35 +397,35 @@ impl fmt::Debug for Value {
     }
 }
 impl Expr {
-    fn debug_print(&self, depth: usize) {
+    fn _debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
         match self {
             Expr::Imm(value) => println!("{indent}{value:?}"),
             Expr::Local(id) => println!("{indent}Local({id:?})"),
             Expr::Call(func, args) => {
-                func.debug_print(depth);
+                func._debug_print(depth);
                 for arg in args {
-                    arg.debug_print(depth + 1);
+                    arg._debug_print(depth + 1);
                 }
             }
         }
     }
 }
 
-pub fn debug_print(stmts: &[Stmt]) {
+pub fn _debug_print(stmts: &[Stmt]) {
     for (i, stmt) in stmts.iter().enumerate() {
         println!("[{i}]");
         match stmt {
             Stmt::Return(expr) => {
                 println!("return");
-                expr.debug_print(0);
+                expr._debug_print(0);
             }
             Stmt::Expr(expr, next) => {
-                expr.debug_print(0);
+                expr._debug_print(0);
                 println!("-> {next:?}");
             }
             Stmt::Branch(cond, next_true, next_false) => {
-                cond.debug_print(0);
+                cond._debug_print(0);
                 println!("true -> {next_true:?}");
                 println!("false -> {next_false:?}");
             }

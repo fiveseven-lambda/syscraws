@@ -18,20 +18,20 @@
 
 use super::{PStmt, PTerm, Stmt, Term};
 
-pub fn debug_print(stmts: &[PStmt]) {
+pub fn _debug_print(stmts: &[PStmt]) {
     for stmt in stmts {
-        stmt.debug_print(0);
+        stmt._debug_print(0);
     }
 }
 
 impl<'id> PStmt<'id> {
-    fn debug_print(&self, depth: usize) {
+    fn _debug_print(&self, depth: usize) {
         let PStmt { pos, stmt } = self;
         let indent = "  ".repeat(depth);
         match stmt {
             Stmt::Term(Some(term)) => {
                 eprintln!("{indent}{pos:?} Term statement");
-                term.debug_print(depth + 1);
+                term._debug_print(depth + 1);
             }
             Stmt::Term(None) => {
                 eprintln!("{indent}{pos:?} Term statement (empty)");
@@ -39,7 +39,7 @@ impl<'id> PStmt<'id> {
             Stmt::Return(term) => {
                 eprintln!("{indent}{pos:?} return statement");
                 if let Some(term) = term {
-                    term.debug_print(depth + 1);
+                    term._debug_print(depth + 1);
                 }
             }
             Stmt::If {
@@ -52,19 +52,19 @@ impl<'id> PStmt<'id> {
                 eprintln!("{indent}{pos:?} If statement");
                 eprintln!("{indent}  {pos_if:?} if");
                 match cond {
-                    Some(term) => term.debug_print(depth + 2),
+                    Some(term) => term._debug_print(depth + 2),
                     None => eprintln!("{indent}    empty condition"),
                 }
                 eprintln!("{indent}  then");
                 match stmt_then {
-                    Some(stmt) => stmt.debug_print(depth + 2),
+                    Some(stmt) => stmt._debug_print(depth + 2),
                     None => eprintln!("{indent}    empty statement"),
                 }
                 match pos_else {
                     Some(pos_else) => {
                         eprintln!("{indent}  {pos_else:?} else");
                         match stmt_else {
-                            Some(stmt) => stmt.debug_print(depth + 2),
+                            Some(stmt) => stmt._debug_print(depth + 2),
                             None => eprintln!("{indent}    empty statement"),
                         }
                     }
@@ -79,23 +79,23 @@ impl<'id> PStmt<'id> {
                 eprintln!("{indent}{pos:?} While statement");
                 eprintln!("{indent}  {pos_while:?} while");
                 match cond {
-                    Some(term) => term.debug_print(depth + 2),
+                    Some(term) => term._debug_print(depth + 2),
                     None => eprintln!("{indent}    empty condition"),
                 }
                 eprintln!("{indent}  do");
                 match stmt {
-                    Some(stmt) => stmt.debug_print(depth + 2),
+                    Some(stmt) => stmt._debug_print(depth + 2),
                     None => eprintln!("{indent}    empty statement"),
                 }
             }
             Stmt::Block { antecedent, stmts } => {
                 eprintln!("{indent}{:?} block", self.pos);
                 match antecedent {
-                    Some(term) => term.debug_print(depth + 1),
+                    Some(term) => term._debug_print(depth + 1),
                     None => eprintln!("{indent}  (No antecedent)"),
                 }
                 for stmt in stmts {
-                    stmt.debug_print(depth + 1);
+                    stmt._debug_print(depth + 1);
                 }
             }
         }
@@ -103,7 +103,7 @@ impl<'id> PStmt<'id> {
 }
 
 impl<'id> PTerm<'id> {
-    fn debug_print(&self, depth: usize) {
+    fn _debug_print(&self, depth: usize) {
         let PTerm { pos, term } = self;
         let indent = "  ".repeat(depth);
         match term {
@@ -119,7 +119,7 @@ impl<'id> PTerm<'id> {
                 eprintln!("{indent}{pos:?} Unary Operation");
                 eprintln!("{indent}{pos_operator:?} {operator:?}");
                 match operand {
-                    Some(operand) => operand.debug_print(depth + 1),
+                    Some(operand) => operand._debug_print(depth + 1),
                     None => eprintln!("{indent}  (operand is empty)"),
                 }
             }
@@ -132,11 +132,11 @@ impl<'id> PTerm<'id> {
                 eprintln!("{indent}{pos:?} Binary Operation");
                 eprintln!("{indent}{pos_operator:?} {operator:?}");
                 match left_operand {
-                    Some(term) => term.debug_print(depth + 1),
+                    Some(term) => term._debug_print(depth + 1),
                     None => eprintln!("{indent}  (left operand is empty)"),
                 }
                 match right_operand {
-                    Some(term) => term.debug_print(depth + 1),
+                    Some(term) => term._debug_print(depth + 1),
                     None => eprintln!("{indent}  (right operand is empty)"),
                 }
             }
@@ -148,11 +148,11 @@ impl<'id> PTerm<'id> {
                 eprintln!("{indent}{pos:?} Type Annotation");
                 eprintln!("{indent}{pos_colon:?} Colon");
                 match term {
-                    Some(term) => term.debug_print(depth + 1),
+                    Some(term) => term._debug_print(depth + 1),
                     None => eprintln!("{indent}  (expr is empty)"),
                 }
                 match ty {
-                    Some(ty) => ty.debug_print(depth + 1),
+                    Some(ty) => ty._debug_print(depth + 1),
                     None => eprintln!("{indent}  (type is empty)"),
                 }
             }
@@ -163,7 +163,7 @@ impl<'id> PTerm<'id> {
             } => {
                 eprintln!("{indent}{pos:?} Parenthesized Term");
                 match antecedent {
-                    Some(term) => term.debug_print(depth + 1),
+                    Some(term) => term._debug_print(depth + 1),
                     None => eprintln!("{indent}  (No antecedent)"),
                 }
                 eprintln!(
@@ -172,7 +172,7 @@ impl<'id> PTerm<'id> {
                 );
                 for elem in elements {
                     match elem {
-                        Ok(term) => term.debug_print(depth + 1),
+                        Ok(term) => term._debug_print(depth + 1),
                         Err(pos_comma) => {
                             eprintln!("{indent}  No element before comma at {pos_comma:?}")
                         }
@@ -188,11 +188,11 @@ impl<'id> PTerm<'id> {
                 eprintln!("{indent}{pos:?} Assignment");
                 eprintln!("{indent}{pos_operator:?} {operator:?}");
                 match left_hand_side {
-                    Some(term) => term.debug_print(depth + 1),
+                    Some(term) => term._debug_print(depth + 1),
                     None => eprintln!("{indent}  (left hand side is empty)"),
                 }
                 match right_hand_side {
-                    Some(term) => term.debug_print(depth + 1),
+                    Some(term) => term._debug_print(depth + 1),
                     None => eprintln!("{indent}  (right hand side is empty)"),
                 }
             }

@@ -19,7 +19,7 @@
 use super::{Expr, FuncDef, Stmt, StmtWithSize};
 
 impl Expr {
-    pub fn debug_print(&self, depth: usize) {
+    pub fn _debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
         match self {
             Expr::Variable(id) => println!("{indent}variable({id})"),
@@ -30,21 +30,21 @@ impl Expr {
             Expr::String(value) => println!("{indent}string({value})"),
             Expr::Call(func, args) => {
                 println!("{indent}call");
-                func.debug_print(depth + 1);
+                func._debug_print(depth + 1);
                 for arg in args {
-                    arg.debug_print(depth + 1);
+                    arg._debug_print(depth + 1);
                 }
             }
         }
     }
 }
 impl Stmt {
-    pub fn debug_print(&self, depth: usize) {
+    pub fn _debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
         match self {
             Stmt::Expr(expr) => {
                 println!("{indent}expression statement");
-                expr.debug_print(depth + 1);
+                expr._debug_print(depth + 1);
             }
             Stmt::Empty => {
                 println!("{indent}empty statement");
@@ -52,45 +52,45 @@ impl Stmt {
             Stmt::Return(expr) => {
                 println!("{indent}return statement");
                 if let Some(expr) = expr {
-                    expr.debug_print(depth + 1);
+                    expr._debug_print(depth + 1);
                 }
             }
             Stmt::If(cond, stmts_then, stmts_else) => {
                 println!("{indent}if statement");
-                cond.debug_print(depth + 1);
-                stmts_then.debug_print(depth);
-                stmts_else.debug_print(depth);
+                cond._debug_print(depth + 1);
+                stmts_then._debug_print(depth);
+                stmts_else._debug_print(depth);
             }
             Stmt::While(cond, stmts) => {
                 println!("{indent}while statement");
-                cond.debug_print(depth + 1);
-                stmts.debug_print(depth);
+                cond._debug_print(depth + 1);
+                stmts._debug_print(depth);
             }
             Stmt::Block(stmts) => {
                 println!("{indent}block");
                 for stmt in stmts {
-                    stmt.debug_print(depth + 1);
+                    stmt._debug_print(depth + 1);
                 }
             }
         }
     }
 }
 impl StmtWithSize {
-    pub fn debug_print(&self, depth: usize) {
+    pub fn _debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
         println!("{indent}{:?}", self.size);
-        self.stmt.debug_print(depth + 1);
+        self.stmt._debug_print(depth + 1);
     }
 }
 impl FuncDef {
-    pub fn debug_print(&self) {
+    pub fn _debug_print(&self) {
         println!("{} args, {} locals", self.num_args, self.tys.len());
         for (i, ty) in self.tys.iter().enumerate() {
             println!("{i}: {ty:?}");
         }
         println!("{:?}", self.ret_ty);
         for stmt in &self.body {
-            stmt.debug_print(0);
+            stmt._debug_print(0);
         }
     }
 }

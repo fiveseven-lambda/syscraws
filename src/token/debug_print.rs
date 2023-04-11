@@ -17,7 +17,7 @@
  */
 
 use super::Token;
-pub fn debug_print(input: &str, tokens: &[Token]) {
+pub fn _debug_print(input: &str, tokens: &[Token]) {
     for &Token {
         token_kind,
         start,

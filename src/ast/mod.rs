@@ -18,8 +18,6 @@
 
 //! 抽象構文木 AST を定義する．
 
-use std::env::vars;
-
 use crate::{ir, ty};
 use num::BigInt;
 mod debug_print;
@@ -233,7 +231,7 @@ impl FuncDef {
                 _ => todo!(),
             }
         }
-        ir::debug_print(&target);
+        ir::_debug_print(&target);
         ir::FuncDef::new(self.tys.len(), target)
     }
 }

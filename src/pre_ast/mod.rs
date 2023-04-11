@@ -22,7 +22,7 @@ use enum_iterator::Sequence;
 use num::BigInt;
 
 mod debug_print;
-pub use debug_print::debug_print;
+pub use debug_print::_debug_print;
 mod map;
 
 #[derive(Debug, Sequence)]
@@ -322,21 +322,30 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::Func
         match arg {
             Ok(PTerm { term, pos }) => match term {
                 Term::TypeAnnotation {
-                    pos_colon,
+                    pos_colon: _,
                     term,
                     ty,
                 } => {
                     let name = term.ok_or(()).and_then(|term| match term.term {
                         Term::Identifier(name) => Ok(name),
-                        _ => Err(()),
+                        _ => {
+                            errors.push(Error::InvalidArgumentInDef(term.pos));
+                            Err(())
+                        }
                     });
                     let ty = ty.ok_or(()).and_then(|ty| ty.into_ty());
                     Ok((name?, Some(ty?)))
                 }
                 Term::Identifier(name) => Ok((name, None)),
-                _ => Err(()),
+                _ => {
+                    errors.push(Error::InvalidArgumentInDef(pos));
+                    Err(())
+                }
             },
-            Err(pos_comma) => Err(()),
+            Err(pos_comma) => {
+                errors.push(Error::EmptyArgument { pos_comma });
+                Err(())
+            }
         }
     }
     fn func_def<'id>(
@@ -348,7 +357,7 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::Func
     ) -> Result<(), ()> {
         let (name, args, ret_ty) = match sig.term {
             Term::TypeAnnotation {
-                pos_colon,
+                pos_colon: _,
                 term: Some(name_and_args),
                 ty: Some(ret_ty),
             } => match name_and_args.term {
@@ -358,6 +367,7 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::Func
                     has_trailing_comma: _,
                 } => (name, args, Some(ret_ty)),
                 _ => {
+                    errors.push(Error::UnexpectedExpressionBeforeBlock(sig.pos));
                     return Err(());
                 }
             },
@@ -367,6 +377,7 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::Func
                 has_trailing_comma: _,
             } => (name, args, None),
             _ => {
+                errors.push(Error::UnexpectedExpressionBeforeBlock(sig.pos));
                 return Err(());
             }
         };

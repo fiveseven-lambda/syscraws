@@ -34,9 +34,9 @@ fn main() {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).unwrap();
     let tokens = lexer::tokenize(&input).unwrap();
-    token::debug_print(&input, &tokens);
+    token::_debug_print(&input, &tokens);
     let pre_ast = parser::parse(&input, &tokens).unwrap();
-    pre_ast::debug_print(&pre_ast);
+    pre_ast::_debug_print(&pre_ast);
     let (overloads, defs) = match pre_ast::into_ast(pre_ast) {
         Ok(ast) => ast,
         Err(errors) => {
@@ -51,7 +51,7 @@ fn main() {
     }
     for (i, def) in defs.iter().enumerate() {
         println!("#[{i}]");
-        def.debug_print();
+        def._debug_print();
     }
     let funcs_ty: Vec<_> = defs.iter().map(ast::FuncDef::get_ty).collect();
     let funcs: Vec<_> = defs

@@ -17,7 +17,7 @@
  */
 
 mod debug_print;
-pub use debug_print::debug_print;
+pub use debug_print::_debug_print;
 
 #[derive(Clone, Copy)]
 pub struct Token {
