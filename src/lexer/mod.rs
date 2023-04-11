@@ -58,6 +58,8 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
             '+' => {
                 if chars.consume_if_eq('+') {
                     TokenKind::DoublePlus
+                } else if chars.consume_if_eq('=') {
+                    TokenKind::PlusEqual
                 } else {
                     TokenKind::Plus
                 }
@@ -65,11 +67,19 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
             '-' => {
                 if chars.consume_if_eq('-') {
                     TokenKind::DoubleMinus
+                } else if chars.consume_if_eq('=') {
+                    TokenKind::MinusEqual
                 } else {
                     TokenKind::Minus
                 }
             }
-            '*' => TokenKind::Asterisk,
+            '*' => {
+                if chars.consume_if_eq('=') {
+                    TokenKind::AsteriskEqual
+                } else {
+                    TokenKind::Asterisk
+                }
+            }
             '/' => {
                 if chars.consume_if_eq('/') {
                     chars.consume_while(|ch| ch != '\n');
@@ -88,11 +98,19 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
                         }
                     }
                     continue;
+                } else if chars.consume_if_eq('=') {
+                    TokenKind::SlashEqual
                 } else {
                     TokenKind::Slash
                 }
             }
-            '%' => TokenKind::Percent,
+            '%' => {
+                if chars.consume_if_eq('=') {
+                    TokenKind::PercentEqual
+                } else {
+                    TokenKind::Percent
+                }
+            }
             '=' => {
                 if chars.consume_if_eq('=') {
                     TokenKind::DoubleEqual
@@ -112,7 +130,13 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
             '>' => {
                 if chars.consume_if_eq('>') {
                     if chars.consume_if_eq('>') {
-                        TokenKind::TripleGreater
+                        if chars.consume_if_eq('=') {
+                            TokenKind::TripleGreaterEqual
+                        } else {
+                            TokenKind::TripleGreater
+                        }
+                    } else if chars.consume_if_eq('=') {
+                        TokenKind::DoubleGreaterEqual
                     } else {
                         TokenKind::DoubleGreater
                     }
@@ -125,7 +149,13 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
             '<' => {
                 if chars.consume_if_eq('<') {
                     if chars.consume_if_eq('<') {
-                        TokenKind::TripleLess
+                        if chars.consume_if_eq('=') {
+                            TokenKind::TripleLessEqual
+                        } else {
+                            TokenKind::TripleLess
+                        }
+                    } else if chars.consume_if_eq('=') {
+                        TokenKind::DoubleLessEqual
                     } else {
                         TokenKind::DoubleLess
                     }
@@ -138,6 +168,8 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
             '&' => {
                 if chars.consume_if_eq('&') {
                     TokenKind::DoubleAmpersand
+                } else if chars.consume_if_eq('=') {
+                    TokenKind::AmpersandEqual
                 } else {
                     TokenKind::Ampersand
                 }
@@ -145,11 +177,19 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
             '|' => {
                 if chars.consume_if_eq('|') {
                     TokenKind::DoubleBar
+                } else if chars.consume_if_eq('=') {
+                    TokenKind::BarEqual
                 } else {
                     TokenKind::Bar
                 }
             }
-            '^' => TokenKind::Circumflex,
+            '^' => {
+                if chars.consume_if_eq('=') {
+                    TokenKind::CircumflexEqual
+                } else {
+                    TokenKind::Circumflex
+                }
+            }
             ':' => TokenKind::Colon,
             ';' => TokenKind::Semicolon,
             ',' => TokenKind::Comma,

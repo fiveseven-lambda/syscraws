@@ -18,7 +18,9 @@
 
 use std::collections::HashMap;
 use std::hint::unreachable_unchecked;
+use std::iter;
 
+use crate::ty;
 use num::BigInt;
 
 #[derive(Clone)]
@@ -94,10 +96,48 @@ pub enum BuiltinFunc {
     IntegerToFloat,
     PrintBoolean,
     PrintString,
-    Assign,
+    AssignInteger,
+    AssignFloat,
     Deref,
 }
 impl BuiltinFunc {
+    pub fn ty(self) -> ty::Func {
+        match self {
+            BuiltinFunc::AddInteger
+            | BuiltinFunc::SubInteger
+            | BuiltinFunc::MulInteger
+            | BuiltinFunc::DivInteger
+            | BuiltinFunc::RemInteger => ty::Func {
+                args: vec![ty::Ty::integer(), ty::Ty::integer()],
+                ret: ty::Ty::integer(),
+            },
+            BuiltinFunc::AddFloat
+            | BuiltinFunc::SubFloat
+            | BuiltinFunc::MulFloat
+            | BuiltinFunc::DivFloat
+            | BuiltinFunc::RemFloat => ty::Func {
+                args: vec![ty::Ty::float(), ty::Ty::float()],
+                ret: ty::Ty::float(),
+            },
+            BuiltinFunc::AssignInteger => ty::Func {
+                args: vec![ty::Ty::integer(), ty::Ty::reference(ty::Ty::integer())],
+                ret: ty::Ty::integer(),
+            },
+            BuiltinFunc::AssignFloat => ty::Func {
+                args: vec![ty::Ty::float(), ty::Ty::reference(ty::Ty::float())],
+                ret: ty::Ty::float(),
+            },
+            BuiltinFunc::PrintInteger => ty::Func {
+                args: vec![ty::Ty::integer()],
+                ret: ty::Ty::tuple(vec![]),
+            },
+            BuiltinFunc::PrintFloat => ty::Func {
+                args: vec![ty::Ty::float()],
+                ret: ty::Ty::tuple(vec![]),
+            },
+            _ => todo!(),
+        }
+    }
     unsafe fn call(self, args: Vec<Value>, memory: &mut Memory) -> Value {
         let mut args = args.into_iter();
         let mut arg = || args.next().unwrap_unchecked();
@@ -197,7 +237,7 @@ impl BuiltinFunc {
                 println!("{value}");
                 Value::Void
             }
-            BuiltinFunc::Assign => {
+            BuiltinFunc::AssignInteger | BuiltinFunc::AssignFloat => {
                 let src = arg();
                 let dest = arg().into_address_unchecked();
                 memory.set(src.clone(), dest);
@@ -217,21 +257,21 @@ pub enum Expr {
     Call(Box<Expr>, Vec<Expr>),
 }
 impl Expr {
-    unsafe fn eval(&self, memory: &mut Memory, stack_id: usize, funcs: &[Func]) -> Value {
+    unsafe fn eval(&self, memory: &mut Memory, stack_id: usize, funcs: &[FuncDef]) -> Value {
         match *self {
             Expr::Imm(ref value) => value.clone(),
             Expr::Local(pos) => Value::Address((stack_id, pos)),
-            Expr::Call(ref func, ref args) => match func.eval(memory, stack_id, funcs) {
-                Value::BuiltinFunc(func) => {
-                    let args = args
-                        .iter()
-                        .map(|expr| expr.eval(memory, stack_id, funcs))
-                        .collect();
-                    func.call(args, memory)
+            Expr::Call(ref func, ref args) => {
+                let func = func.eval(memory, stack_id, funcs);
+                let args_iter = args.iter().map(|expr| expr.eval(memory, stack_id, funcs));
+                match func {
+                    Value::BuiltinFunc(func) => func.call(args_iter.collect(), memory),
+                    Value::UserDefinedFunc(id) => funcs[id]
+                        .run(args_iter.map(Option::Some).collect(), memory, funcs)
+                        .unwrap_or(Value::Void),
+                    _ => unreachable_unchecked(),
                 }
-                Value::UserDefinedFunc(id) => todo!(),
-                _ => unsafe { unreachable_unchecked() },
-            },
+            }
         }
     }
 }
@@ -242,19 +282,26 @@ pub enum Stmt {
     Branch(Expr, usize, usize),
 }
 
-pub struct Func {
+pub struct FuncDef {
     num_locals: usize,
     stmts: Vec<Stmt>,
 }
 
-impl Func {
-    pub fn new(num_locals: usize, stmts: Vec<Stmt>) -> Func {
-        Func { num_locals, stmts }
+impl FuncDef {
+    pub fn new(num_locals: usize, stmts: Vec<Stmt>) -> FuncDef {
+        FuncDef { num_locals, stmts }
     }
-    pub unsafe fn run(&self, memory: &mut Memory, funcs: &[Func]) -> Option<Value> {
+    pub unsafe fn run(
+        &self,
+        args: Vec<Option<Value>>,
+        memory: &mut Memory,
+        funcs: &[FuncDef],
+    ) -> Option<Value> {
         let stack_id = memory.num_stack;
         memory.num_stack += 1;
-        memory.stacks.insert(stack_id, vec![None; self.num_locals]);
+        let mut stack = args;
+        stack.resize(self.num_locals, None);
+        memory.stacks.insert(stack_id, stack);
         let mut counter = 0;
         while let Some(stmt) = self.stmts.get(counter) {
             counter = match stmt {

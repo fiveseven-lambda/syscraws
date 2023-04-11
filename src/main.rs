@@ -20,7 +20,6 @@
 #![feature(is_some_and)]
 
 mod ast;
-mod ast_with_symbol;
 mod ir;
 mod lexer;
 mod parser;
@@ -35,35 +34,32 @@ fn main() {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).unwrap();
     let tokens = lexer::tokenize(&input).unwrap();
+    token::debug_print(&input, &tokens);
     let pre_ast = parser::parse(&input, &tokens).unwrap();
-    let ast = match pre_ast::into_ast(pre_ast) {
+    pre_ast::debug_print(&pre_ast);
+    let (overloads, defs) = match pre_ast::into_ast(pre_ast) {
         Ok(ast) => ast,
         Err(errors) => {
             for error in errors {
-                println!("{error:?}");
+                eprintln!("{:?}", error);
             }
             return;
         }
     };
-    let (ast, funcs, tys) = ast_with_symbol::resolve_symbol(ast);
-    ast.debug_print(0);
-    for (i, ty) in tys.iter().enumerate() {
-        println!("variable #{i}: {ty:?}");
+    for (i, funcs) in overloads.iter().enumerate() {
+        println!("{i}: {funcs:?}");
     }
-    for (i, funcs) in funcs.iter().enumerate() {
-        println!("func #{i}");
-        for (func_ty, func) in funcs {
-            match func {
-                ast::Func::Builtin(name) => println!("{func_ty:?} {name:?}"),
-                ast::Func::UserDefined(def) => def.debug_print(),
-            }
-        }
+    for (i, def) in defs.iter().enumerate() {
+        println!("#[{i}]");
+        def.debug_print();
     }
-    let ir = ast.translate(&funcs, &tys);
-    ir::debug_print(&ir);
-    let main = ir::Func::new(tys.len(), ir);
+    let funcs_ty: Vec<_> = defs.iter().map(ast::FuncDef::get_ty).collect();
+    let funcs: Vec<_> = defs
+        .into_iter()
+        .map(|def| def.translate(&overloads, &funcs_ty))
+        .collect();
     let mut memory = ir::Memory::new();
     unsafe {
-        main.run(&mut memory, &[]);
+        funcs.last().unwrap().run(vec![], &mut memory, &funcs);
     }
 }

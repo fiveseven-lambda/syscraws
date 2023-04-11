@@ -16,7 +16,7 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::pre_ast::{BinaryOperator, BracketKind, PStmt, PTerm, Stmt, Term, UnaryOperator};
+use crate::pre_ast::{Operator, PStmt, PTerm, Stmt, Term};
 use crate::range::Range;
 use crate::token::{Token, TokenKind};
 use std::iter;
@@ -38,7 +38,8 @@ pub fn parse_stmt<'id>(
     };
     match first_token_kind {
         TokenKind::KeywordIf => {
-            tokens.consume();
+            // SAFETY: consume "if"
+            unsafe { tokens.consume() }
             consume_if_eq_or_err(
                 tokens,
                 TokenKind::OpeningParenthesis,
@@ -57,7 +58,8 @@ pub fn parse_stmt<'id>(
                 end,
             }) = tokens.peek()
             {
-                tokens.consume();
+                // SAFETY: consume "else"
+                unsafe { tokens.consume() }
                 (Some(Range::new(start, end)), parse_stmt(input, tokens)?)
             } else {
                 (None, None)
@@ -74,7 +76,8 @@ pub fn parse_stmt<'id>(
             )))
         }
         TokenKind::KeywordWhile => {
-            tokens.consume();
+            // SAFETY: consume "while"
+            unsafe { tokens.consume() }
             consume_if_eq_or_err(
                 tokens,
                 TokenKind::OpeningParenthesis,
@@ -97,7 +100,8 @@ pub fn parse_stmt<'id>(
             )))
         }
         TokenKind::KeywordReturn => {
-            tokens.consume();
+            // SAFETY: consume "return"
+            unsafe { tokens.consume() }
             let term = parse_assign(input, tokens)?;
             consume_if_eq_or_err(
                 tokens,
@@ -117,7 +121,8 @@ pub fn parse_stmt<'id>(
                     start: _,
                     end: semicolon_end,
                 }) => {
-                    tokens.consume();
+                    // SAFETY: consume semicolon
+                    unsafe { tokens.consume() }
                     Ok(Some(PStmt::new(
                         Range::new(first_token_start, semicolon_end),
                         Stmt::Term(term),
@@ -128,7 +133,8 @@ pub fn parse_stmt<'id>(
                     start,
                     end,
                 }) => {
-                    tokens.consume();
+                    // SAFETY: consume opening brace
+                    unsafe { tokens.consume() }
                     let mut stmts = Vec::new();
                     loop {
                         if let Some(Token {
@@ -136,7 +142,8 @@ pub fn parse_stmt<'id>(
                             ..
                         }) = tokens.peek()
                         {
-                            tokens.consume();
+                            // SAFETY: consume closing brace
+                            unsafe { tokens.consume() }
                             break;
                         } else if let Some(stmt) = parse_stmt(input, tokens)? {
                             stmts.push(stmt);
@@ -175,29 +182,68 @@ fn parse_assign<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
     let Some(start) = tokens.next_start() else {
         return Ok(None);
     };
-    let left_hand_side = parse_binary_operator(input, tokens, Precedence::first().unwrap())?;
+    let left_hand_side = parse_type_annotation(input, tokens)?;
     if let Some(Token {
-        token_kind: TokenKind::Equal,
+        token_kind,
         start: op_start,
         end: op_end,
     }) = tokens.peek()
     {
-        tokens.consume();
-        let right_hand_side = parse_assign(input, tokens)?;
+        if let Some(operator) = assignment_operator(token_kind) {
+            // SAFETY: consume assignment operator
+            unsafe { tokens.consume() }
+            let right_hand_side = parse_assign(input, tokens)?;
+            return Ok(Some(PTerm::new(
+                Range::new(start, tokens.prev_end()),
+                Term::Assignment {
+                    operator,
+                    pos_operator: Range::new(op_start, op_end),
+                    left_hand_side: left_hand_side.map(Box::new),
+                    right_hand_side: right_hand_side.map(Box::new),
+                },
+            )));
+        }
+    }
+    Ok(left_hand_side)
+}
+
+fn parse_type_annotation<'id>(
+    input: &'id str,
+    tokens: &mut TokenSeq,
+) -> Result<Option<PTerm<'id>>, Error> {
+    let Some(start) = tokens.next_start() else {
+        return Ok(None);
+    };
+    let term = parse_binary_operator(input, tokens)?;
+    if let Some(Token {
+        token_kind: TokenKind::Colon,
+        start: op_start,
+        end: op_end,
+    }) = tokens.peek()
+    {
+        unsafe { tokens.consume() }
+        let ty = parse_factor(input, tokens)?;
         Ok(Some(PTerm::new(
             Range::new(start, tokens.prev_end()),
-            Term::Assign {
-                pos_equal: Range::new(op_start, op_end),
-                left_hand_side: left_hand_side.map(Box::new),
-                right_hand_side: right_hand_side.map(Box::new),
+            Term::TypeAnnotation {
+                pos_colon: Range::new(op_start, op_end),
+                term: term.map(Box::new),
+                ty: ty.map(Box::new),
             },
         )))
     } else {
-        Ok(left_hand_side)
+        Ok(term)
     }
 }
 
 fn parse_binary_operator<'id>(
+    input: &'id str,
+    tokens: &mut TokenSeq,
+) -> Result<Option<PTerm<'id>>, Error> {
+    parse_binary_operator_rec(input, tokens, Precedence::first().unwrap())
+}
+
+fn parse_binary_operator_rec<'id>(
     input: &'id str,
     tokens: &mut TokenSeq,
     current_precedence: Precedence,
@@ -208,26 +254,31 @@ fn parse_binary_operator<'id>(
     let Some(start) = tokens.next_start() else {
         return Ok(None);
     };
-    let mut left_operand = parse_binary_operator(input, tokens, next_precedence)?;
+    let mut left_operand = parse_binary_operator_rec(input, tokens, next_precedence)?;
     loop {
-        let Some(Token {token_kind, start: op_start, end: op_end}) = tokens.peek() else {
-            return Ok(left_operand);
-        };
-        if let Some(operator) = infix_operator(token_kind, current_precedence) {
-            tokens.consume();
-            let right_operand = parse_binary_operator(input, tokens, next_precedence)?;
-            left_operand = Some(PTerm::new(
-                Range::new(start, tokens.prev_end()),
-                Term::BinaryOperation {
-                    operator,
-                    pos_operator: Range::new(op_start, op_end),
-                    left_operand: left_operand.map(Box::new),
-                    right_operand: right_operand.map(Box::new),
-                },
-            ));
-        } else {
-            return Ok(left_operand);
+        if let Some(Token {
+            token_kind,
+            start: op_start,
+            end: op_end,
+        }) = tokens.peek()
+        {
+            if let Some(operator) = infix_operator(token_kind, current_precedence) {
+                // SAFETY: consume infix operator
+                unsafe { tokens.consume() }
+                let right_operand = parse_binary_operator_rec(input, tokens, next_precedence)?;
+                left_operand = Some(PTerm::new(
+                    Range::new(start, tokens.prev_end()),
+                    Term::BinaryOperation {
+                        operator,
+                        pos_operator: Range::new(op_start, op_end),
+                        left_operand: left_operand.map(Box::new),
+                        right_operand: right_operand.map(Box::new),
+                    },
+                ));
+                continue;
+            }
         }
+        return Ok(left_operand);
     }
 }
 
@@ -270,7 +321,7 @@ fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
             }
             Term::String(value)
         } else if let Some(operator) = prefix_operator(token_kind) {
-            tokens.consume();
+            unsafe { tokens.consume() }
             let operand = parse_factor(input, tokens)?;
             return Ok(Some(PTerm::new(
                 Range::new(start, tokens.prev_end()),
@@ -283,7 +334,7 @@ fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
         } else {
             break 'ant None;
         };
-        tokens.consume();
+        unsafe { tokens.consume() }
         Some(PTerm::new(Range::new(start, end), term))
     };
     loop {
@@ -291,8 +342,8 @@ fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
             let Some(Token { token_kind, start, end }) = tokens.peek() else {
                 return Ok(antecedent);
             };
-            if let Some(bracket_kind) = opening_bracket(token_kind) {
-                tokens.consume();
+            if token_kind == TokenKind::OpeningParenthesis {
+                unsafe { tokens.consume() }
                 let mut elements = Vec::new();
                 let has_trailing_comma;
                 loop {
@@ -303,7 +354,7 @@ fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
                         end,
                     }) = tokens.peek()
                     {
-                        tokens.consume();
+                        unsafe { tokens.consume() }
                         elements.push(element.ok_or(Range::new(start, end)));
                     } else {
                         if let Some(element) = element {
@@ -315,19 +366,18 @@ fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
                         break;
                     }
                 }
-                consume_if_or_err(
+                consume_if_eq_or_err(
                     tokens,
-                    |token_kind| closing_bracket(token_kind) == Some(bracket_kind),
+                    TokenKind::ClosingParenthesis,
                     Range::new(start, end),
                 )?;
-                Term::Bracket {
+                Term::Parenthesized {
                     antecedent: antecedent.map(Box::new),
-                    bracket_kind,
                     elements,
                     has_trailing_comma,
                 }
             } else if let Some(operator) = postfix_operator(token_kind) {
-                tokens.consume();
+                unsafe { tokens.consume() }
                 Term::UnaryOperation {
                     operator,
                     pos_operator: Range::new(start, end),
@@ -341,47 +391,46 @@ fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
     }
 }
 
-fn consume_if_or_err(
-    tokens: &mut TokenSeq,
-    pred: impl FnOnce(TokenKind) -> bool,
-    reason: Range,
-) -> Result<(), Error> {
-    match tokens.peek() {
-        Some(Token { token_kind, .. }) if pred(token_kind) => {
-            tokens.consume();
-            Ok(())
-        }
-        Some(Token { start, end, .. }) => Err(Error::UnexpectedTokenAfter {
-            token: Range::new(start, end),
-            reason,
-        }),
-        None => Err(Error::EOFAfter { reason }),
-    }
-}
-
 fn consume_if_eq_or_err(
     tokens: &mut TokenSeq,
     expected: TokenKind,
     reason: Range,
 ) -> Result<(), Error> {
-    consume_if_or_err(tokens, |token_kind| token_kind == expected, reason)
+    if let Some(Token {
+        token_kind,
+        start,
+        end,
+    }) = tokens.peek()
+    {
+        if token_kind == expected {
+            unsafe { tokens.consume() }
+            Ok(())
+        } else {
+            Err(Error::UnexpectedTokenAfter {
+                token: Range::new(start, end),
+                reason,
+            })
+        }
+    } else {
+        Err(Error::EOFAfter { reason })
+    }
 }
 
-fn prefix_operator(token_kind: TokenKind) -> Option<UnaryOperator> {
+fn prefix_operator(token_kind: TokenKind) -> Option<Operator> {
     match token_kind {
-        TokenKind::Plus => Some(UnaryOperator::Plus),
-        TokenKind::Minus => Some(UnaryOperator::Minus),
-        TokenKind::Exclamation => Some(UnaryOperator::LogicalNot),
-        TokenKind::Tilde => Some(UnaryOperator::BitNot),
-        TokenKind::DoublePlus => Some(UnaryOperator::PreInc),
-        TokenKind::DoubleMinus => Some(UnaryOperator::PreDec),
+        TokenKind::Plus => Some(Operator::Plus),
+        TokenKind::Minus => Some(Operator::Minus),
+        TokenKind::Exclamation => Some(Operator::LogicalNot),
+        TokenKind::Tilde => Some(Operator::BitNot),
+        TokenKind::DoublePlus => Some(Operator::PreInc),
+        TokenKind::DoubleMinus => Some(Operator::PreDec),
         _ => None,
     }
 }
-fn postfix_operator(token_kind: TokenKind) -> Option<UnaryOperator> {
+fn postfix_operator(token_kind: TokenKind) -> Option<Operator> {
     match token_kind {
-        TokenKind::DoublePlus => Some(UnaryOperator::PostInc),
-        TokenKind::DoubleMinus => Some(UnaryOperator::PostDec),
+        TokenKind::DoublePlus => Some(Operator::PostInc),
+        TokenKind::DoubleMinus => Some(Operator::PostDec),
         _ => None,
     }
 }
@@ -389,7 +438,6 @@ fn postfix_operator(token_kind: TokenKind) -> Option<UnaryOperator> {
 use enum_iterator::Sequence;
 #[derive(Clone, Copy, Sequence)]
 enum Precedence {
-    Type,
     LogicalOr,
     LogicalAnd,
     Equality,
@@ -403,45 +451,47 @@ enum Precedence {
     TimeShift,
 }
 
-fn infix_operator(token_kind: TokenKind, precedence: Precedence) -> Option<BinaryOperator> {
+fn infix_operator(token_kind: TokenKind, precedence: Precedence) -> Option<Operator> {
     match (token_kind, precedence) {
-        (TokenKind::TripleGreater, Precedence::TimeShift) => Some(BinaryOperator::ForwardShift),
-        (TokenKind::TripleLess, Precedence::TimeShift) => Some(BinaryOperator::BackwardShift),
-        (TokenKind::Asterisk, Precedence::MulDivRem) => Some(BinaryOperator::Mul),
-        (TokenKind::Slash, Precedence::MulDivRem) => Some(BinaryOperator::Div),
-        (TokenKind::Percent, Precedence::MulDivRem) => Some(BinaryOperator::Rem),
-        (TokenKind::Plus, Precedence::AddSub) => Some(BinaryOperator::Add),
-        (TokenKind::Minus, Precedence::AddSub) => Some(BinaryOperator::Sub),
-        (TokenKind::DoubleGreater, Precedence::BitShift) => Some(BinaryOperator::RightShift),
-        (TokenKind::DoubleLess, Precedence::BitShift) => Some(BinaryOperator::LeftShift),
-        (TokenKind::Ampersand, Precedence::BitAnd) => Some(BinaryOperator::BitAnd),
-        (TokenKind::Circumflex, Precedence::BitXor) => Some(BinaryOperator::BitXor),
-        (TokenKind::Bar, Precedence::BitOr) => Some(BinaryOperator::BitOr),
-        (TokenKind::Greater, Precedence::Inequality) => Some(BinaryOperator::Greater),
-        (TokenKind::GreaterEqual, Precedence::Inequality) => Some(BinaryOperator::GreaterEqual),
-        (TokenKind::Less, Precedence::Inequality) => Some(BinaryOperator::Less),
-        (TokenKind::LessEqual, Precedence::Inequality) => Some(BinaryOperator::LessEqual),
-        (TokenKind::DoubleEqual, Precedence::Equality) => Some(BinaryOperator::Equal),
-        (TokenKind::ExclamationEqual, Precedence::Equality) => Some(BinaryOperator::NotEqual),
-        (TokenKind::DoubleAmpersand, Precedence::LogicalAnd) => Some(BinaryOperator::LogicalAnd),
-        (TokenKind::DoubleBar, Precedence::LogicalOr) => Some(BinaryOperator::LogicalOr),
-        (TokenKind::Colon, Precedence::Type) => Some(BinaryOperator::Type),
+        (TokenKind::TripleGreater, Precedence::TimeShift) => Some(Operator::ForwardShift),
+        (TokenKind::TripleLess, Precedence::TimeShift) => Some(Operator::BackwardShift),
+        (TokenKind::Asterisk, Precedence::MulDivRem) => Some(Operator::Mul),
+        (TokenKind::Slash, Precedence::MulDivRem) => Some(Operator::Div),
+        (TokenKind::Percent, Precedence::MulDivRem) => Some(Operator::Rem),
+        (TokenKind::Plus, Precedence::AddSub) => Some(Operator::Add),
+        (TokenKind::Minus, Precedence::AddSub) => Some(Operator::Sub),
+        (TokenKind::DoubleGreater, Precedence::BitShift) => Some(Operator::RightShift),
+        (TokenKind::DoubleLess, Precedence::BitShift) => Some(Operator::LeftShift),
+        (TokenKind::Ampersand, Precedence::BitAnd) => Some(Operator::BitAnd),
+        (TokenKind::Circumflex, Precedence::BitXor) => Some(Operator::BitXor),
+        (TokenKind::Bar, Precedence::BitOr) => Some(Operator::BitOr),
+        (TokenKind::Greater, Precedence::Inequality) => Some(Operator::Greater),
+        (TokenKind::GreaterEqual, Precedence::Inequality) => Some(Operator::GreaterEqual),
+        (TokenKind::Less, Precedence::Inequality) => Some(Operator::Less),
+        (TokenKind::LessEqual, Precedence::Inequality) => Some(Operator::LessEqual),
+        (TokenKind::DoubleEqual, Precedence::Equality) => Some(Operator::Equal),
+        (TokenKind::ExclamationEqual, Precedence::Equality) => Some(Operator::NotEqual),
+        (TokenKind::DoubleAmpersand, Precedence::LogicalAnd) => Some(Operator::LogicalAnd),
+        (TokenKind::DoubleBar, Precedence::LogicalOr) => Some(Operator::LogicalOr),
         _ => None,
     }
 }
 
-fn opening_bracket(token_kind: TokenKind) -> Option<BracketKind> {
+fn assignment_operator(token_kind: TokenKind) -> Option<Operator> {
     match token_kind {
-        TokenKind::OpeningParenthesis => Some(BracketKind::Round),
-        TokenKind::OpeningBracket => Some(BracketKind::Square),
-        _ => None,
-    }
-}
-
-fn closing_bracket(token_kind: TokenKind) -> Option<BracketKind> {
-    match token_kind {
-        TokenKind::ClosingParenthesis => Some(BracketKind::Round),
-        TokenKind::ClosingBracket => Some(BracketKind::Square),
+        TokenKind::Equal => Some(Operator::Assign),
+        TokenKind::PlusEqual => Some(Operator::AddAssign),
+        TokenKind::MinusEqual => Some(Operator::SubAssign),
+        TokenKind::AsteriskEqual => Some(Operator::MulAssign),
+        TokenKind::SlashEqual => Some(Operator::DivAssign),
+        TokenKind::PercentEqual => Some(Operator::RemAssign),
+        TokenKind::DoubleGreaterEqual => Some(Operator::RightShiftAssign),
+        TokenKind::TripleGreaterEqual => Some(Operator::ForwardShiftAssign),
+        TokenKind::DoubleLessEqual => Some(Operator::LeftShiftAssign),
+        TokenKind::TripleLessEqual => Some(Operator::BackwardShiftAssign),
+        TokenKind::AmpersandEqual => Some(Operator::BitAndAssign),
+        TokenKind::CircumflexEqual => Some(Operator::BitXorAssign),
+        TokenKind::BarEqual => Some(Operator::BitOrAssign),
         _ => None,
     }
 }

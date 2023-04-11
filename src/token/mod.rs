@@ -16,6 +16,9 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+mod debug_print;
+pub use debug_print::debug_print;
+
 #[derive(Clone, Copy)]
 pub struct Token {
     pub token_kind: TokenKind,
@@ -33,12 +36,17 @@ pub enum TokenKind {
     Number,
     String,
     Plus,
+    PlusEqual,
     DoublePlus,
     Minus,
+    MinusEqual,
     DoubleMinus,
     Asterisk,
+    AsteriskEqual,
     Slash,
+    SlashEqual,
     Percent,
+    PercentEqual,
     Equal,
     DoubleEqual,
     RightArrow,
@@ -47,16 +55,23 @@ pub enum TokenKind {
     Greater,
     GreaterEqual,
     DoubleGreater,
+    DoubleGreaterEqual,
     TripleGreater,
+    TripleGreaterEqual,
     Less,
     LessEqual,
     DoubleLess,
+    DoubleLessEqual,
     TripleLess,
+    TripleLessEqual,
     Ampersand,
+    AmpersandEqual,
     DoubleAmpersand,
     Bar,
+    BarEqual,
     DoubleBar,
     Circumflex,
+    CircumflexEqual,
     Dot,
     Colon,
     Semicolon,

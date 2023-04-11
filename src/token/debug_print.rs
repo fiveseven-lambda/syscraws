@@ -16,32 +16,14 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::token::Token;
-
-pub struct TokenSeq<'t> {
-    tokens: &'t [Token],
-    prev_end: usize,
-}
-
-impl<'t> TokenSeq<'t> {
-    pub fn new(tokens: &'t [Token]) -> TokenSeq<'t> {
-        TokenSeq {
-            tokens,
-            prev_end: 0,
-        }
-    }
-    pub fn peek(&self) -> Option<Token> {
-        self.tokens.first().copied()
-    }
-    pub unsafe fn consume(&mut self) {
-        let (head, tail) = self.tokens.split_first().unwrap_unchecked();
-        self.prev_end = head.end;
-        self.tokens = tail;
-    }
-    pub fn next_start(&self) -> Option<usize> {
-        self.peek().map(|Token { start, .. }| start)
-    }
-    pub fn prev_end(&self) -> usize {
-        self.prev_end
+use super::Token;
+pub fn debug_print(input: &str, tokens: &[Token]) {
+    for &Token {
+        token_kind,
+        start,
+        end,
+    } in tokens
+    {
+        eprintln!("{start}-{end}: \"{}\" {token_kind:?}", &input[start..end]);
     }
 }
