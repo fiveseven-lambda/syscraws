@@ -44,6 +44,11 @@ impl<'id> Variables<'id> {
     pub fn remove(&mut self, name: &str) -> usize {
         self.names.get_mut(name).unwrap().pop().unwrap()
     }
+    pub fn remove_all(&mut self, names: Vec<&str>) {
+        for name in names {
+            self.remove(name);
+        }
+    }
     pub fn get(&self, name: &str) -> Option<usize> {
         self.names.get(name).and_then(|v| v.last()).copied()
     }

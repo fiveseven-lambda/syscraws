@@ -33,57 +33,28 @@ pub enum Expr {
 }
 
 pub enum Stmt {
-    Empty,
     Expr(Expr),
     Return(Option<Expr>),
-    If(Expr, Box<StmtWithSize>, Box<StmtWithSize>),
-    While(Expr, Box<StmtWithSize>),
-    Block(Vec<StmtWithSize>),
+    If(Expr, Block, Block),
+    While(Expr, Block),
 }
-pub struct StmtWithSize {
-    stmt: Stmt,
+pub struct Block {
+    stmts: Vec<Stmt>,
     size: usize,
 }
 
-impl StmtWithSize {
-    pub fn new_empty() -> StmtWithSize {
-        StmtWithSize {
-            stmt: Stmt::Empty,
-            size: 0,
-        }
-    }
-    pub fn new_expr(expr: Expr) -> StmtWithSize {
-        StmtWithSize {
-            stmt: Stmt::Expr(expr),
-            size: 1,
-        }
-    }
-    pub fn new_return(expr: Option<Expr>) -> StmtWithSize {
-        StmtWithSize {
-            stmt: Stmt::Return(expr),
-            size: 1,
-        }
-    }
-    pub fn new_block(stmts: Vec<StmtWithSize>) -> StmtWithSize {
-        let size: usize = stmts.iter().map(|StmtWithSize { size, .. }| size).sum();
-        StmtWithSize {
-            stmt: Stmt::Block(stmts),
-            size,
-        }
-    }
-    pub fn new_if(cond: Expr, stmt_true: StmtWithSize, stmt_false: StmtWithSize) -> StmtWithSize {
-        let size = 1 + stmt_true.size + stmt_false.size;
-        StmtWithSize {
-            stmt: Stmt::If(cond, stmt_true.into(), stmt_false.into()),
-            size,
-        }
-    }
-    pub fn new_while(cond: Expr, stmt: StmtWithSize) -> StmtWithSize {
-        let size = 1 + stmt.size;
-        StmtWithSize {
-            stmt: Stmt::While(cond, stmt.into()),
-            size,
-        }
+impl Block {
+    pub fn new(stmts: Vec<Stmt>) -> Block {
+        let size = stmts
+            .iter()
+            .map(|stmt| match stmt {
+                Stmt::Expr(_) => 1,
+                Stmt::Return(_) => 1,
+                Stmt::If(_, block_then, block_else) => 1 + block_then.size + block_else.size,
+                Stmt::While(_, block) => 1 + block.size,
+            })
+            .sum();
+        Block { stmts, size }
     }
 }
 
@@ -91,8 +62,7 @@ pub struct FuncDef {
     num_args: usize,
     tys: Vec<Option<ty::Ty>>,
     ret_ty: Option<ty::Ty>,
-    body: Vec<StmtWithSize>,
-    size: usize,
+    body: Block,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -106,15 +76,13 @@ impl FuncDef {
         num_args: usize,
         tys: Vec<Option<ty::Ty>>,
         ret_ty: Option<ty::Ty>,
-        body: Vec<StmtWithSize>,
+        body: Block,
     ) -> FuncDef {
-        let size: usize = body.iter().map(|StmtWithSize { size, .. }| size).sum();
         FuncDef {
             num_args,
             tys,
             ret_ty,
             body,
-            size,
         }
     }
     pub fn get_ty(&self) -> ty::Func {
@@ -217,21 +185,71 @@ impl Expr {
     }
 }
 
+struct Builder {
+    stmts: Vec<ir::Stmt>,
+}
+impl Builder {
+    fn new() -> Builder {
+        Builder { stmts: Vec::new() }
+    }
+    fn add_stmt(&mut self, stmt: ir::Stmt) -> usize {
+        let num = self.stmts.len();
+        self.stmts.push(stmt);
+        num
+    }
+    fn result(self) -> Vec<ir::Stmt> {
+        self.stmts
+    }
+    fn add_stmts(
+        &mut self,
+        mut stmts: Vec<Stmt>,
+        vars_ty: &[Option<ty::Ty>],
+        overloads: &[Vec<Func>],
+        funcs_ty: &[ty::Func],
+        end: Option<usize>,
+    ) -> Option<usize> {
+        if let Some(stmt) = stmts.pop() {
+            let cur = match stmt {
+                Stmt::Expr(expr) => self.add_stmt(ir::Stmt::Expr(
+                    expr.translate(vars_ty, overloads, funcs_ty).1,
+                    end,
+                )),
+                Stmt::If(cond, block_true, block_false) => {
+                    let next_true =
+                        self.add_stmts(block_true.stmts, vars_ty, overloads, funcs_ty, end);
+                    let next_false =
+                        self.add_stmts(block_false.stmts, vars_ty, overloads, funcs_ty, end);
+                    self.add_stmt(ir::Stmt::Branch(
+                        cond.translate(vars_ty, overloads, funcs_ty).1,
+                        next_true,
+                        next_false,
+                    ))
+                }
+                Stmt::While(cond, block) => {
+                    let cur = self.stmts.len() + block.size;
+                    let next = self.add_stmts(block.stmts, vars_ty, overloads, funcs_ty, Some(cur));
+                    assert_eq!(cur, self.stmts.len());
+                    self.add_stmt(ir::Stmt::Branch(
+                        cond.translate(vars_ty, overloads, funcs_ty).1,
+                        next,
+                        end,
+                    ))
+                }
+                Stmt::Return(expr) => self.add_stmt(ir::Stmt::Return(
+                    expr.unwrap().translate(vars_ty, overloads, funcs_ty).1,
+                )),
+            };
+            self.add_stmts(stmts, vars_ty, overloads, funcs_ty, Some(cur))
+        } else {
+            end
+        }
+    }
+}
+
 impl FuncDef {
     pub fn translate(self, overloads: &[Vec<Func>], funcs_ty: &[ty::Func]) -> ir::FuncDef {
-        let mut target = Vec::with_capacity(self.size);
-        for (i, stmt) in self.body.into_iter().enumerate() {
-            match stmt.stmt {
-                Stmt::Expr(expr) => {
-                    target.push(ir::Stmt::Expr(
-                        expr.translate(&self.tys, overloads, funcs_ty).1,
-                        i + 1,
-                    ));
-                }
-                _ => todo!(),
-            }
-        }
-        ir::_debug_print(&target);
-        ir::FuncDef::new(self.tys.len(), target)
+        let mut builder = Builder::new();
+        let entry = builder.add_stmts(self.body.stmts, &self.tys, overloads, funcs_ty, None);
+        ir::FuncDef::new(self.tys.len(), builder.result(), entry)
     }
 }

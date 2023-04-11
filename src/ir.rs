@@ -310,18 +310,23 @@ impl Expr {
 
 pub enum Stmt {
     Return(Expr),
-    Expr(Expr, usize),
-    Branch(Expr, usize, usize),
+    Expr(Expr, Option<usize>),
+    Branch(Expr, Option<usize>, Option<usize>),
 }
 
 pub struct FuncDef {
     num_locals: usize,
     stmts: Vec<Stmt>,
+    entry: Option<usize>,
 }
 
 impl FuncDef {
-    pub fn new(num_locals: usize, stmts: Vec<Stmt>) -> FuncDef {
-        FuncDef { num_locals, stmts }
+    pub fn new(num_locals: usize, stmts: Vec<Stmt>, entry: Option<usize>) -> FuncDef {
+        FuncDef {
+            num_locals,
+            stmts,
+            entry,
+        }
     }
     pub unsafe fn run(
         &self,
@@ -334,14 +339,16 @@ impl FuncDef {
         let mut stack = args;
         stack.resize(self.num_locals, None);
         memory.stacks.insert(stack_id, stack);
-        let mut counter = 0;
-        while let Some(stmt) = self.stmts.get(counter) {
-            counter = match stmt {
+        let mut counter = self.entry;
+        let mut ret = None;
+        while let Some(i) = counter {
+            counter = match &self.stmts[i] {
                 Stmt::Expr(expr, next) => {
                     expr.eval(memory, stack_id, funcs);
                     *next
                 }
                 Stmt::Return(expr) => {
+                    ret = Some(expr.eval(memory, stack_id, funcs));
                     break;
                 }
                 Stmt::Branch(cond, next_true, next_false) => {
@@ -354,7 +361,7 @@ impl FuncDef {
             }
         }
         memory.stacks.remove(&stack_id);
-        None
+        ret
     }
 }
 

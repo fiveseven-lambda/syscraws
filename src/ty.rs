@@ -24,7 +24,6 @@ pub enum Kind {
     String,
     Reference,
     Tuple,
-    Function,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

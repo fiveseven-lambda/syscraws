@@ -16,7 +16,7 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use super::{Expr, FuncDef, Stmt, StmtWithSize};
+use super::{Block, Expr, FuncDef, Stmt};
 
 impl Expr {
     pub fn _debug_print(&self, depth: usize) {
@@ -46,9 +46,6 @@ impl Stmt {
                 println!("{indent}expression statement");
                 expr._debug_print(depth + 1);
             }
-            Stmt::Empty => {
-                println!("{indent}empty statement");
-            }
             Stmt::Return(expr) => {
                 println!("{indent}return statement");
                 if let Some(expr) = expr {
@@ -66,20 +63,16 @@ impl Stmt {
                 cond._debug_print(depth + 1);
                 stmts._debug_print(depth);
             }
-            Stmt::Block(stmts) => {
-                println!("{indent}block");
-                for stmt in stmts {
-                    stmt._debug_print(depth + 1);
-                }
-            }
         }
     }
 }
-impl StmtWithSize {
+impl Block {
     pub fn _debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
-        println!("{indent}{:?}", self.size);
-        self.stmt._debug_print(depth + 1);
+        println!("{indent} block (size: {})", self.size);
+        for stmt in &self.stmts {
+            stmt._debug_print(depth + 1);
+        }
     }
 }
 impl FuncDef {
@@ -89,8 +82,6 @@ impl FuncDef {
             println!("{i}: {ty:?}");
         }
         println!("{:?}", self.ret_ty);
-        for stmt in &self.body {
-            stmt._debug_print(0);
-        }
+        self.body._debug_print(0);
     }
 }

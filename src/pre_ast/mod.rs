@@ -296,11 +296,96 @@ impl<'id> PStmt<'id> {
         funcs: &mut map::Funcs<'id>,
         scope: &mut Vec<&'id str>,
         errors: &mut Vec<Error>,
-    ) -> Result<ast::StmtWithSize, ()> {
+    ) -> Result<Vec<ast::Stmt>, ()> {
         match self.stmt {
-            Stmt::Term(Some(term)) => Ok(ast::StmtWithSize::new_expr(
+            Stmt::Term(Some(term)) => Ok(vec![ast::Stmt::Expr(
                 term.into_expr(variables, globals, funcs, scope, errors)?,
-            )),
+            )]),
+            Stmt::Term(None) => Ok(vec![]),
+            Stmt::Block {
+                antecedent: None,
+                stmts,
+            } => {
+                let mut scope = Vec::new();
+                let mut ret = Ok(Vec::new());
+                for stmt in stmts {
+                    let ast = stmt.into_ast(variables, globals, funcs, &mut scope, errors);
+                    if let Ok(ast_stmts) = &mut ret {
+                        match ast {
+                            Ok(mut ast) => ast_stmts.append(&mut ast),
+                            Err(()) => ret = Err(()),
+                        }
+                    }
+                }
+                variables.remove_all(scope);
+                ret
+            }
+            Stmt::If {
+                cond,
+                pos_if,
+                stmt_then,
+                pos_else,
+                stmt_else,
+            } => {
+                let mut scope_if = Vec::new();
+                let cond = cond
+                    .ok_or_else(|| errors.push(Error::EmptyConditionIf(pos_if.clone())))
+                    .and_then(|cond| {
+                        cond.into_expr(variables, globals, funcs, &mut scope_if, errors)
+                    });
+                let mut scope_then = Vec::new();
+                let stmt_then = stmt_then
+                    .ok_or_else(|| errors.push(Error::EmptyStatementIf(pos_if)))
+                    .and_then(|stmt| {
+                        stmt.into_ast(variables, globals, funcs, &mut scope_then, errors)
+                    });
+                variables.remove_all(scope_then);
+                let stmt_else = match pos_else {
+                    Some(pos_else) => {
+                        let mut scope_else = Vec::new();
+                        let stmts = stmt_else
+                            .ok_or_else(|| errors.push(Error::EmptyStatementElse(pos_else)))
+                            .and_then(|stmt| {
+                                stmt.into_ast(variables, globals, funcs, &mut scope_else, errors)
+                            });
+                        variables.remove_all(scope_else);
+                        stmts
+                    }
+                    None => Ok(vec![]),
+                };
+                variables.remove_all(scope_if);
+                Ok(vec![ast::Stmt::If(
+                    cond?,
+                    ast::Block::new(stmt_then?),
+                    ast::Block::new(stmt_else?),
+                )])
+            }
+            Stmt::While {
+                cond,
+                pos_while,
+                stmt,
+            } => {
+                let mut scope_while = Vec::new();
+                let cond = cond
+                    .ok_or_else(|| errors.push(Error::EmptyConditionWhile(pos_while.clone())))
+                    .and_then(|cond| {
+                        cond.into_expr(variables, globals, funcs, &mut scope_while, errors)
+                    });
+                let mut scope = Vec::new();
+                let stmt = stmt
+                    .ok_or_else(|| errors.push(Error::EmptyStatementWhile(pos_while)))
+                    .and_then(|stmt| stmt.into_ast(variables, globals, funcs, &mut scope, errors));
+                variables.remove_all(scope);
+                variables.remove_all(scope_while);
+                Ok(vec![ast::Stmt::While(cond?, ast::Block::new(stmt?))])
+            }
+            Stmt::Return(expr) => {
+                let expr = match expr {
+                    Some(expr) => Some(expr.into_expr(variables, globals, funcs, scope, errors)?),
+                    None => todo!(),
+                };
+                Ok(vec![ast::Stmt::Return(expr)])
+            }
             _ => todo!(),
         }
     }
@@ -402,24 +487,34 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::Func
         }
 
         let mut scope = Vec::new();
-        let mut body_iter = body.into_iter().map(|stmt| {
-            stmt.into_ast(
+        let mut stmts = Ok(Vec::new());
+        for stmt in body {
+            let ast = stmt.into_ast(
                 &mut local_variables,
                 Some(globals),
                 funcs,
                 &mut scope,
                 errors,
-            )
-        });
-        let body: Result<Vec<_>, _> = body_iter.by_ref().collect();
-        for _ in body_iter {}
+            );
+            if let Ok(ast_stmts) = &mut stmts {
+                match ast {
+                    Ok(mut ast) => ast_stmts.append(&mut ast),
+                    Err(()) => stmts = Err(()),
+                }
+            }
+        }
 
         let ret_ty = ret_ty.map(|ty| ty.into_ty()).transpose();
 
         let id = funcs.get_or_insert(name);
         funcs.add_def(
             id,
-            ast::FuncDef::new(num_args, local_variables.tys(), ret_ty?, body?),
+            ast::FuncDef::new(
+                num_args,
+                local_variables.tys(),
+                ret_ty?,
+                ast::Block::new(stmts?),
+            ),
         );
         Ok(())
     }
@@ -440,11 +535,12 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::Func
                 &mut global_scope,
                 &mut errors,
             ) {
-                Ok(stmt) => toplevel_stmts.push(stmt),
+                Ok(mut stmt) => toplevel_stmts.append(&mut stmt),
                 Err(()) => has_error = true,
             },
         }
     }
+
     assert_eq!(has_error, !errors.is_empty());
     if has_error {
         return Err(errors);
@@ -454,7 +550,7 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::Func
         0,
         global_variables.tys(),
         Some(ty::Ty::tuple(vec![])),
-        toplevel_stmts,
+        ast::Block::new(toplevel_stmts),
     ));
     Ok((overloads, defs))
 }
