@@ -18,8 +18,8 @@
 
 #[derive(Clone)]
 pub struct Range {
-    start: usize,
-    end: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Range {
@@ -28,19 +28,9 @@ impl Range {
     }
 }
 
-impl std::ops::Add for Range {
-    type Output = Range;
-    fn add(self, other: Self) -> Self::Output {
-        Range {
-            start: self.start,
-            end: other.end,
-        }
-    }
-}
-
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 impl Debug for Range {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{:03}-{:03}:", self.start, self.end)
+        write!(f, "{}..{}", self.start, self.end)
     }
 }

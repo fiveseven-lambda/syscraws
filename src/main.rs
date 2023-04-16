@@ -16,12 +16,10 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#![feature(char_indices_offset)]
-#![feature(is_some_and)]
-
 mod ast;
 mod ir;
 mod lexer;
+mod lines;
 mod parser;
 mod pre_ast;
 mod range;
@@ -33,18 +31,17 @@ use std::io::Read;
 fn main() {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).unwrap();
-    let tokens = lexer::tokenize(&input).unwrap();
-    token::_debug_print(&input, &tokens);
-    let pre_ast = parser::parse(&input, &tokens).unwrap();
-    pre_ast::_debug_print(&pre_ast);
+    let tokens = match lexer::tokenize(&input) {
+        Ok(tokens) => tokens,
+        Err(error) => return error.eprint(&input),
+    };
+    let pre_ast = match parser::parse(&input, &tokens) {
+        Ok(pre_ast) => pre_ast,
+        Err(error) => return error.eprint(&input),
+    };
     let (overloads, defs) = match pre_ast::into_ast(pre_ast) {
         Ok(ast) => ast,
-        Err(errors) => {
-            for error in errors {
-                eprintln!("{:?}", error);
-            }
-            return;
-        }
+        Err(errors) => return pre_ast::eprint_errors(&errors, &input),
     };
     for (i, funcs) in overloads.iter().enumerate() {
         println!("{i}: {funcs:?}");

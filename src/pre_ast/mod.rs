@@ -23,7 +23,10 @@ use num::BigInt;
 
 mod debug_print;
 pub use debug_print::_debug_print;
+mod error;
 mod map;
+pub use error::eprint_errors;
+use error::Error;
 
 #[derive(Debug, Sequence)]
 pub enum Operator {
@@ -553,24 +556,4 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::Func
         ast::Block::new(toplevel_stmts),
     ));
     Ok((overloads, defs))
-}
-
-#[derive(Debug)]
-pub enum Error {
-    EmptyUnaryOperand(Range),
-    EmptyLeftOperand(Range),
-    EmptyRightOperand(Range),
-    EmptyLeftHandSide(Range),
-    EmptyRightHandSide(Range),
-    EmptyLeftHandSideDecl { colon: Range },
-    InvalidLeftHandSideDecl { term: Range, colon: Range },
-    EmptyArgument { pos_comma: Range },
-    EmptyConditionIf(Range),
-    EmptyStatementIf(Range),
-    EmptyStatementElse(Range),
-    EmptyConditionWhile(Range),
-    EmptyStatementWhile(Range),
-    UnexpectedExpressionBeforeBlock(Range),
-    InvalidFunctionName(Range),
-    InvalidArgumentInDef(Range),
 }

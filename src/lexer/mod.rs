@@ -17,8 +17,10 @@
  */
 
 mod chars_peekable;
+mod error;
 #[cfg(test)]
 mod test;
+use error::Error;
 
 use crate::token::{Token, TokenKind};
 use chars_peekable::CharsPeekable;
@@ -211,8 +213,9 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
                             Some('n' | 'r' | 't' | '"' | '\\' | '0' | '\'') => {}
                             Some('x') => {
                                 for _ in 0..2 {
-                                    if !chars.next().is_some_and(|ch| ch.is_ascii_digit()) {
-                                        return Err(Error::InvalidEscapeSequence(pos));
+                                    match chars.next() {
+                                        Some(ch) if ch.is_ascii_digit() => {}
+                                        _ => return Err(Error::InvalidEscapeSequence(pos)),
                                     }
                                 }
                             }
@@ -246,12 +249,4 @@ fn read_number(chars: &mut CharsPeekable) {
         };
         true
     });
-}
-
-#[derive(Debug)]
-pub enum Error {
-    UnexpectedCharacter(usize),
-    UnterminatedComment(Vec<usize>),
-    UnterminatedStringLiteral(usize),
-    InvalidEscapeSequence(usize),
 }

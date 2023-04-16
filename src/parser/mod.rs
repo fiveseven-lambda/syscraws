@@ -23,16 +23,15 @@ use std::iter;
 
 mod token_seq;
 use token_seq::TokenSeq;
+mod error;
+use error::Error;
 
 pub fn parse<'id>(input: &'id str, tokens: &[Token]) -> Result<Vec<PStmt<'id>>, Error> {
     let mut tokens = TokenSeq::new(tokens);
     iter::from_fn(|| parse_stmt(input, &mut tokens).transpose()).collect()
 }
 
-pub fn parse_stmt<'id>(
-    input: &'id str,
-    tokens: &mut TokenSeq,
-) -> Result<Option<PStmt<'id>>, Error> {
+fn parse_stmt<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PStmt<'id>>, Error> {
     let Some(Token {token_kind: first_token_kind, start: first_token_start, end: first_token_end}) = tokens.peek() else {
         return Ok(None);
     };
@@ -494,11 +493,4 @@ fn assignment_operator(token_kind: TokenKind) -> Option<Operator> {
         TokenKind::BarEqual => Some(Operator::BitOrAssign),
         _ => None,
     }
-}
-
-#[derive(Debug)]
-pub enum Error {
-    UnexpectedToken { token: Range },
-    UnexpectedTokenAfter { token: Range, reason: Range },
-    EOFAfter { reason: Range },
 }

@@ -20,7 +20,7 @@ use super::*;
 
 fn check(input: &str, expected: Vec<(TokenKind, &str)>) {
     let tokens = tokenize(input).unwrap();
-    assert_eq!(tokens.len(), expected.len());
+    assert_eq!(tokens.len(), expected.len(), "different number of tokens");
     for (
         &Token {
             token_kind,
@@ -30,8 +30,8 @@ fn check(input: &str, expected: Vec<(TokenKind, &str)>) {
         &(expected_token_kind, expected_token),
     ) in tokens.iter().zip(&expected)
     {
-        assert_eq!(token_kind, expected_token_kind);
-        assert_eq!(&input[start..end], expected_token);
+        assert_eq!(token_kind, expected_token_kind, "different kind");
+        assert_eq!(&input[start..end], expected_token, "different token");
     }
 }
 
@@ -59,4 +59,40 @@ fn number() {
             (TokenKind::Number, ".15"),
         ],
     );
+}
+
+#[test]
+fn string() {
+    check(
+        r#"
+            "abc"
+            "abc\"def"
+        "#,
+        vec![
+            (TokenKind::String, r#""abc""#),
+            (TokenKind::String, r#""abc\"def""#),
+        ],
+    );
+}
+
+#[test]
+fn block_comment() {
+    check(
+        "x/*comment*/y/*/comment*/z",
+        vec![
+            (TokenKind::Identifier, "x"),
+            (TokenKind::Identifier, "y"),
+            (TokenKind::Identifier, "z"),
+        ],
+    );
+    check(
+        "/*/comment*/*/",
+        vec![(TokenKind::Asterisk, "*"), (TokenKind::Slash, "/")],
+    );
+    check(
+        "a/*xxx/*xxx*/xxx*/b",
+        vec![(TokenKind::Identifier, "a"), (TokenKind::Identifier, "b")],
+    );
+    assert!(tokenize("/*").is_err());
+    assert!(tokenize("/*/").is_err());
 }

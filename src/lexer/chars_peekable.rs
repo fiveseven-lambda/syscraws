@@ -20,6 +20,7 @@ use std::str::CharIndices;
 
 pub struct CharsPeekable<'s> {
     chars: CharIndices<'s>,
+    len: usize,
     peeked: Option<Option<(usize, char)>>,
 }
 
@@ -27,6 +28,7 @@ impl<'s> CharsPeekable<'s> {
     pub fn new(s: &'s str) -> CharsPeekable<'s> {
         CharsPeekable {
             chars: s.char_indices(),
+            len: s.len(),
             peeked: None,
         }
     }
@@ -55,10 +57,10 @@ impl<'s> CharsPeekable<'s> {
     pub fn consume_while(&mut self, mut pred: impl FnMut(char) -> bool) {
         while self.consume_if(&mut pred) {}
     }
-    pub fn offset(&self) -> usize {
-        match self.peeked {
-            Some(Some((offset, _))) => offset,
-            _ => self.chars.offset(),
+    pub fn offset(&mut self) -> usize {
+        match *self.peeked.get_or_insert_with(|| self.chars.next()) {
+            Some((offset, _)) => offset,
+            None => self.len,
         }
     }
 }

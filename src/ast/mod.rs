@@ -185,12 +185,24 @@ impl Expr {
     }
 }
 
-struct Builder {
+struct Builder<'def> {
     stmts: Vec<ir::Stmt>,
+    vars_ty: &'def [Option<ty::Ty>],
+    overloads: &'def [Vec<Func>],
+    funcs_ty: &'def [ty::Func],
 }
-impl Builder {
-    fn new() -> Builder {
-        Builder { stmts: Vec::new() }
+impl<'def> Builder<'def> {
+    fn new(
+        vars_ty: &'def [Option<ty::Ty>],
+        overloads: &'def [Vec<Func>],
+        funcs_ty: &'def [ty::Func],
+    ) -> Builder<'def> {
+        Builder {
+            stmts: Vec::new(),
+            vars_ty,
+            overloads,
+            funcs_ty,
+        }
     }
     fn add_stmt(&mut self, stmt: ir::Stmt) -> usize {
         let num = self.stmts.len();
@@ -200,46 +212,42 @@ impl Builder {
     fn result(self) -> Vec<ir::Stmt> {
         self.stmts
     }
-    fn add_stmts(
-        &mut self,
-        mut stmts: Vec<Stmt>,
-        vars_ty: &[Option<ty::Ty>],
-        overloads: &[Vec<Func>],
-        funcs_ty: &[ty::Func],
-        end: Option<usize>,
-    ) -> Option<usize> {
+    fn add_stmts(&mut self, mut stmts: Vec<Stmt>, end: Option<usize>) -> Option<usize> {
         if let Some(stmt) = stmts.pop() {
             let cur = match stmt {
                 Stmt::Expr(expr) => self.add_stmt(ir::Stmt::Expr(
-                    expr.translate(vars_ty, overloads, funcs_ty).1,
+                    expr.translate(&self.vars_ty, &self.overloads, &self.funcs_ty)
+                        .1,
                     end,
                 )),
                 Stmt::If(cond, block_true, block_false) => {
-                    let next_true =
-                        self.add_stmts(block_true.stmts, vars_ty, overloads, funcs_ty, end);
-                    let next_false =
-                        self.add_stmts(block_false.stmts, vars_ty, overloads, funcs_ty, end);
+                    let next_true = self.add_stmts(block_true.stmts, end);
+                    let next_false = self.add_stmts(block_false.stmts, end);
                     self.add_stmt(ir::Stmt::Branch(
-                        cond.translate(vars_ty, overloads, funcs_ty).1,
+                        cond.translate(&self.vars_ty, &self.overloads, &self.funcs_ty)
+                            .1,
                         next_true,
                         next_false,
                     ))
                 }
                 Stmt::While(cond, block) => {
                     let cur = self.stmts.len() + block.size;
-                    let next = self.add_stmts(block.stmts, vars_ty, overloads, funcs_ty, Some(cur));
+                    let next = self.add_stmts(block.stmts, Some(cur));
                     assert_eq!(cur, self.stmts.len());
                     self.add_stmt(ir::Stmt::Branch(
-                        cond.translate(vars_ty, overloads, funcs_ty).1,
+                        cond.translate(&self.vars_ty, &self.overloads, &self.funcs_ty)
+                            .1,
                         next,
                         end,
                     ))
                 }
                 Stmt::Return(expr) => self.add_stmt(ir::Stmt::Return(
-                    expr.unwrap().translate(vars_ty, overloads, funcs_ty).1,
+                    expr.unwrap()
+                        .translate(&self.vars_ty, &self.overloads, &self.funcs_ty)
+                        .1,
                 )),
             };
-            self.add_stmts(stmts, vars_ty, overloads, funcs_ty, Some(cur))
+            self.add_stmts(stmts, Some(cur))
         } else {
             end
         }
@@ -248,8 +256,8 @@ impl Builder {
 
 impl FuncDef {
     pub fn translate(self, overloads: &[Vec<Func>], funcs_ty: &[ty::Func]) -> ir::FuncDef {
-        let mut builder = Builder::new();
-        let entry = builder.add_stmts(self.body.stmts, &self.tys, overloads, funcs_ty, None);
+        let mut builder = Builder::new(&self.tys, overloads, funcs_ty);
+        let entry = builder.add_stmts(self.body.stmts, None);
         ir::FuncDef::new(self.tys.len(), builder.result(), entry)
     }
 }
