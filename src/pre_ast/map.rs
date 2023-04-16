@@ -59,7 +59,7 @@ impl<'id> Variables<'id> {
 
 pub struct Funcs<'id> {
     names: HashMap<&'id str, usize>,
-    overloads: Vec<Vec<ast::Func>>,
+    overloads: Vec<Vec<ir::Func>>,
     defs: Vec<ast::FuncDef>,
 }
 
@@ -72,46 +72,48 @@ impl<'id> Funcs<'id> {
                 .collect(),
             defs: Vec::new(),
         };
-        ret.overloads[Operator::Plus as usize].push(ast::Func::Builtin(ir::BuiltinFunc::PlusFloat));
+        ret.overloads[Operator::Plus as usize].push(ir::Func::Builtin(ir::BuiltinFunc::PlusFloat));
         ret.overloads[Operator::Plus as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::PlusInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::PlusInteger));
         ret.overloads[Operator::Minus as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::MinusFloat));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::MinusFloat));
         ret.overloads[Operator::Minus as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::MinusInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::MinusInteger));
+        ret.overloads[Operator::Recip as usize]
+            .push(ir::Func::Builtin(ir::BuiltinFunc::RecipFloat));
         ret.overloads[Operator::LogicalNot as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::NotBoolean));
-        ret.overloads[Operator::Add as usize].push(ast::Func::Builtin(ir::BuiltinFunc::AddFloat));
-        ret.overloads[Operator::Add as usize].push(ast::Func::Builtin(ir::BuiltinFunc::AddInteger));
-        ret.overloads[Operator::Sub as usize].push(ast::Func::Builtin(ir::BuiltinFunc::SubFloat));
-        ret.overloads[Operator::Sub as usize].push(ast::Func::Builtin(ir::BuiltinFunc::SubInteger));
-        ret.overloads[Operator::Mul as usize].push(ast::Func::Builtin(ir::BuiltinFunc::MulFloat));
-        ret.overloads[Operator::Mul as usize].push(ast::Func::Builtin(ir::BuiltinFunc::MulInteger));
-        ret.overloads[Operator::Div as usize].push(ast::Func::Builtin(ir::BuiltinFunc::DivFloat));
-        ret.overloads[Operator::Div as usize].push(ast::Func::Builtin(ir::BuiltinFunc::DivInteger));
-        ret.overloads[Operator::Rem as usize].push(ast::Func::Builtin(ir::BuiltinFunc::RemFloat));
-        ret.overloads[Operator::Rem as usize].push(ast::Func::Builtin(ir::BuiltinFunc::RemInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::NotBoolean));
+        ret.overloads[Operator::Add as usize].push(ir::Func::Builtin(ir::BuiltinFunc::AddFloat));
+        ret.overloads[Operator::Add as usize].push(ir::Func::Builtin(ir::BuiltinFunc::AddInteger));
+        ret.overloads[Operator::Sub as usize].push(ir::Func::Builtin(ir::BuiltinFunc::SubFloat));
+        ret.overloads[Operator::Sub as usize].push(ir::Func::Builtin(ir::BuiltinFunc::SubInteger));
+        ret.overloads[Operator::Mul as usize].push(ir::Func::Builtin(ir::BuiltinFunc::MulFloat));
+        ret.overloads[Operator::Mul as usize].push(ir::Func::Builtin(ir::BuiltinFunc::MulInteger));
+        ret.overloads[Operator::Div as usize].push(ir::Func::Builtin(ir::BuiltinFunc::DivFloat));
+        ret.overloads[Operator::Div as usize].push(ir::Func::Builtin(ir::BuiltinFunc::DivInteger));
+        ret.overloads[Operator::Rem as usize].push(ir::Func::Builtin(ir::BuiltinFunc::RemFloat));
+        ret.overloads[Operator::Rem as usize].push(ir::Func::Builtin(ir::BuiltinFunc::RemInteger));
         ret.overloads[Operator::Equal as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::EqualInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::EqualInteger));
         ret.overloads[Operator::NotEqual as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::NotEqualInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::NotEqualInteger));
         ret.overloads[Operator::Greater as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::GreaterInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::GreaterInteger));
         ret.overloads[Operator::GreaterEqual as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::GreaterEqualInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::GreaterEqualInteger));
         ret.overloads[Operator::Less as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::LessInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::LessInteger));
         ret.overloads[Operator::LessEqual as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::LessEqualInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::LessEqualInteger));
         ret.overloads[Operator::Assign as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::AssignFloat));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::AssignFloat));
         ret.overloads[Operator::Assign as usize]
-            .push(ast::Func::Builtin(ir::BuiltinFunc::AssignInteger));
+            .push(ir::Func::Builtin(ir::BuiltinFunc::AssignInteger));
         let print = ret.get_or_insert("print");
-        ret.overloads[print].push(ast::Func::Builtin(ir::BuiltinFunc::PrintFloat));
-        ret.overloads[print].push(ast::Func::Builtin(ir::BuiltinFunc::PrintInteger));
-        ret.overloads[print].push(ast::Func::Builtin(ir::BuiltinFunc::PrintBoolean));
-        ret.overloads[print].push(ast::Func::Builtin(ir::BuiltinFunc::PrintString));
+        ret.overloads[print].push(ir::Func::Builtin(ir::BuiltinFunc::PrintFloat));
+        ret.overloads[print].push(ir::Func::Builtin(ir::BuiltinFunc::PrintInteger));
+        ret.overloads[print].push(ir::Func::Builtin(ir::BuiltinFunc::PrintBoolean));
+        ret.overloads[print].push(ir::Func::Builtin(ir::BuiltinFunc::PrintString));
         ret
     }
     pub fn get_or_insert(&mut self, name: &'id str) -> usize {
@@ -123,14 +125,14 @@ impl<'id> Funcs<'id> {
     }
     pub fn add_def(&mut self, symbol_id: usize, def: ast::FuncDef) {
         let entity_id = self.defs.len();
-        self.overloads[symbol_id].push(ast::Func::UserDefined(entity_id));
+        self.overloads[symbol_id].push(ir::Func::UserDefined(entity_id));
         self.defs.push(def);
     }
     pub fn into_inner(
         self,
     ) -> (
         HashMap<&'id str, usize>,
-        Vec<Vec<ast::Func>>,
+        Vec<Vec<ir::Func>>,
         Vec<ast::FuncDef>,
     ) {
         (self.names, self.overloads, self.defs)

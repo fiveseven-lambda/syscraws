@@ -68,11 +68,13 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
             }
             '-' => {
                 if chars.consume_if_eq('-') {
-                    TokenKind::DoubleMinus
+                    TokenKind::DoubleHyphen
                 } else if chars.consume_if_eq('=') {
-                    TokenKind::MinusEqual
+                    TokenKind::HyphenEqual
+                } else if chars.consume_if_eq('>') {
+                    TokenKind::HyphenGreater
                 } else {
-                    TokenKind::Minus
+                    TokenKind::Hyphen
                 }
             }
             '*' => {
@@ -117,7 +119,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
                 if chars.consume_if_eq('=') {
                     TokenKind::DoubleEqual
                 } else if chars.consume_if_eq('>') {
-                    TokenKind::RightArrow
+                    TokenKind::EqualGreater
                 } else {
                     TokenKind::Equal
                 }

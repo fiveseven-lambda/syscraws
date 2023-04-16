@@ -196,6 +196,22 @@ impl<'id> PTerm<'id> {
                     None => eprintln!("{indent}  (right hand side is empty)"),
                 }
             }
+            Term::ReturnType {
+                pos_arrow,
+                term,
+                ty,
+            } => {
+                eprintln!("{indent}{pos:?} Function");
+                eprintln!("{indent}{pos_arrow:?} Right Arrow");
+                match term {
+                    Some(term) => term._debug_print(depth + 1),
+                    None => eprintln!("{indent}  (expr is empty)"),
+                }
+                match ty {
+                    Some(ty) => ty._debug_print(depth + 1),
+                    None => eprintln!("{indent}  (type is empty)"),
+                }
+            }
         }
     }
 }

@@ -65,12 +65,6 @@ pub struct FuncDef {
     body: Block,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Func {
-    Builtin(ir::BuiltinFunc),
-    UserDefined(usize),
-}
-
 impl FuncDef {
     pub fn new(
         num_args: usize,
@@ -97,16 +91,16 @@ impl FuncDef {
     }
 }
 
-pub fn converter(from: &ty::Ty, to: &ty::Ty) -> Option<Vec<Func>> {
+pub fn converter(from: &ty::Ty, to: &ty::Ty) -> Option<Vec<ir::Func>> {
     match (from.kind, to.kind) {
         (t1, t2) if t1 == t2 => Some(Vec::new()),
         (ty::Kind::Reference, ty::Kind::Reference) => None,
         (ty::Kind::Reference, _) => converter(&from.args[0], to).map(|mut fns| {
-            fns.push(Func::Builtin(ir::BuiltinFunc::Deref));
+            fns.push(ir::Func::Builtin(ir::BuiltinFunc::Deref));
             fns
         }),
         (ty::Kind::Integer, ty::Kind::Float) => {
-            Some(vec![Func::Builtin(ir::BuiltinFunc::IntegerToFloat)])
+            Some(vec![ir::Func::Builtin(ir::BuiltinFunc::IntegerToFloat)])
         }
         _ => None,
     }
@@ -116,7 +110,7 @@ impl Expr {
     pub fn translate(
         self,
         vars_ty: &[Option<ty::Ty>],
-        overloads: &[Vec<Func>],
+        overloads: &[Vec<ir::Func>],
         funcs_ty: &[ty::Func],
     ) -> (ty::Ty, ir::Expr) {
         match self {
@@ -136,8 +130,8 @@ impl Expr {
                     let mut candidates = Vec::new();
                     'candidate: for &func in overloads[symbol_id].iter() {
                         let func_ty = match func {
-                            Func::Builtin(func) => func.ty(),
-                            Func::UserDefined(id) => funcs_ty[id].clone(),
+                            ir::Func::Builtin(func) => func.ty(),
+                            ir::Func::UserDefined(id) => funcs_ty[id].clone(),
                         };
                         if func_ty.args.len() != args_ty.len() {
                             continue 'candidate;
@@ -158,22 +152,17 @@ impl Expr {
                             .zip(converters)
                             .map(|(arg, converters)| {
                                 converters.into_iter().rev().fold(arg, |arg, converter| {
-                                    let func = match converter {
-                                        Func::Builtin(func) => func,
-                                        _ => panic!(),
-                                    };
                                     ir::Expr::Call(
-                                        ir::Expr::Imm(ir::Value::BuiltinFunc(func)).into(),
+                                        ir::Expr::Imm(ir::Value::Func(converter)).into(),
                                         vec![arg],
                                     )
                                 })
                             })
                             .collect();
-                        let func = match chosen {
-                            Func::Builtin(func) => ir::Value::BuiltinFunc(func),
-                            Func::UserDefined(id) => ir::Value::UserDefinedFunc(id),
-                        };
-                        (ret_ty, ir::Expr::Call(ir::Expr::Imm(func).into(), args))
+                        (
+                            ret_ty,
+                            ir::Expr::Call(ir::Expr::Imm(ir::Value::Func(chosen)).into(), args),
+                        )
                     } else {
                         panic!("no candidates")
                     }
@@ -188,17 +177,20 @@ impl Expr {
 struct Builder<'def> {
     stmts: Vec<ir::Stmt>,
     vars_ty: &'def [Option<ty::Ty>],
-    overloads: &'def [Vec<Func>],
+    ret_ty: Option<ty::Ty>,
+    overloads: &'def [Vec<ir::Func>],
     funcs_ty: &'def [ty::Func],
 }
 impl<'def> Builder<'def> {
     fn new(
         vars_ty: &'def [Option<ty::Ty>],
-        overloads: &'def [Vec<Func>],
+        ret_ty: Option<ty::Ty>,
+        overloads: &'def [Vec<ir::Func>],
         funcs_ty: &'def [ty::Func],
     ) -> Builder<'def> {
         Builder {
             stmts: Vec::new(),
+            ret_ty,
             vars_ty,
             overloads,
             funcs_ty,
@@ -216,7 +208,7 @@ impl<'def> Builder<'def> {
         if let Some(stmt) = stmts.pop() {
             let cur = match stmt {
                 Stmt::Expr(expr) => self.add_stmt(ir::Stmt::Expr(
-                    expr.translate(&self.vars_ty, &self.overloads, &self.funcs_ty)
+                    expr.translate(self.vars_ty, self.overloads, self.funcs_ty)
                         .1,
                     end,
                 )),
@@ -224,7 +216,7 @@ impl<'def> Builder<'def> {
                     let next_true = self.add_stmts(block_true.stmts, end);
                     let next_false = self.add_stmts(block_false.stmts, end);
                     self.add_stmt(ir::Stmt::Branch(
-                        cond.translate(&self.vars_ty, &self.overloads, &self.funcs_ty)
+                        cond.translate(self.vars_ty, self.overloads, self.funcs_ty)
                             .1,
                         next_true,
                         next_false,
@@ -235,17 +227,28 @@ impl<'def> Builder<'def> {
                     let next = self.add_stmts(block.stmts, Some(cur));
                     assert_eq!(cur, self.stmts.len());
                     self.add_stmt(ir::Stmt::Branch(
-                        cond.translate(&self.vars_ty, &self.overloads, &self.funcs_ty)
+                        cond.translate(self.vars_ty, self.overloads, self.funcs_ty)
                             .1,
                         next,
                         end,
                     ))
                 }
-                Stmt::Return(expr) => self.add_stmt(ir::Stmt::Return(
-                    expr.unwrap()
-                        .translate(&self.vars_ty, &self.overloads, &self.funcs_ty)
-                        .1,
-                )),
+                Stmt::Return(expr) => {
+                    let (ty, expr) =
+                        expr.unwrap()
+                            .translate(self.vars_ty, self.overloads, self.funcs_ty);
+                    let expr = converter(&ty, self.ret_ty.as_ref().unwrap())
+                        .unwrap()
+                        .into_iter()
+                        .rev()
+                        .fold(expr, |expr, converter| {
+                            ir::Expr::Call(
+                                ir::Expr::Imm(ir::Value::Func(converter)).into(),
+                                vec![expr],
+                            )
+                        });
+                    self.add_stmt(ir::Stmt::Return(expr))
+                }
             };
             self.add_stmts(stmts, Some(cur))
         } else {
@@ -255,8 +258,8 @@ impl<'def> Builder<'def> {
 }
 
 impl FuncDef {
-    pub fn translate(self, overloads: &[Vec<Func>], funcs_ty: &[ty::Func]) -> ir::FuncDef {
-        let mut builder = Builder::new(&self.tys, overloads, funcs_ty);
+    pub fn translate(self, overloads: &[Vec<ir::Func>], funcs_ty: &[ty::Func]) -> ir::FuncDef {
+        let mut builder = Builder::new(&self.tys, self.ret_ty, overloads, funcs_ty);
         let entry = builder.add_stmts(self.body.stmts, None);
         ir::FuncDef::new(self.tys.len(), builder.result(), entry)
     }

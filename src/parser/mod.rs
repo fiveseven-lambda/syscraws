@@ -181,7 +181,7 @@ fn parse_assign<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
     let Some(start) = tokens.next_start() else {
         return Ok(None);
     };
-    let left_hand_side = parse_type_annotation(input, tokens)?;
+    let left_hand_side = parse_binary_operator(input, tokens)?;
     if let Some(Token {
         token_kind,
         start: op_start,
@@ -204,35 +204,6 @@ fn parse_assign<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
         }
     }
     Ok(left_hand_side)
-}
-
-fn parse_type_annotation<'id>(
-    input: &'id str,
-    tokens: &mut TokenSeq,
-) -> Result<Option<PTerm<'id>>, Error> {
-    let Some(start) = tokens.next_start() else {
-        return Ok(None);
-    };
-    let term = parse_binary_operator(input, tokens)?;
-    if let Some(Token {
-        token_kind: TokenKind::Colon,
-        start: op_start,
-        end: op_end,
-    }) = tokens.peek()
-    {
-        unsafe { tokens.consume() }
-        let ty = parse_factor(input, tokens)?;
-        Ok(Some(PTerm::new(
-            Range::new(start, tokens.prev_end()),
-            Term::TypeAnnotation {
-                pos_colon: Range::new(op_start, op_end),
-                term: term.map(Box::new),
-                ty: ty.map(Box::new),
-            },
-        )))
-    } else {
-        Ok(term)
-    }
 }
 
 fn parse_binary_operator<'id>(
@@ -375,6 +346,22 @@ fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
                     elements,
                     has_trailing_comma,
                 }
+            } else if token_kind == TokenKind::Colon {
+                unsafe { tokens.consume() }
+                let ty = parse_factor(input, tokens)?;
+                Term::TypeAnnotation {
+                    pos_colon: Range::new(start, end),
+                    term: antecedent.map(Box::new),
+                    ty: ty.map(Box::new),
+                }
+            } else if token_kind == TokenKind::HyphenGreater {
+                unsafe { tokens.consume() }
+                let ty = parse_factor(input, tokens)?;
+                Term::ReturnType {
+                    pos_arrow: Range::new(start, end),
+                    term: antecedent.map(Box::new),
+                    ty: ty.map(Box::new),
+                }
             } else if let Some(operator) = postfix_operator(token_kind) {
                 unsafe { tokens.consume() }
                 Term::UnaryOperation {
@@ -418,18 +405,19 @@ fn consume_if_eq_or_err(
 fn prefix_operator(token_kind: TokenKind) -> Option<Operator> {
     match token_kind {
         TokenKind::Plus => Some(Operator::Plus),
-        TokenKind::Minus => Some(Operator::Minus),
+        TokenKind::Hyphen => Some(Operator::Minus),
+        TokenKind::Slash => Some(Operator::Recip),
         TokenKind::Exclamation => Some(Operator::LogicalNot),
         TokenKind::Tilde => Some(Operator::BitNot),
         TokenKind::DoublePlus => Some(Operator::PreInc),
-        TokenKind::DoubleMinus => Some(Operator::PreDec),
+        TokenKind::DoubleHyphen => Some(Operator::PreDec),
         _ => None,
     }
 }
 fn postfix_operator(token_kind: TokenKind) -> Option<Operator> {
     match token_kind {
         TokenKind::DoublePlus => Some(Operator::PostInc),
-        TokenKind::DoubleMinus => Some(Operator::PostDec),
+        TokenKind::DoubleHyphen => Some(Operator::PostDec),
         _ => None,
     }
 }
@@ -458,7 +446,7 @@ fn infix_operator(token_kind: TokenKind, precedence: Precedence) -> Option<Opera
         (TokenKind::Slash, Precedence::MulDivRem) => Some(Operator::Div),
         (TokenKind::Percent, Precedence::MulDivRem) => Some(Operator::Rem),
         (TokenKind::Plus, Precedence::AddSub) => Some(Operator::Add),
-        (TokenKind::Minus, Precedence::AddSub) => Some(Operator::Sub),
+        (TokenKind::Hyphen, Precedence::AddSub) => Some(Operator::Sub),
         (TokenKind::DoubleGreater, Precedence::BitShift) => Some(Operator::RightShift),
         (TokenKind::DoubleLess, Precedence::BitShift) => Some(Operator::LeftShift),
         (TokenKind::Ampersand, Precedence::BitAnd) => Some(Operator::BitAnd),
@@ -480,7 +468,7 @@ fn assignment_operator(token_kind: TokenKind) -> Option<Operator> {
     match token_kind {
         TokenKind::Equal => Some(Operator::Assign),
         TokenKind::PlusEqual => Some(Operator::AddAssign),
-        TokenKind::MinusEqual => Some(Operator::SubAssign),
+        TokenKind::HyphenEqual => Some(Operator::SubAssign),
         TokenKind::AsteriskEqual => Some(Operator::MulAssign),
         TokenKind::SlashEqual => Some(Operator::DivAssign),
         TokenKind::PercentEqual => Some(Operator::RemAssign),

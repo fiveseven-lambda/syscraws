@@ -24,6 +24,7 @@ pub enum Kind {
     String,
     Reference,
     Tuple,
+    Function,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -67,6 +68,12 @@ impl Ty {
         Ty {
             kind: Kind::Reference,
             args: vec![arg],
+        }
+    }
+    pub fn function(args: Ty, ret: Ty) -> Ty {
+        Ty {
+            kind: Kind::Function,
+            args: vec![args, ret],
         }
     }
 }

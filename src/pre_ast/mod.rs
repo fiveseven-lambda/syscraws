@@ -16,7 +16,7 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use super::{ast, ty};
+use super::{ast, ir, ty};
 use crate::range::Range;
 use enum_iterator::Sequence;
 use num::BigInt;
@@ -32,6 +32,7 @@ use error::Error;
 pub enum Operator {
     Plus,
     Minus,
+    Recip,
     LogicalNot,
     BitNot,
     PreInc,
@@ -91,6 +92,11 @@ pub enum Term<'id> {
     },
     TypeAnnotation {
         pos_colon: Range,
+        term: Option<Box<PTerm<'id>>>,
+        ty: Option<Box<PTerm<'id>>>,
+    },
+    ReturnType {
+        pos_arrow: Range,
         term: Option<Box<PTerm<'id>>>,
         ty: Option<Box<PTerm<'id>>>,
     },
@@ -190,6 +196,11 @@ impl<'id> PTerm<'id> {
                 scope.push(name);
                 Ok(ast::Expr::Variable(id))
             }
+            Term::ReturnType {
+                pos_arrow,
+                term,
+                ty,
+            } => Err(()),
             Term::Identifier(name) => {
                 if let Some(id) = variables.get(name) {
                     Ok(ast::Expr::Variable(id))
@@ -287,6 +298,15 @@ impl<'id> PTerm<'id> {
         match self.term {
             Term::Identifier("int") => Ok(ty::Ty::integer()),
             Term::Identifier("float") => Ok(ty::Ty::float()),
+            Term::ReturnType {
+                pos_arrow: _,
+                term,
+                ty,
+            } => {
+                let args = term.ok_or_else(|| (/*TODO*/)).and_then(|ty| ty.into_ty());
+                let ret = ty.ok_or_else(|| (/*TODO*/)).and_then(|ty| ty.into_ty());
+                Ok(ty::Ty::function(args?, ret?))
+            }
             _ => Err(()),
         }
     }
@@ -394,7 +414,7 @@ impl<'id> PStmt<'id> {
     }
 }
 
-pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::FuncDef>), Vec<Error>> {
+pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ir::Func>>, Vec<ast::FuncDef>), Vec<Error>> {
     let mut global_variables = map::Variables::new();
     let mut funcs = map::Funcs::new();
     let mut global_scope = Vec::new();
@@ -444,8 +464,8 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ast::Func>>, Vec<ast::Func
         errors: &mut Vec<Error>,
     ) -> Result<(), ()> {
         let (name, args, ret_ty) = match sig.term {
-            Term::TypeAnnotation {
-                pos_colon: _,
+            Term::ReturnType {
+                pos_arrow: _,
                 term: Some(name_and_args),
                 ty: Some(ret_ty),
             } => match name_and_args.term {

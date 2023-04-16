@@ -30,8 +30,7 @@ pub enum Value {
     Address(Address),
     Float(f64),
     String(String),
-    BuiltinFunc(BuiltinFunc),
-    UserDefinedFunc(usize),
+    Func(Func),
 }
 
 impl Value {
@@ -65,6 +64,18 @@ impl Value {
             _ => panic!(),
         }
     }
+    unsafe fn into_func_unchecked(self) -> Func {
+        match self {
+            Value::Func(func) => func,
+            _ => panic!(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Func {
+    Builtin(BuiltinFunc),
+    UserDefined(usize),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -73,6 +84,7 @@ pub enum BuiltinFunc {
     PlusFloat,
     MinusInteger,
     MinusFloat,
+    RecipFloat,
     NotBoolean,
     AddInteger,
     SubInteger,
@@ -106,10 +118,12 @@ impl BuiltinFunc {
                 args: vec![ty::Ty::integer()],
                 ret: ty::Ty::integer(),
             },
-            BuiltinFunc::PlusFloat | BuiltinFunc::MinusFloat => ty::Func {
-                args: vec![ty::Ty::float()],
-                ret: ty::Ty::float(),
-            },
+            BuiltinFunc::PlusFloat | BuiltinFunc::MinusFloat | BuiltinFunc::RecipFloat => {
+                ty::Func {
+                    args: vec![ty::Ty::float()],
+                    ret: ty::Ty::float(),
+                }
+            }
             BuiltinFunc::NotBoolean => ty::Func {
                 args: vec![ty::Ty::boolean()],
                 ret: ty::Ty::boolean(),
@@ -182,11 +196,12 @@ impl BuiltinFunc {
                     _ => unreachable_unchecked(),
                 })
             }
-            BuiltinFunc::PlusFloat | BuiltinFunc::MinusFloat => {
+            BuiltinFunc::PlusFloat | BuiltinFunc::MinusFloat | BuiltinFunc::RecipFloat => {
                 let value = arg().into_float_unchecked();
                 Value::Float(match self {
                     BuiltinFunc::PlusFloat => value,
                     BuiltinFunc::MinusFloat => -value,
+                    BuiltinFunc::RecipFloat => 1. / value,
                     _ => unreachable_unchecked(),
                 })
             }
@@ -296,12 +311,11 @@ impl Expr {
             Expr::Call(ref func, ref args) => {
                 let func = func.eval(memory, stack_id, funcs);
                 let args_iter = args.iter().map(|expr| expr.eval(memory, stack_id, funcs));
-                match func {
-                    Value::BuiltinFunc(func) => func.call(args_iter.collect(), memory),
-                    Value::UserDefinedFunc(id) => funcs[id]
+                match func.into_func_unchecked() {
+                    Func::Builtin(func) => func.call(args_iter.collect(), memory),
+                    Func::UserDefined(id) => funcs[id]
                         .run(args_iter.map(Option::Some).collect(), memory, funcs)
                         .unwrap_or(Value::Void),
-                    _ => unreachable_unchecked(),
                 }
             }
         }
@@ -398,8 +412,7 @@ impl fmt::Debug for Value {
             Value::Address((stack, pos)) => write!(f, "{stack}:{pos}"),
             Value::Float(value) => write!(f, "{value}"),
             Value::String(value) => write!(f, "{value:?}"),
-            Value::BuiltinFunc(ptr) => write!(f, "{ptr:?}"),
-            Value::UserDefinedFunc(id) => write!(f, "func #{id}"),
+            Value::Func(func) => write!(f, "func {func:?}"),
         }
     }
 }
