@@ -16,8 +16,9 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use super::{ast, ir, ty};
+use crate::expr;
 use crate::range::Range;
+use crate::{ast, ir, ty};
 use enum_iterator::Sequence;
 use num::BigInt;
 
@@ -294,10 +295,10 @@ impl<'id> PTerm<'id> {
             }
         }
     }
-    fn into_ty(self) -> Result<ty::Ty, ()> {
+    fn into_ty(self) -> Result<ty::Expr, ()> {
         match self.term {
-            Term::Identifier("int") => Ok(ty::Ty::integer()),
-            Term::Identifier("float") => Ok(ty::Ty::float()),
+            Term::Identifier("int") => Ok(expr!(Integer)),
+            Term::Identifier("float") => Ok(expr!(Float)),
             Term::ReturnType {
                 pos_arrow: _,
                 term,
@@ -305,7 +306,7 @@ impl<'id> PTerm<'id> {
             } => {
                 let args = term.ok_or_else(|| (/*TODO*/)).and_then(|ty| ty.into_ty());
                 let ret = ty.ok_or_else(|| (/*TODO*/)).and_then(|ty| ty.into_ty());
-                Ok(ty::Ty::function(args?, ret?))
+                Ok(expr!(Function, args?, ret?))
             }
             _ => Err(()),
         }
@@ -426,7 +427,7 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ir::Func>>, Vec<ast::FuncD
     fn func_arg<'id>(
         arg: Result<PTerm<'id>, Range>,
         errors: &mut Vec<Error>,
-    ) -> Result<(&'id str, Option<ty::Ty>), ()> {
+    ) -> Result<(&'id str, Option<ty::Expr>), ()> {
         match arg {
             Ok(PTerm { term, pos }) => match term {
                 Term::TypeAnnotation {
@@ -572,7 +573,7 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ir::Func>>, Vec<ast::FuncD
     defs.push(ast::FuncDef::new(
         0,
         global_variables.tys(),
-        Some(ty::Ty::tuple(vec![])),
+        Some(expr!(Tuple)),
         ast::Block::new(toplevel_stmts),
     ));
     Ok((overloads, defs))

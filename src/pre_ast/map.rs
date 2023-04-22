@@ -25,7 +25,7 @@ use std::collections::HashMap;
 
 pub struct Variables<'id> {
     names: HashMap<&'id str, Vec<usize>>,
-    tys: Vec<Option<ty::Ty>>,
+    tys: Vec<Option<ty::Expr>>,
 }
 
 impl<'id> Variables<'id> {
@@ -35,7 +35,7 @@ impl<'id> Variables<'id> {
             tys: Vec::new(),
         }
     }
-    pub fn insert(&mut self, name: &'id str, ty: Option<ty::Ty>) -> usize {
+    pub fn insert(&mut self, name: &'id str, ty: Option<ty::Expr>) -> usize {
         let id = self.tys.len();
         self.tys.push(ty);
         self.names.entry(name).or_insert_with(Vec::new).push(id);
@@ -52,7 +52,7 @@ impl<'id> Variables<'id> {
     pub fn get(&self, name: &str) -> Option<usize> {
         self.names.get(name).and_then(|v| v.last()).copied()
     }
-    pub fn tys(self) -> Vec<Option<ty::Ty>> {
+    pub fn tys(self) -> Vec<Option<ty::Expr>> {
         self.tys
     }
 }

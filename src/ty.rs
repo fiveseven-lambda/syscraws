@@ -16,7 +16,7 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Kind {
     Integer,
     Float,
@@ -27,59 +27,75 @@ pub enum Kind {
     Function,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct Ty {
     pub kind: Kind,
     pub args: Vec<Ty>,
 }
 
-impl Ty {
-    pub fn integer() -> Ty {
-        Ty {
-            kind: Kind::Integer,
-            args: vec![],
-        }
-    }
-    pub fn float() -> Ty {
-        Ty {
-            kind: Kind::Float,
-            args: vec![],
-        }
-    }
-    pub fn boolean() -> Ty {
-        Ty {
-            kind: Kind::Boolean,
-            args: vec![],
-        }
-    }
-    pub fn string() -> Ty {
-        Ty {
-            kind: Kind::String,
-            args: vec![],
-        }
-    }
-    pub fn tuple(args: Vec<Ty>) -> Ty {
-        Ty {
-            kind: Kind::Tuple,
-            args,
-        }
-    }
-    pub fn reference(arg: Ty) -> Ty {
-        Ty {
-            kind: Kind::Reference,
-            args: vec![arg],
-        }
-    }
-    pub fn function(args: Ty, ret: Ty) -> Ty {
-        Ty {
-            kind: Kind::Function,
-            args: vec![args, ret],
+#[macro_export]
+macro_rules! ty {
+    ($kind:ident) => { ty!($kind,) };
+    ($kind:ident, $($args:expr),*) => {
+        ty::Ty {
+            kind: ty::Kind::$kind,
+            args: vec![$($args),*]
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
+pub enum Expr {
+    Var(usize),
+    App { kind: Kind, args: Vec<Expr> },
+}
+
+#[macro_export]
+macro_rules! expr {
+    ($id:literal) => { ty::Expr::Var($id) };
+    ($kind:ident) => { expr!($kind,) };
+    ($kind:ident, $($args:expr),*) => {
+        ty::Expr::App {
+            kind: ty::Kind::$kind,
+            args: vec![$($args),*]
+        }
+    }
+}
+
+impl Expr {
+    pub fn subst(&self, vars: &[Option<Ty>]) -> Ty {
+        match *self {
+            Expr::Var(id) => vars[id].clone().unwrap(),
+            Expr::App { kind, ref args } => Ty {
+                kind,
+                args: args.iter().map(|expr| expr.subst(vars)).collect(),
+            },
+        }
+    }
+    pub fn identify(&self, dest: &Ty, vars: &mut Vec<Option<Ty>>) -> bool {
+        match *self {
+            Expr::Var(id) => match vars[id] {
+                Some(ref ty) => ty == dest,
+                None => {
+                    vars[id] = Some(dest.clone());
+                    true
+                }
+            },
+            Expr::App { kind, ref args } => {
+                kind == dest.kind
+                    && args.len() == dest.args.len()
+                    && args
+                        .iter()
+                        .zip(&dest.args)
+                        .all(|(expr, ty)| expr.identify(ty, vars))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Func {
-    pub args: Vec<Ty>,
-    pub ret: Ty,
+    pub num_vars: usize,
+    pub args: Vec<Expr>,
+    pub ret: Expr,
 }

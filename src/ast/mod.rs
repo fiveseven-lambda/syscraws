@@ -18,6 +18,8 @@
 
 //! 抽象構文木 AST を定義する．
 
+use std::collections::{HashMap, VecDeque};
+
 use crate::{ir, ty};
 use num::BigInt;
 mod debug_print;
@@ -60,16 +62,16 @@ impl Block {
 
 pub struct FuncDef {
     num_args: usize,
-    tys: Vec<Option<ty::Ty>>,
-    ret_ty: Option<ty::Ty>,
+    tys: Vec<Option<ty::Expr>>,
+    ret_ty: Option<ty::Expr>,
     body: Block,
 }
 
 impl FuncDef {
     pub fn new(
         num_args: usize,
-        tys: Vec<Option<ty::Ty>>,
-        ret_ty: Option<ty::Ty>,
+        tys: Vec<Option<ty::Expr>>,
+        ret_ty: Option<ty::Expr>,
         body: Block,
     ) -> FuncDef {
         FuncDef {
@@ -87,7 +89,11 @@ impl FuncDef {
             .map(|ty| ty.clone().unwrap())
             .collect();
         let ret = self.ret_ty.clone().unwrap();
-        ty::Func { args, ret }
+        ty::Func {
+            num_vars: 0,
+            args,
+            ret,
+        }
     }
 }
 
@@ -109,62 +115,122 @@ pub fn converter(from: &ty::Ty, to: &ty::Ty) -> Option<Vec<ir::Func>> {
 impl Expr {
     pub fn translate(
         self,
-        vars_ty: &[Option<ty::Ty>],
+        vars_ty: &[ty::Ty],
         overloads: &[Vec<ir::Func>],
         funcs_ty: &[ty::Func],
     ) -> (ty::Ty, ir::Expr) {
         match self {
-            Expr::Variable(id) => (
-                ty::Ty::reference(vars_ty[id].clone().unwrap()),
-                ir::Expr::Local(id),
-            ),
-            Expr::Integer(value) => (ty::Ty::integer(), ir::Expr::Imm(ir::Value::Integer(value))),
-            Expr::Float(value) => (ty::Ty::float(), ir::Expr::Imm(ir::Value::Float(value))),
-            Expr::String(value) => (ty::Ty::string(), ir::Expr::Imm(ir::Value::String(value))),
+            Expr::Variable(id) => (ty!(Reference, vars_ty[id].clone()), ir::Expr::Local(id)),
+            Expr::Integer(value) => (ty!(Integer), ir::Expr::Imm(ir::Value::Integer(value))),
+            Expr::Float(value) => (ty!(Float), ir::Expr::Imm(ir::Value::Float(value))),
+            Expr::String(value) => (ty!(String), ir::Expr::Imm(ir::Value::String(value))),
             Expr::Call(func, args) => match *func {
                 Expr::Func(symbol_id) => {
                     let (args_ty, args_expr): (Vec<_>, Vec<_>) = args
                         .into_iter()
-                        .map(|arg| arg.translate(vars_ty, overloads, funcs_ty))
+                        .map(|expr| expr.translate(vars_ty, overloads, funcs_ty))
                         .unzip();
-                    let mut candidates = Vec::new();
-                    'candidate: for &func in overloads[symbol_id].iter() {
-                        let func_ty = match func {
-                            ir::Func::Builtin(func) => func.ty(),
-                            ir::Func::UserDefined(id) => funcs_ty[id].clone(),
-                        };
-                        if func_ty.args.len() != args_ty.len() {
-                            continue 'candidate;
-                        }
-                        let mut converters = Vec::with_capacity(args_ty.len());
-                        for (expected_ty, ty) in func_ty.args.iter().zip(&args_ty) {
-                            match converter(ty, expected_ty) {
-                                Some(funcs) => converters.push(funcs),
-                                None => continue 'candidate,
+                    let converters = [ir::BuiltinFunc::Deref, ir::BuiltinFunc::IntegerToFloat];
+                    let candidates: Vec<_> = overloads[symbol_id]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &func)| {
+                            let func_ty = match func {
+                                ir::Func::Builtin(func) => func.ty(),
+                                ir::Func::UserDefined(id) => funcs_ty[id].clone(),
+                            };
+                            if func_ty.args.len() != args_ty.len() {
+                                return None;
+                            }
+                            let mut vars = vec![None; func_ty.num_vars];
+                            let paths: Option<Vec<_>> = args_ty
+                                .iter()
+                                .zip(&func_ty.args)
+                                .map(|(given, expected)| {
+                                    {
+                                        let mut vars_tmp = Vec::new();
+                                        if expected.identify(&given, &mut vars_tmp) {
+                                            return Some(Vec::new());
+                                        }
+                                    }
+                                    let mut prev = HashMap::new();
+                                    prev.insert(given.clone(), None);
+                                    let mut queue = VecDeque::from([given]);
+                                    while let Some(ty) = queue.pop_front() {
+                                        for converter in &converters {
+                                            let ty::Func {
+                                                num_vars,
+                                                args,
+                                                ret,
+                                            } = converter.ty();
+                                            let mut vars_converter = vec![None; num_vars];
+                                            if args[0].identify(ty, &mut vars_converter) {
+                                                let next = ret.subst(&vars_converter);
+                                                let mut vars_tmp = vars.clone();
+                                                if expected.identify(&next, &mut vars_tmp) {
+                                                    let mut cur_ty = ty;
+                                                    let mut path = vec![converter];
+                                                    while let Some((c, prev_ty)) = prev[cur_ty] {
+                                                        path.push(c);
+                                                        cur_ty = prev_ty;
+                                                    }
+                                                    vars = vars_tmp;
+                                                    return Some(path);
+                                                } else {
+                                                    prev.insert(next, Some((converter, ty)));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None
+                                })
+                                .collect();
+                            paths.map(|paths| {
+                                let sum: usize = paths.iter().map(|path| path.len()).sum();
+                                (i, sum, paths, func_ty.ret.subst(&vars))
+                            })
+                        })
+                        .collect();
+                    let mut shortest = None;
+                    for (i, candidate) in candidates.iter().enumerate() {
+                        if let Some((_, len, _, _)) = candidate {
+                            match &mut shortest {
+                                None => shortest = Some((len, i)),
+                                Some(shortest) if shortest.0 >= len => *shortest = (len, i),
+                                Some(_) => {}
                             }
                         }
-                        candidates.push((func, func_ty.ret, converters))
                     }
-                    if !candidates.is_empty() {
-                        let (chosen, ret_ty, converters) = candidates.pop().unwrap();
-                        let args = args_expr
+                    if let Some((_, i)) = shortest {
+                        let chosen = candidates[i].as_ref().unwrap();
+                        let args: Vec<_> = args_expr
                             .into_iter()
-                            .zip(converters)
-                            .map(|(arg, converters)| {
-                                converters.into_iter().rev().fold(arg, |arg, converter| {
+                            .zip(&chosen.2)
+                            .map(|(expr, converters)| {
+                                converters.into_iter().fold(expr, |expr, &&converter| {
                                     ir::Expr::Call(
-                                        ir::Expr::Imm(ir::Value::Func(converter)).into(),
-                                        vec![arg],
+                                        ir::Expr::Imm(ir::Value::Func(ir::Func::Builtin(
+                                            converter,
+                                        )))
+                                        .into(),
+                                        vec![expr],
                                     )
                                 })
                             })
                             .collect();
                         (
-                            ret_ty,
-                            ir::Expr::Call(ir::Expr::Imm(ir::Value::Func(chosen)).into(), args),
+                            chosen.3.clone(),
+                            ir::Expr::Call(
+                                ir::Expr::Imm(ir::Value::Func(overloads[symbol_id][chosen.0]))
+                                    .into(),
+                                args,
+                            ),
                         )
                     } else {
-                        panic!("no candidates")
+                        dbg!(args_ty);
+                        dbg!(&overloads[symbol_id]);
+                        dbg!(candidates);
+                        panic!("no candidates");
                     }
                 }
                 _ => todo!(),
@@ -176,15 +242,15 @@ impl Expr {
 
 struct Builder<'def> {
     stmts: Vec<ir::Stmt>,
-    vars_ty: &'def [Option<ty::Ty>],
-    ret_ty: Option<ty::Ty>,
+    vars_ty: &'def [ty::Ty],
+    ret_ty: ty::Ty,
     overloads: &'def [Vec<ir::Func>],
     funcs_ty: &'def [ty::Func],
 }
 impl<'def> Builder<'def> {
     fn new(
-        vars_ty: &'def [Option<ty::Ty>],
-        ret_ty: Option<ty::Ty>,
+        vars_ty: &'def [ty::Ty],
+        ret_ty: ty::Ty,
         overloads: &'def [Vec<ir::Func>],
         funcs_ty: &'def [ty::Func],
     ) -> Builder<'def> {
@@ -237,7 +303,7 @@ impl<'def> Builder<'def> {
                     let (ty, expr) =
                         expr.unwrap()
                             .translate(self.vars_ty, self.overloads, self.funcs_ty);
-                    let expr = converter(&ty, self.ret_ty.as_ref().unwrap())
+                    let expr = converter(&ty, &self.ret_ty)
                         .unwrap()
                         .into_iter()
                         .rev()
@@ -259,7 +325,13 @@ impl<'def> Builder<'def> {
 
 impl FuncDef {
     pub fn translate(self, overloads: &[Vec<ir::Func>], funcs_ty: &[ty::Func]) -> ir::FuncDef {
-        let mut builder = Builder::new(&self.tys, self.ret_ty, overloads, funcs_ty);
+        let vars_ty: Vec<_> = self
+            .tys
+            .iter()
+            .map(|expr| expr.as_ref().unwrap().subst(&[]))
+            .collect();
+        let ret_ty = self.ret_ty.unwrap().subst(&[]);
+        let mut builder = Builder::new(&vars_ty, ret_ty, overloads, funcs_ty);
         let entry = builder.add_stmts(self.body.stmts, None);
         ir::FuncDef::new(self.tys.len(), builder.result(), entry)
     }

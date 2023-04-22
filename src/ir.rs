@@ -19,6 +19,7 @@
 use std::collections::HashMap;
 use std::hint::unreachable_unchecked;
 
+use crate::expr;
 use crate::ty;
 use num::BigInt;
 
@@ -115,30 +116,35 @@ impl BuiltinFunc {
     pub fn ty(self) -> ty::Func {
         match self {
             BuiltinFunc::PlusInteger | BuiltinFunc::MinusInteger => ty::Func {
-                args: vec![ty::Ty::integer()],
-                ret: ty::Ty::integer(),
+                num_vars: 0,
+                args: vec![expr!(Integer)],
+                ret: expr!(Integer),
             },
             BuiltinFunc::PlusFloat | BuiltinFunc::MinusFloat | BuiltinFunc::RecipFloat => {
                 ty::Func {
-                    args: vec![ty::Ty::float()],
-                    ret: ty::Ty::float(),
+                    num_vars: 0,
+                    args: vec![expr!(Float)],
+                    ret: expr!(Float),
                 }
             }
             BuiltinFunc::NotBoolean => ty::Func {
-                args: vec![ty::Ty::boolean()],
-                ret: ty::Ty::boolean(),
+                num_vars: 0,
+                args: vec![expr!(Boolean)],
+                ret: expr!(Boolean),
             },
             BuiltinFunc::AddInteger
             | BuiltinFunc::SubInteger
             | BuiltinFunc::MulInteger
             | BuiltinFunc::DivInteger
             | BuiltinFunc::RemInteger => ty::Func {
-                args: vec![ty::Ty::integer(), ty::Ty::integer()],
-                ret: ty::Ty::integer(),
+                num_vars: 0,
+                args: vec![expr!(Integer), expr!(Integer)],
+                ret: expr!(Integer),
             },
             BuiltinFunc::IntegerToFloat => ty::Func {
-                args: vec![ty::Ty::integer()],
-                ret: ty::Ty::float(),
+                num_vars: 0,
+                args: vec![expr!(Integer)],
+                ret: expr!(Float),
             },
             BuiltinFunc::EqualInteger
             | BuiltinFunc::NotEqualInteger
@@ -146,42 +152,54 @@ impl BuiltinFunc {
             | BuiltinFunc::GreaterEqualInteger
             | BuiltinFunc::LessInteger
             | BuiltinFunc::LessEqualInteger => ty::Func {
-                args: vec![ty::Ty::integer(), ty::Ty::integer()],
-                ret: ty::Ty::boolean(),
+                num_vars: 0,
+                args: vec![expr!(Integer), expr!(Integer)],
+                ret: expr!(Boolean),
             },
             BuiltinFunc::AddFloat
             | BuiltinFunc::SubFloat
             | BuiltinFunc::MulFloat
             | BuiltinFunc::DivFloat
             | BuiltinFunc::RemFloat => ty::Func {
-                args: vec![ty::Ty::float(), ty::Ty::float()],
-                ret: ty::Ty::float(),
+                num_vars: 0,
+                args: vec![expr!(Float), expr!(Float)],
+                ret: expr!(Float),
             },
             BuiltinFunc::AssignInteger => ty::Func {
-                args: vec![ty::Ty::integer(), ty::Ty::reference(ty::Ty::integer())],
-                ret: ty::Ty::integer(),
+                num_vars: 0,
+                args: vec![expr!(Integer), expr!(Reference, expr!(Integer))],
+                ret: expr!(Integer),
             },
             BuiltinFunc::AssignFloat => ty::Func {
-                args: vec![ty::Ty::float(), ty::Ty::reference(ty::Ty::float())],
-                ret: ty::Ty::float(),
+                num_vars: 0,
+                args: vec![expr!(Float), expr!(Reference, expr!(Float))],
+                ret: expr!(Float),
             },
             BuiltinFunc::PrintInteger => ty::Func {
-                args: vec![ty::Ty::integer()],
-                ret: ty::Ty::tuple(vec![]),
+                num_vars: 0,
+                args: vec![expr!(Integer)],
+                ret: expr!(Tuple),
             },
             BuiltinFunc::PrintFloat => ty::Func {
-                args: vec![ty::Ty::float()],
-                ret: ty::Ty::tuple(vec![]),
+                num_vars: 0,
+                args: vec![expr!(Float)],
+                ret: expr!(Tuple),
             },
             BuiltinFunc::PrintBoolean => ty::Func {
-                args: vec![ty::Ty::boolean()],
-                ret: ty::Ty::tuple(vec![]),
+                num_vars: 0,
+                args: vec![expr!(Boolean)],
+                ret: expr!(Tuple),
             },
             BuiltinFunc::PrintString => ty::Func {
-                args: vec![ty::Ty::string()],
-                ret: ty::Ty::tuple(vec![]),
+                num_vars: 0,
+                args: vec![expr!(String)],
+                ret: expr!(Tuple),
             },
-            BuiltinFunc::Deref => todo!(),
+            BuiltinFunc::Deref => ty::Func {
+                num_vars: 1,
+                args: vec![expr!(Reference, expr!(0))],
+                ret: expr!(0),
+            },
         }
     }
     unsafe fn call(self, args: Vec<Value>, memory: &mut Memory) -> Value {
