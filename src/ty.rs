@@ -25,6 +25,7 @@ pub enum Kind {
     Reference,
     Tuple,
     Function,
+    Sound,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -40,6 +41,21 @@ macro_rules! ty {
         ty::Ty {
             kind: ty::Kind::$kind,
             args: vec![$($args),*]
+        }
+    }
+}
+
+impl Ty {
+    pub fn pause(&self) -> (usize, &Ty) {
+        if let Ty {
+            kind: Kind::Sound,
+            ref args,
+        } = self
+        {
+            let (n, ty) = args[0].pause();
+            (n + 1, ty)
+        } else {
+            (0, self)
         }
     }
 }
@@ -89,6 +105,18 @@ impl Expr {
                         .zip(&dest.args)
                         .all(|(expr, ty)| expr.identify(ty, vars))
             }
+        }
+    }
+    pub fn pause(&self) -> (usize, &Expr) {
+        if let Expr::App {
+            kind: Kind::Sound,
+            ref args,
+        } = self
+        {
+            let (n, ty) = args[0].pause();
+            (n + 1, ty)
+        } else {
+            (0, self)
         }
     }
 }

@@ -114,6 +114,9 @@ impl<'id> Funcs<'id> {
         ret.overloads[print].push(ir::Func::Builtin(ir::BuiltinFunc::PrintInteger));
         ret.overloads[print].push(ir::Func::Builtin(ir::BuiltinFunc::PrintBoolean));
         ret.overloads[print].push(ir::Func::Builtin(ir::BuiltinFunc::PrintString));
+        ret.overloads[print].push(ir::Func::Builtin(ir::BuiltinFunc::PrintSound));
+        let t = ret.get_or_insert("T");
+        ret.overloads[t].push(ir::Func::Builtin(ir::BuiltinFunc::T));
         ret
     }
     pub fn get_or_insert(&mut self, name: &'id str) -> usize {

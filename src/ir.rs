@@ -32,6 +32,7 @@ pub enum Value {
     Float(f64),
     String(String),
     Func(Func),
+    Sound(Sound),
 }
 
 impl Value {
@@ -68,6 +69,12 @@ impl Value {
     unsafe fn into_func_unchecked(self) -> Func {
         match self {
             Value::Func(func) => func,
+            _ => panic!(),
+        }
+    }
+    unsafe fn into_sound_unchecked(self) -> Sound {
+        match self {
+            Value::Sound(sound) => sound,
             _ => panic!(),
         }
     }
@@ -111,6 +118,10 @@ pub enum BuiltinFunc {
     AssignInteger,
     AssignFloat,
     Deref,
+    T,
+    Const,
+    App,
+    PrintSound,
 }
 impl BuiltinFunc {
     pub fn ty(self) -> ty::Func {
@@ -199,6 +210,22 @@ impl BuiltinFunc {
                 num_vars: 1,
                 args: vec![expr!(Reference, expr!(0))],
                 ret: expr!(0),
+            },
+            BuiltinFunc::T => ty::Func {
+                num_vars: 0,
+                args: vec![],
+                ret: expr!(Sound, expr!(Float)),
+            },
+            BuiltinFunc::Const => ty::Func {
+                num_vars: 1,
+                args: vec![expr!(0)],
+                ret: expr!(Sound, expr!(0)),
+            },
+            BuiltinFunc::App => todo!(),
+            BuiltinFunc::PrintSound => ty::Func {
+                num_vars: 1,
+                args: vec![expr!(Sound, expr!(Float))],
+                ret: expr!(Tuple),
             },
         }
     }
@@ -312,10 +339,30 @@ impl BuiltinFunc {
                 let ptr = arg().into_address_unchecked();
                 memory.get(ptr)
             }
+            BuiltinFunc::T => Value::Sound(Sound::T),
+            BuiltinFunc::Const => Value::Sound(Sound::Const(arg().into())),
+            BuiltinFunc::App => {
+                let func = arg().into_func_unchecked();
+                let rem: Vec<_> = args.map(|arg| arg.into_sound_unchecked()).collect();
+                Value::Sound(Sound::App(func, rem))
+            }
+            BuiltinFunc::PrintSound => {
+                let sound = arg().into_sound_unchecked();
+                println!("{sound:?}");
+                Value::Void
+            }
         }
     }
 }
 
+#[derive(Clone)]
+enum Sound {
+    T,
+    Const(Box<Value>),
+    App(Func, Vec<Sound>),
+}
+
+#[derive(Clone)]
 pub enum Expr {
     Imm(Value),
     Local(usize),
@@ -431,11 +478,21 @@ impl fmt::Debug for Value {
             Value::Float(value) => write!(f, "{value}"),
             Value::String(value) => write!(f, "{value:?}"),
             Value::Func(func) => write!(f, "func {func:?}"),
+            Value::Sound(sound) => write!(f, "sound {sound:?}"),
+        }
+    }
+}
+impl fmt::Debug for Sound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Sound::T => write!(f, "T"),
+            Sound::Const(value) => write!(f, "Const({value:?})"),
+            Sound::App(func, args) => write!(f, "App({func:?}, {args:?})"),
         }
     }
 }
 impl Expr {
-    fn _debug_print(&self, depth: usize) {
+    pub fn _debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
         match self {
             Expr::Imm(value) => println!("{indent}{value:?}"),

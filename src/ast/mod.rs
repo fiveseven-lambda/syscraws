@@ -18,7 +18,8 @@
 
 //! 抽象構文木 AST を定義する．
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+use std::iter;
 
 use crate::{ir, ty};
 use num::BigInt;
@@ -126,110 +127,77 @@ impl Expr {
             Expr::String(value) => (ty!(String), ir::Expr::Imm(ir::Value::String(value))),
             Expr::Call(func, args) => match *func {
                 Expr::Func(symbol_id) => {
-                    let (args_ty, args_expr): (Vec<_>, Vec<_>) = args
+                    let args: Vec<_> = args
                         .into_iter()
                         .map(|expr| expr.translate(vars_ty, overloads, funcs_ty))
-                        .unzip();
+                        .collect();
                     let converters = [ir::BuiltinFunc::Deref, ir::BuiltinFunc::IntegerToFloat];
                     let candidates: Vec<_> = overloads[symbol_id]
                         .iter()
-                        .enumerate()
-                        .map(|(i, &func)| {
+                        .flat_map(|&func| {
                             let func_ty = match func {
                                 ir::Func::Builtin(func) => func.ty(),
                                 ir::Func::UserDefined(id) => funcs_ty[id].clone(),
                             };
-                            if func_ty.args.len() != args_ty.len() {
+                            if func_ty.args.len() != args.len() {
                                 return None;
                             }
                             let mut vars = vec![None; func_ty.num_vars];
-                            let paths: Option<Vec<_>> = args_ty
-                                .iter()
+                            let mut cost_sum = 0;
+                            args.iter()
                                 .zip(&func_ty.args)
-                                .map(|(given, expected)| {
-                                    {
-                                        let mut vars_tmp = Vec::new();
-                                        if expected.identify(&given, &mut vars_tmp) {
-                                            return Some(Vec::new());
+                                .map(|((given, expr), expected)| {
+                                    let (given_depth, given_inner) = given.pause();
+                                    let (expected_depth, expected_inner) = expected.pause();
+                                    let mut queue =
+                                        VecDeque::from([(0, given_inner.clone(), expr.clone())]);
+                                    while let Some((cost, ty, expr)) = queue.pop_front() {
+                                        let mut vars_tmp = vars.clone();
+                                        if expected_inner.identify(&ty, &mut vars_tmp) {
+                                            vars = vars_tmp;
+                                            cost_sum += cost;
+                                            return Some((given_depth, expected_depth, expr));
                                         }
-                                    }
-                                    let mut prev = HashMap::new();
-                                    prev.insert(given.clone(), None);
-                                    let mut queue = VecDeque::from([given]);
-                                    while let Some(ty) = queue.pop_front() {
-                                        for converter in &converters {
-                                            let ty::Func {
-                                                num_vars,
-                                                args,
-                                                ret,
-                                            } = converter.ty();
-                                            let mut vars_converter = vec![None; num_vars];
-                                            if args[0].identify(ty, &mut vars_converter) {
-                                                let next = ret.subst(&vars_converter);
-                                                let mut vars_tmp = vars.clone();
-                                                if expected.identify(&next, &mut vars_tmp) {
-                                                    let mut cur_ty = ty;
-                                                    let mut path = vec![converter];
-                                                    while let Some((c, prev_ty)) = prev[cur_ty] {
-                                                        path.push(c);
-                                                        cur_ty = prev_ty;
-                                                    }
-                                                    vars = vars_tmp;
-                                                    return Some(path);
-                                                } else {
-                                                    prev.insert(next, Some((converter, ty)));
-                                                }
+                                        for &converter in &converters {
+                                            let converter_ty = converter.ty();
+                                            let mut converter_vars =
+                                                vec![None; converter_ty.num_vars];
+                                            if converter_ty.args[0]
+                                                .identify(&ty, &mut converter_vars)
+                                            {
+                                                let next_ty =
+                                                    converter_ty.ret.subst(&converter_vars);
+                                                let (c, next_expr) = app(
+                                                    ir::Expr::Imm(ir::Value::Func(
+                                                        ir::Func::Builtin(converter),
+                                                    )),
+                                                    vec![(given_depth, 0, expr.clone())],
+                                                );
+                                                queue.push_back((cost + c + 1, next_ty, next_expr));
                                             }
                                         }
                                     }
                                     None
                                 })
-                                .collect();
-                            paths.map(|paths| {
-                                let sum: usize = paths.iter().map(|path| path.len()).sum();
-                                (i, sum, paths, func_ty.ret.subst(&vars))
-                            })
+                                .collect::<Option<Vec<_>>>()
+                                .map(|args| {
+                                    let (cost, args) =
+                                        app(ir::Expr::Imm(ir::Value::Func(func)), args);
+                                    (cost_sum + cost, func_ty.ret.subst(&vars), args)
+                                })
                         })
                         .collect();
-                    let mut shortest = None;
-                    for (i, candidate) in candidates.iter().enumerate() {
-                        if let Some((_, len, _, _)) = candidate {
-                            match &mut shortest {
-                                None => shortest = Some((len, i)),
-                                Some(shortest) if shortest.0 >= len => *shortest = (len, i),
-                                Some(_) => {}
-                            }
-                        }
+                    /*
+                    for (cost, ty, candidate) in &candidates {
+                        println!("cost {cost}, {ty:?}");
+                        candidate._debug_print(0);
                     }
-                    if let Some((_, i)) = shortest {
-                        let chosen = candidates[i].as_ref().unwrap();
-                        let args: Vec<_> = args_expr
-                            .into_iter()
-                            .zip(&chosen.2)
-                            .map(|(expr, converters)| {
-                                converters.into_iter().fold(expr, |expr, &&converter| {
-                                    ir::Expr::Call(
-                                        ir::Expr::Imm(ir::Value::Func(ir::Func::Builtin(
-                                            converter,
-                                        )))
-                                        .into(),
-                                        vec![expr],
-                                    )
-                                })
-                            })
-                            .collect();
-                        (
-                            chosen.3.clone(),
-                            ir::Expr::Call(
-                                ir::Expr::Imm(ir::Value::Func(overloads[symbol_id][chosen.0]))
-                                    .into(),
-                                args,
-                            ),
-                        )
+                    */
+                    if let Some((_, ty, expr)) =
+                        candidates.into_iter().min_by_key(|&(cost, _, _)| cost)
+                    {
+                        (ty, expr)
                     } else {
-                        dbg!(args_ty);
-                        dbg!(&overloads[symbol_id]);
-                        dbg!(candidates);
                         panic!("no candidates");
                     }
                 }
@@ -237,6 +205,37 @@ impl Expr {
             },
             _ => todo!(),
         }
+    }
+}
+
+fn app(func: ir::Expr, args: Vec<(usize, usize, ir::Expr)>) -> (usize, ir::Expr) {
+    if args.iter().any(|(given, expected, _)| given > expected) {
+        let (cost, expr) = app(
+            ir::Expr::Imm(ir::Value::Func(ir::Func::Builtin(ir::BuiltinFunc::App))),
+            iter::once((0, 0, func))
+                .chain(
+                    args.into_iter()
+                        .map(|(given, expected, expr)| (given, expected + 1, expr)),
+                )
+                .collect(),
+        );
+        (cost + 1, expr)
+    } else {
+        let mut sum_cost = 0;
+        let args = args
+            .into_iter()
+            .map(|(given, expected, expr)| {
+                (given..expected).fold(expr, |expr, i| {
+                    let (cost, expr) = app(
+                        ir::Expr::Imm(ir::Value::Func(ir::Func::Builtin(ir::BuiltinFunc::Const))),
+                        vec![(i, 0, expr)],
+                    );
+                    sum_cost += cost + 1;
+                    expr
+                })
+            })
+            .collect();
+        (sum_cost, ir::Expr::Call(func.into(), args))
     }
 }
 
@@ -300,20 +299,45 @@ impl<'def> Builder<'def> {
                     ))
                 }
                 Stmt::Return(expr) => {
+                    let converters = [ir::BuiltinFunc::Deref, ir::BuiltinFunc::IntegerToFloat];
                     let (ty, expr) =
                         expr.unwrap()
                             .translate(self.vars_ty, self.overloads, self.funcs_ty);
-                    let expr = converter(&ty, &self.ret_ty)
-                        .unwrap()
-                        .into_iter()
-                        .rev()
-                        .fold(expr, |expr, converter| {
-                            ir::Expr::Call(
-                                ir::Expr::Imm(ir::Value::Func(converter)).into(),
-                                vec![expr],
-                            )
-                        });
-                    self.add_stmt(ir::Stmt::Return(expr))
+                    let (given_depth, given_inner) = ty.pause();
+                    let (expected_depth, expected_inner) = self.ret_ty.pause();
+                    assert!(given_depth <= expected_depth);
+                    let mut queue = VecDeque::from([(given_inner.clone(), expr.clone())]);
+                    loop {
+                        let Some((ty, expr)) = queue.pop_front() else {
+                            panic!();
+                        };
+                        if &ty == expected_inner {
+                            break self.add_stmt(ir::Stmt::Return(
+                                (given_depth..expected_depth).fold(expr, |expr, i| {
+                                    app(
+                                        ir::Expr::Imm(ir::Value::Func(ir::Func::Builtin(
+                                            ir::BuiltinFunc::Const,
+                                        ))),
+                                        vec![(i, 0, expr)],
+                                    )
+                                    .1
+                                }),
+                            ));
+                        }
+                        for &converter in &converters {
+                            let converter_ty = converter.ty();
+                            let mut converter_vars = vec![None; converter_ty.num_vars];
+                            if converter_ty.args[0].identify(&ty, &mut converter_vars) {
+                                let next_ty = converter_ty.ret.subst(&converter_vars);
+                                let next_expr = app(
+                                    ir::Expr::Imm(ir::Value::Func(ir::Func::Builtin(converter))),
+                                    vec![(given_depth, 0, expr.clone())],
+                                )
+                                .1;
+                                queue.push_back((next_ty, next_expr));
+                            }
+                        }
+                    }
                 }
             };
             self.add_stmts(stmts, Some(cur))
