@@ -356,7 +356,7 @@ impl BuiltinFunc {
 }
 
 #[derive(Clone)]
-enum Sound {
+pub enum Sound {
     T,
     Const(Box<Value>),
     App(Func, Vec<Sound>),

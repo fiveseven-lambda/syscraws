@@ -181,9 +181,16 @@ impl Expr {
                                 })
                                 .collect::<Option<Vec<_>>>()
                                 .map(|args| {
+                                    let depth = args
+                                        .iter()
+                                        .map(|&(given, expected, _)| given.saturating_sub(expected))
+                                        .max()
+                                        .unwrap_or(0);
+                                    let ty = (0..depth)
+                                        .fold(func_ty.ret.subst(&vars), |ty, _| ty!(Sound, ty));
                                     let (cost, args) =
                                         app(ir::Expr::Imm(ir::Value::Func(func)), args);
-                                    (cost_sum + cost, func_ty.ret.subst(&vars), args)
+                                    (cost_sum + cost, ty, args)
                                 })
                         })
                         .collect();
