@@ -20,224 +20,239 @@ mod chars_peekable;
 mod error;
 #[cfg(test)]
 mod test;
+use either::Either;
 use error::Error;
 
-use crate::token::{Token, TokenKind};
-use chars_peekable::CharsPeekable;
+use crate::token::Token;
+pub use chars_peekable::CharsPeekable;
 
-pub fn tokenize(input: &str) -> Result<Vec<Token>, Error> {
-    let mut chars = CharsPeekable::new(input);
-    let mut tokens = Vec::new();
-    loop {
-        chars.consume_while(|ch| ch.is_ascii_whitespace());
-        let start = chars.offset();
-        let Some(ch) = chars.next() else {
-            return Ok(tokens);
-        };
-        let token_kind = match ch {
-            'a'..='z' | 'A'..='Z' | '_' => {
-                chars.consume_while(|ch| matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_'));
-                match unsafe { input.get_unchecked(start..chars.offset()) } {
-                    "if" => TokenKind::KeywordIf,
-                    "else" => TokenKind::KeywordElse,
-                    "while" => TokenKind::KeywordWhile,
-                    "return" => TokenKind::KeywordReturn,
-                    _ => TokenKind::Identifier,
-                }
+pub fn next_token<'id>(chars: &mut CharsPeekable<'id>) -> Result<Option<Token<'id>>, Error> {
+    chars.consume_while(|ch| ch.is_ascii_whitespace());
+    let start = chars.offset();
+    let Some(first_ch) = chars.next() else {
+        return Ok(None);
+    };
+    let token = match first_ch {
+        'a'..='z' | 'A'..='Z' | '_' => {
+            chars.consume_while(|ch| matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_'));
+            let end = chars.offset();
+            Token::Identifier(unsafe { chars.input.get_unchecked(start..end) })
+        }
+        '0'..='9' => {
+            read_number(chars);
+            let end = chars.offset();
+            Token::Number(unsafe { chars.input.get_unchecked(start..end) })
+        }
+        '.' => {
+            if chars.consume_if(|ch| ch.is_ascii_digit()) {
+                read_number(chars);
+                let end = chars.offset();
+                Token::Number(unsafe { chars.input.get_unchecked(start..end) })
+            } else {
+                Token::Dot
             }
-            '0'..='9' => {
-                read_number(&mut chars);
-                TokenKind::Number
+        }
+        '+' => {
+            if chars.consume_if_eq('+') {
+                Token::DoublePlus
+            } else if chars.consume_if_eq('=') {
+                Token::PlusEqual
+            } else {
+                Token::Plus
             }
-            '.' => {
-                if chars.consume_if(|ch| ch.is_ascii_digit()) {
-                    read_number(&mut chars);
-                    TokenKind::Number
-                } else {
-                    TokenKind::Dot
-                }
+        }
+        '-' => {
+            if chars.consume_if_eq('-') {
+                Token::DoubleHyphen
+            } else if chars.consume_if_eq('=') {
+                Token::HyphenEqual
+            } else if chars.consume_if_eq('>') {
+                Token::HyphenGreater
+            } else {
+                Token::Hyphen
             }
-            '+' => {
-                if chars.consume_if_eq('+') {
-                    TokenKind::DoublePlus
-                } else if chars.consume_if_eq('=') {
-                    TokenKind::PlusEqual
-                } else {
-                    TokenKind::Plus
-                }
+        }
+        '*' => {
+            if chars.consume_if_eq('=') {
+                Token::AsteriskEqual
+            } else {
+                Token::Asterisk
             }
-            '-' => {
-                if chars.consume_if_eq('-') {
-                    TokenKind::DoubleHyphen
-                } else if chars.consume_if_eq('=') {
-                    TokenKind::HyphenEqual
-                } else if chars.consume_if_eq('>') {
-                    TokenKind::HyphenGreater
-                } else {
-                    TokenKind::Hyphen
-                }
-            }
-            '*' => {
-                if chars.consume_if_eq('=') {
-                    TokenKind::AsteriskEqual
-                } else {
-                    TokenKind::Asterisk
-                }
-            }
-            '/' => {
-                if chars.consume_if_eq('/') {
-                    chars.consume_while(|ch| ch != '\n');
-                    continue;
-                } else if chars.consume_if_eq('*') {
-                    let mut comments = vec![start];
-                    while !comments.is_empty() {
-                        let pos = chars.offset();
-                        match chars.next() {
-                            Some('/') if chars.consume_if_eq('*') => comments.push(pos),
-                            Some('*') if chars.consume_if_eq('/') => {
-                                comments.pop();
-                            }
-                            Some(_) => {}
-                            None => return Err(Error::UnterminatedComment(comments)),
-                        }
-                    }
-                    continue;
-                } else if chars.consume_if_eq('=') {
-                    TokenKind::SlashEqual
-                } else {
-                    TokenKind::Slash
-                }
-            }
-            '%' => {
-                if chars.consume_if_eq('=') {
-                    TokenKind::PercentEqual
-                } else {
-                    TokenKind::Percent
-                }
-            }
-            '=' => {
-                if chars.consume_if_eq('=') {
-                    TokenKind::DoubleEqual
-                } else if chars.consume_if_eq('>') {
-                    TokenKind::EqualGreater
-                } else {
-                    TokenKind::Equal
-                }
-            }
-            '!' => {
-                if chars.consume_if_eq('=') {
-                    TokenKind::ExclamationEqual
-                } else {
-                    TokenKind::Exclamation
-                }
-            }
-            '>' => {
-                if chars.consume_if_eq('>') {
-                    if chars.consume_if_eq('>') {
-                        if chars.consume_if_eq('=') {
-                            TokenKind::TripleGreaterEqual
-                        } else {
-                            TokenKind::TripleGreater
-                        }
-                    } else if chars.consume_if_eq('=') {
-                        TokenKind::DoubleGreaterEqual
-                    } else {
-                        TokenKind::DoubleGreater
-                    }
-                } else if chars.consume_if_eq('=') {
-                    TokenKind::GreaterEqual
-                } else {
-                    TokenKind::Greater
-                }
-            }
-            '<' => {
-                if chars.consume_if_eq('<') {
-                    if chars.consume_if_eq('<') {
-                        if chars.consume_if_eq('=') {
-                            TokenKind::TripleLessEqual
-                        } else {
-                            TokenKind::TripleLess
-                        }
-                    } else if chars.consume_if_eq('=') {
-                        TokenKind::DoubleLessEqual
-                    } else {
-                        TokenKind::DoubleLess
-                    }
-                } else if chars.consume_if_eq('=') {
-                    TokenKind::LessEqual
-                } else {
-                    TokenKind::Less
-                }
-            }
-            '&' => {
-                if chars.consume_if_eq('&') {
-                    TokenKind::DoubleAmpersand
-                } else if chars.consume_if_eq('=') {
-                    TokenKind::AmpersandEqual
-                } else {
-                    TokenKind::Ampersand
-                }
-            }
-            '|' => {
-                if chars.consume_if_eq('|') {
-                    TokenKind::DoubleBar
-                } else if chars.consume_if_eq('=') {
-                    TokenKind::BarEqual
-                } else {
-                    TokenKind::Bar
-                }
-            }
-            '^' => {
-                if chars.consume_if_eq('=') {
-                    TokenKind::CircumflexEqual
-                } else {
-                    TokenKind::Circumflex
-                }
-            }
-            ':' => TokenKind::Colon,
-            ';' => TokenKind::Semicolon,
-            ',' => TokenKind::Comma,
-            '?' => TokenKind::Question,
-            '#' => TokenKind::Hash,
-            '~' => TokenKind::Tilde,
-            '(' => TokenKind::OpeningParenthesis,
-            ')' => TokenKind::ClosingParenthesis,
-            '[' => TokenKind::OpeningBracket,
-            ']' => TokenKind::ClosingBracket,
-            '{' => TokenKind::OpeningBrace,
-            '}' => TokenKind::ClosingBrace,
-            '"' => {
-                loop {
+        }
+        '/' => {
+            if chars.consume_if_eq('/') {
+                chars.consume_while(|ch| ch != '\n');
+                return next_token(chars);
+            } else if chars.consume_if_eq('*') {
+                let mut comments = vec![start];
+                while !comments.is_empty() {
                     let pos = chars.offset();
                     match chars.next() {
-                        Some('"') => break,
-                        Some('\\') => match chars.next() {
-                            Some('n' | 'r' | 't' | '"' | '\\' | '0' | '\'') => {}
-                            Some('x') => {
-                                for _ in 0..2 {
-                                    match chars.next() {
-                                        Some(ch) if ch.is_ascii_digit() => {}
-                                        _ => return Err(Error::InvalidEscapeSequence(pos)),
-                                    }
-                                }
-                            }
-                            _ => return Err(Error::InvalidEscapeSequence(pos)),
-                        },
+                        Some('/') if chars.consume_if_eq('*') => comments.push(pos),
+                        Some('*') if chars.consume_if_eq('/') => {
+                            comments.pop();
+                        }
                         Some(_) => {}
-                        None => return Err(Error::UnterminatedStringLiteral(start)),
+                        None => return Err(Error::UnterminatedComment(comments)),
                     }
                 }
-                TokenKind::String
+                return next_token(chars);
+            } else if chars.consume_if_eq('=') {
+                Token::SlashEqual
+            } else {
+                Token::Slash
             }
-            _ => return Err(Error::UnexpectedCharacter(start)),
-        };
-        let end = chars.offset();
-        tokens.push(Token {
-            token_kind,
-            start,
-            end,
-        });
-    }
+        }
+        '%' => {
+            if chars.consume_if_eq('=') {
+                Token::PercentEqual
+            } else {
+                Token::Percent
+            }
+        }
+        '=' => {
+            if chars.consume_if_eq('=') {
+                Token::DoubleEqual
+            } else if chars.consume_if_eq('>') {
+                Token::EqualGreater
+            } else {
+                Token::Equal
+            }
+        }
+        '!' => {
+            if chars.consume_if_eq('=') {
+                Token::ExclamationEqual
+            } else {
+                Token::Exclamation
+            }
+        }
+        '>' => {
+            if chars.consume_if_eq('>') {
+                if chars.consume_if_eq('>') {
+                    if chars.consume_if_eq('=') {
+                        Token::TripleGreaterEqual
+                    } else {
+                        Token::TripleGreater
+                    }
+                } else if chars.consume_if_eq('=') {
+                    Token::DoubleGreaterEqual
+                } else {
+                    Token::DoubleGreater
+                }
+            } else if chars.consume_if_eq('=') {
+                Token::GreaterEqual
+            } else {
+                Token::Greater
+            }
+        }
+        '<' => {
+            if chars.consume_if_eq('<') {
+                if chars.consume_if_eq('<') {
+                    if chars.consume_if_eq('=') {
+                        Token::TripleLessEqual
+                    } else {
+                        Token::TripleLess
+                    }
+                } else if chars.consume_if_eq('=') {
+                    Token::DoubleLessEqual
+                } else {
+                    Token::DoubleLess
+                }
+            } else if chars.consume_if_eq('=') {
+                Token::LessEqual
+            } else {
+                Token::Less
+            }
+        }
+        '&' => {
+            if chars.consume_if_eq('&') {
+                Token::DoubleAmpersand
+            } else if chars.consume_if_eq('=') {
+                Token::AmpersandEqual
+            } else {
+                Token::Ampersand
+            }
+        }
+        '|' => {
+            if chars.consume_if_eq('|') {
+                Token::DoubleBar
+            } else if chars.consume_if_eq('=') {
+                Token::BarEqual
+            } else {
+                Token::Bar
+            }
+        }
+        '^' => {
+            if chars.consume_if_eq('=') {
+                Token::CircumflexEqual
+            } else {
+                Token::Circumflex
+            }
+        }
+        ':' => Token::Colon,
+        ';' => Token::Semicolon,
+        ',' => Token::Comma,
+        '?' => Token::Question,
+        '#' => Token::Hash,
+        '~' => Token::Tilde,
+        '(' => Token::OpeningParenthesis,
+        ')' => Token::ClosingParenthesis,
+        '[' => Token::OpeningBracket,
+        ']' => Token::ClosingBracket,
+        '{' => Token::OpeningBrace,
+        '}' => Token::ClosingBrace,
+        '"' => {
+            let mut components = Vec::new();
+            let mut string = String::new();
+            #[derive(PartialEq, Eq)]
+            enum Action {
+                Border,
+                Char,
+                Expr,
+            }
+            let mut prev_action = Action::Border;
+            loop {
+                let Some(mut ch) = chars.next() else {
+                    return Err(Error::UnterminatedStringLiteral(start));
+                };
+                let action = match ch {
+                    '"' => Action::Border,
+                    '{' => Action::Expr,
+                    '\\' => {
+                        ch = match chars.next() {
+                            Some('n') => '\n',
+                            Some('r') => '\r',
+                            Some('t') => '\t',
+                            Some('"') => '\"',
+                            Some('\\') => '\\',
+                            Some('0') => '\0',
+                            Some('\'') => '\'',
+                            _ => return Err(Error::InvalidEscapeSequence(start)),
+                        };
+                        Action::Char
+                    }
+                    _ => Action::Char,
+                };
+                if action == Action::Char {
+                    string.push(ch);
+                } else if prev_action == Action::Char {
+                    components.push(Either::Left(std::mem::take(&mut string)))
+                }
+                if action == Action::Expr {
+                    let mut peeked = next_token(chars)?;
+                    let term = crate::parser::parse_assign(chars, &mut peeked);
+                    assert!(matches!(peeked, Some(Token::ClosingBrace)));
+                    components.push(Either::Right(term.unwrap()));
+                } else if action == Action::Border {
+                    break;
+                }
+                prev_action = action;
+            }
+            Token::String(components)
+        }
+        _ => return Err(Error::UnexpectedCharacter(start)),
+    };
+    Ok(Some(token))
 }
 
 fn read_number(chars: &mut CharsPeekable) {

@@ -16,40 +16,4 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#[derive(Debug)]
-pub enum Error {
-    UnexpectedCharacter(usize),
-    UnterminatedComment(Vec<usize>),
-    UnterminatedStringLiteral(usize),
-    InvalidEscapeSequence(usize),
-}
-
-impl Error {
-    pub fn eprint(&self, input: &str) {
-        use crate::lines::Lines;
-        let lines = Lines::new(input);
-        match *self {
-            Error::UnexpectedCharacter(pos) => {
-                eprintln!("Unexpected character at {:?}", lines.line_column(pos));
-                lines.eprint_pos(pos);
-            }
-            Error::UnterminatedComment(ref pos_comments) => {
-                eprintln!("Unterminated comment");
-                for &pos in pos_comments {
-                    lines.eprint_pos(pos);
-                }
-            }
-            Error::UnterminatedStringLiteral(pos) => {
-                eprintln!(
-                    "Unterminated string literal started at {:?}",
-                    lines.line_column(pos)
-                );
-                lines.eprint_pos(pos);
-            }
-            Error::InvalidEscapeSequence(pos) => {
-                eprintln!("Invalid escape sequence at {:?}", lines.line_column(pos));
-                lines.eprint_pos(pos);
-            }
-        }
-    }
-}
+pub type Error = crate::parser::error::Error;

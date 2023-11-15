@@ -19,28 +19,28 @@
 use std::str::CharIndices;
 
 pub struct CharsPeekable<'s> {
+    pub input: &'s str,
     chars: CharIndices<'s>,
-    len: usize,
-    peeked: Option<Option<(usize, char)>>,
+    peeked: Option<(usize, char)>,
 }
 
 impl<'s> CharsPeekable<'s> {
-    pub fn new(s: &'s str) -> CharsPeekable<'s> {
+    pub fn new(input: &'s str) -> CharsPeekable<'s> {
+        let mut chars = input.char_indices();
+        let peeked = chars.next();
         CharsPeekable {
-            chars: s.char_indices(),
-            len: s.len(),
-            peeked: None,
+            input,
+            chars,
+            peeked,
         }
     }
     pub fn peek(&mut self) -> Option<char> {
-        self.peeked
-            .get_or_insert_with(|| self.chars.next())
-            .map(|(_, ch)| ch)
+        self.peeked.map(|(_, ch)| ch)
     }
     pub fn next_if(&mut self, pred: impl FnOnce(char) -> bool) -> Option<char> {
         self.peek().and_then(|ch| {
             pred(ch).then(|| {
-                self.peeked = None;
+                self.peeked = self.chars.next();
                 ch
             })
         })
@@ -58,9 +58,9 @@ impl<'s> CharsPeekable<'s> {
         while self.consume_if(&mut pred) {}
     }
     pub fn offset(&mut self) -> usize {
-        match *self.peeked.get_or_insert_with(|| self.chars.next()) {
+        match self.peeked {
             Some((offset, _)) => offset,
-            None => self.len,
+            None => self.input.len(),
         }
     }
 }

@@ -17,13 +17,6 @@
  */
 
 use super::Token;
-pub fn _debug_print(input: &str, tokens: &[Token]) {
-    for &Token {
-        token_kind,
-        start,
-        end,
-    } in tokens
-    {
-        eprintln!("{start}-{end}: \"{}\" {token_kind:?}", &input[start..end]);
-    }
+impl<'id> Token<'id> {
+    pub fn _debug_print(&self, depth: usize) {}
 }

@@ -224,7 +224,7 @@ impl BuiltinFunc {
             BuiltinFunc::App => todo!(),
             BuiltinFunc::PrintSound => ty::Func {
                 num_vars: 1,
-                args: vec![expr!(Sound, expr!(Float))],
+                args: vec![expr!(Sound, expr!(0))],
                 ret: expr!(Tuple),
             },
         }

@@ -16,6 +16,8 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use either::Either;
+
 use super::{Block, Expr, FuncDef, Stmt};
 
 impl Expr {
@@ -27,7 +29,18 @@ impl Expr {
             Expr::Func(id) => println!("{indent}func({id})"),
             Expr::Integer(value) => println!("{indent}integer({value})"),
             Expr::Float(value) => println!("{indent}float({value})"),
-            Expr::String(value) => println!("{indent}string({value})"),
+            Expr::String(components) => {
+                eprintln!("{indent}string");
+                for component in components {
+                    match component {
+                        Either::Left(string) => println!("{indent}string({string})"),
+                        Either::Right(expr) => {
+                            println!("{indent}expr");
+                            expr._debug_print(depth + 1);
+                        }
+                    }
+                }
+            }
             Expr::Call(func, args) => {
                 println!("{indent}call");
                 func._debug_print(depth + 1);

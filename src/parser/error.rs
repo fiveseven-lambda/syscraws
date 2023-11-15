@@ -20,6 +20,10 @@ use crate::range::Range;
 
 #[derive(Debug)]
 pub enum Error {
+    UnexpectedCharacter(usize),
+    UnterminatedComment(Vec<usize>),
+    UnterminatedStringLiteral(usize),
+    InvalidEscapeSequence(usize),
     UnexpectedToken { token: Range },
     UnexpectedTokenAfter { token: Range, reason: Range },
     EOFAfter { reason: Range },
@@ -28,18 +32,42 @@ pub enum Error {
 impl Error {
     pub fn eprint(&self, input: &str) {
         let lines = crate::lines::Lines::new(input);
-        match self {
-            Error::UnexpectedToken { token } => {
+        match *self {
+            Error::UnexpectedCharacter(pos) => {
+                eprintln!("Unexpected character at {:?}", lines.line_column(pos));
+                lines.eprint_pos(pos);
+            }
+            Error::UnterminatedComment(ref pos_comments) => {
+                eprintln!("Unterminated comment");
+                for &pos in pos_comments {
+                    lines.eprint_pos(pos);
+                }
+            }
+            Error::UnterminatedStringLiteral(pos) => {
+                eprintln!(
+                    "Unterminated string literal started at {:?}",
+                    lines.line_column(pos)
+                );
+                lines.eprint_pos(pos);
+            }
+            Error::InvalidEscapeSequence(pos) => {
+                eprintln!("Invalid escape sequence at {:?}", lines.line_column(pos));
+                lines.eprint_pos(pos);
+            }
+            Error::UnexpectedToken { ref token } => {
                 eprintln!("Unexpected token at {:?}", token);
                 lines.eprint_range(token);
             }
-            Error::UnexpectedTokenAfter { token, reason } => {
+            Error::UnexpectedTokenAfter {
+                ref token,
+                ref reason,
+            } => {
                 eprintln!("Unexpected token at {:?}", token);
                 lines.eprint_range(token);
                 eprintln!("Note:");
                 lines.eprint_range(reason);
             }
-            Error::EOFAfter { reason } => {
+            Error::EOFAfter { ref reason } => {
                 eprintln!("Unexpected EOF");
                 lines.eprint_range(reason);
             }

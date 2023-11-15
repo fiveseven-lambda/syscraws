@@ -17,24 +17,17 @@
  */
 
 mod debug_print;
-pub use debug_print::_debug_print;
+use crate::pre_ast::PTerm;
+use either::Either;
 
-#[derive(Clone, Copy)]
-pub struct Token {
-    pub token_kind: TokenKind,
-    pub start: usize,
-    pub end: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenKind {
-    Identifier,
+pub enum Token<'id> {
+    Identifier(&'id str),
     KeywordIf,
     KeywordElse,
     KeywordWhile,
     KeywordReturn,
-    Number,
-    String,
+    Number(&'id str),
+    String(Vec<Either<String, Option<PTerm<'id>>>>),
     Plus,
     PlusEqual,
     DoublePlus,

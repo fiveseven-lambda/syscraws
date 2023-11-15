@@ -22,6 +22,7 @@ use std::collections::VecDeque;
 use std::iter;
 
 use crate::{ir, ty};
+use either::Either;
 use num::BigInt;
 mod debug_print;
 
@@ -31,7 +32,7 @@ pub enum Expr {
     Func(usize),
     Integer(BigInt),
     Float(f64),
-    String(String),
+    String(Vec<Either<String, Expr>>),
     Call(Box<Expr>, Vec<Expr>),
 }
 
@@ -124,7 +125,7 @@ impl Expr {
             Expr::Variable(id) => (ty!(Reference, vars_ty[id].clone()), ir::Expr::Local(id)),
             Expr::Integer(value) => (ty!(Integer), ir::Expr::Imm(ir::Value::Integer(value))),
             Expr::Float(value) => (ty!(Float), ir::Expr::Imm(ir::Value::Float(value))),
-            Expr::String(value) => (ty!(String), ir::Expr::Imm(ir::Value::String(value))),
+            Expr::String(value) => todo!(),
             Expr::Call(func, args) => match *func {
                 Expr::Func(symbol_id) => {
                     let args: Vec<_> = args
@@ -194,12 +195,10 @@ impl Expr {
                                 })
                         })
                         .collect();
-                    /*
                     for (cost, ty, candidate) in &candidates {
                         println!("cost {cost}, {ty:?}");
                         candidate._debug_print(0);
                     }
-                    */
                     if let Some((_, ty, expr)) =
                         candidates.into_iter().min_by_key(|&(cost, _, _)| cost)
                     {

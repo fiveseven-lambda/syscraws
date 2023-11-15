@@ -31,11 +31,7 @@ use std::io::Read;
 fn main() {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).unwrap();
-    let tokens = match lexer::tokenize(&input) {
-        Ok(tokens) => tokens,
-        Err(error) => return error.eprint(&input),
-    };
-    let pre_ast = match parser::parse(&input, &tokens) {
+    let pre_ast = match parser::parse(&input) {
         Ok(pre_ast) => pre_ast,
         Err(error) => return error.eprint(&input),
     };

@@ -19,6 +19,7 @@
 use crate::expr;
 use crate::range::Range;
 use crate::{ast, ir, ty};
+use either::Either;
 use enum_iterator::Sequence;
 use num::BigInt;
 
@@ -79,7 +80,7 @@ pub enum Term<'id> {
     Identifier(&'id str),
     Integer(BigInt),
     Float(f64),
-    String(String),
+    String(Vec<Either<String, Option<PTerm<'id>>>>),
     UnaryOperation {
         operator: Operator,
         pos_operator: Range,
@@ -169,7 +170,18 @@ impl<'id> PTerm<'id> {
         match self.term {
             Term::Integer(value) => Ok(ast::Expr::Integer(value)),
             Term::Float(value) => Ok(ast::Expr::Float(value)),
-            Term::String(value) => Ok(ast::Expr::String(value)),
+            Term::String(components) => Ok(ast::Expr::String(
+                components
+                    .into_iter()
+                    .map(|component| {
+                        component.map_right(|term| {
+                            term.unwrap()
+                                .into_expr(variables, globals, funcs, scope, errors)
+                                .unwrap()
+                        })
+                    })
+                    .collect(),
+            )),
             Term::TypeAnnotation {
                 pos_colon,
                 term,

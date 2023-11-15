@@ -16,157 +16,127 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use crate::lexer;
 use crate::pre_ast::{Operator, PStmt, PTerm, Stmt, Term};
 use crate::range::Range;
-use crate::token::{Token, TokenKind};
+use crate::token::Token;
 use std::iter;
 
-mod token_seq;
-use token_seq::TokenSeq;
-mod error;
+pub mod error;
 use error::Error;
 
-pub fn parse<'id>(input: &'id str, tokens: &[Token]) -> Result<Vec<PStmt<'id>>, Error> {
-    let mut tokens = TokenSeq::new(tokens);
-    iter::from_fn(|| parse_stmt(input, &mut tokens).transpose()).collect()
+pub fn parse(input: &str) -> Result<Vec<PStmt>, Error> {
+    let mut chars = lexer::CharsPeekable::new(input);
+    let mut peeked = lexer::next_token(&mut chars)?;
+    let ret = iter::from_fn(|| parse_stmt(&mut chars, &mut peeked).transpose()).collect();
+    assert!(peeked.is_none());
+    ret
 }
 
-fn parse_stmt<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PStmt<'id>>, Error> {
-    let Some(Token {token_kind: first_token_kind, start: first_token_start, end: first_token_end}) = tokens.peek() else {
+fn parse_stmt<'id>(
+    chars: &mut lexer::CharsPeekable<'id>,
+    peeked: &mut Option<Token<'id>>,
+) -> Result<Option<PStmt<'id>>, Error> {
+    let Some(first_token) = peeked else {
         return Ok(None);
     };
-    match first_token_kind {
-        TokenKind::KeywordIf => {
-            // SAFETY: consume "if"
-            unsafe { tokens.consume() }
-            consume_if_eq_or_err(
-                tokens,
-                TokenKind::OpeningParenthesis,
-                Range::new(first_token_start, first_token_end),
-            )?;
-            let cond = parse_assign(input, tokens)?;
-            consume_if_eq_or_err(
-                tokens,
-                TokenKind::ClosingParenthesis,
-                Range::new(first_token_start, first_token_end),
-            )?;
-            let stmt_then = parse_stmt(input, tokens)?;
-            let (pos_else, stmt_else) = if let Some(Token {
-                token_kind: TokenKind::KeywordElse,
-                start,
-                end,
-            }) = tokens.peek()
-            {
-                // SAFETY: consume "else"
-                unsafe { tokens.consume() }
-                (Some(Range::new(start, end)), parse_stmt(input, tokens)?)
+    match first_token {
+        Token::KeywordIf => {
+            *peeked = lexer::next_token(chars)?;
+            match peeked {
+                Some(Token::OpeningParenthesis) => *peeked = lexer::next_token(chars)?,
+                _ => panic!(),
+            }
+            let cond = parse_assign(chars, peeked)?;
+            match peeked {
+                Some(Token::ClosingParenthesis) => *peeked = lexer::next_token(chars)?,
+                _ => panic!(),
+            }
+            let stmt_then = parse_stmt(chars, peeked)?;
+            let (pos_else, stmt_else) = if let Some(Token::KeywordElse) = peeked {
+                *peeked = lexer::next_token(chars)?;
+                (Some(Range::new(0, 0)), parse_stmt(chars, peeked)?)
             } else {
                 (None, None)
             };
             Ok(Some(PStmt::new(
-                Range::new(first_token_start, tokens.prev_end()),
+                Range::new(0, 0),
                 Stmt::If {
                     cond,
-                    pos_if: Range::new(first_token_start, first_token_end),
+                    pos_if: Range::new(0, 0),
                     stmt_then: stmt_then.map(Box::new),
                     pos_else,
                     stmt_else: stmt_else.map(Box::new),
                 },
             )))
         }
-        TokenKind::KeywordWhile => {
-            // SAFETY: consume "while"
-            unsafe { tokens.consume() }
-            consume_if_eq_or_err(
-                tokens,
-                TokenKind::OpeningParenthesis,
-                Range::new(first_token_start, first_token_end),
-            )?;
-            let cond = parse_assign(input, tokens)?;
-            consume_if_eq_or_err(
-                tokens,
-                TokenKind::ClosingParenthesis,
-                Range::new(first_token_start, first_token_end),
-            )?;
-            let stmt = parse_stmt(input, tokens)?;
+        Token::KeywordWhile => {
+            *peeked = lexer::next_token(chars)?;
+            match peeked {
+                Some(Token::OpeningParenthesis) => *peeked = lexer::next_token(chars)?,
+                _ => panic!(),
+            }
+            let cond = parse_assign(chars, peeked)?;
+            match peeked {
+                Some(Token::ClosingParenthesis) => *peeked = lexer::next_token(chars)?,
+                _ => panic!(),
+            }
+            let stmt = parse_stmt(chars, peeked)?;
             Ok(Some(PStmt::new(
-                Range::new(first_token_start, tokens.prev_end()),
+                Range::new(0, 0),
                 Stmt::While {
                     cond,
-                    pos_while: Range::new(first_token_start, first_token_end),
+                    pos_while: Range::new(0, 0),
                     stmt: stmt.map(Box::new),
                 },
             )))
         }
-        TokenKind::KeywordReturn => {
-            // SAFETY: consume "return"
-            unsafe { tokens.consume() }
-            let term = parse_assign(input, tokens)?;
-            consume_if_eq_or_err(
-                tokens,
-                TokenKind::Semicolon,
-                Range::new(first_token_start, first_token_end),
-            )?;
-            Ok(Some(PStmt::new(
-                Range::new(first_token_start, tokens.prev_end()),
-                Stmt::Return(term),
-            )))
+        Token::KeywordReturn => {
+            *peeked = lexer::next_token(chars)?;
+            let term = parse_assign(chars, peeked)?;
+            match peeked {
+                Some(Token::OpeningParenthesis) => *peeked = lexer::next_token(chars)?,
+                _ => panic!(),
+            }
+            Ok(Some(PStmt::new(Range::new(0, 0), Stmt::Return(term))))
         }
         _ => {
-            let term = parse_assign(input, tokens)?;
-            match tokens.peek() {
-                Some(Token {
-                    token_kind: TokenKind::Semicolon,
-                    start: _,
-                    end: semicolon_end,
-                }) => {
-                    // SAFETY: consume semicolon
-                    unsafe { tokens.consume() }
-                    Ok(Some(PStmt::new(
-                        Range::new(first_token_start, semicolon_end),
-                        Stmt::Term(term),
-                    )))
+            let term = parse_assign(chars, peeked)?;
+            match peeked {
+                Some(Token::Semicolon) => {
+                    *peeked = lexer::next_token(chars)?;
+                    Ok(Some(PStmt::new(Range::new(0, 0), Stmt::Term(term))))
                 }
-                Some(Token {
-                    token_kind: TokenKind::OpeningBrace,
-                    start,
-                    end,
-                }) => {
-                    // SAFETY: consume opening brace
-                    unsafe { tokens.consume() }
+                Some(Token::OpeningBrace) => {
+                    *peeked = lexer::next_token(chars)?;
                     let mut stmts = Vec::new();
                     loop {
-                        if let Some(Token {
-                            token_kind: TokenKind::ClosingBrace,
-                            ..
-                        }) = tokens.peek()
-                        {
-                            // SAFETY: consume closing brace
-                            unsafe { tokens.consume() }
+                        if let Some(Token::ClosingBrace) = peeked {
+                            *peeked = lexer::next_token(chars)?;
                             break;
-                        } else if let Some(stmt) = parse_stmt(input, tokens)? {
+                        } else if let Some(stmt) = parse_stmt(chars, peeked)? {
                             stmts.push(stmt);
                         } else {
                             return Err(Error::EOFAfter {
-                                reason: Range::new(start, end),
+                                reason: Range::new(0, 0),
                             });
                         }
                     }
                     Ok(Some(PStmt::new(
-                        Range::new(first_token_start, tokens.prev_end()),
+                        Range::new(0, 0),
                         Stmt::Block {
                             antecedent: term,
                             stmts,
                         },
                     )))
                 }
-                Some(Token { start, end, .. }) => match term {
+                Some(_) => match term {
                     Some(term) => Err(Error::UnexpectedTokenAfter {
-                        token: Range::new(start, end),
+                        token: Range::new(0, 0),
                         reason: term.pos(),
                     }),
                     None => Err(Error::UnexpectedToken {
-                        token: Range::new(start, end),
+                        token: Range::new(0, 0),
                     }),
                 },
                 None => Err(Error::EOFAfter {
@@ -177,155 +147,116 @@ fn parse_stmt<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PStm
     }
 }
 
-fn parse_assign<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PTerm<'id>>, Error> {
-    let Some(start) = tokens.next_start() else {
-        return Ok(None);
-    };
-    let left_hand_side = parse_binary_operator(input, tokens)?;
-    if let Some(Token {
-        token_kind,
-        start: op_start,
-        end: op_end,
-    }) = tokens.peek()
-    {
-        if let Some(operator) = assignment_operator(token_kind) {
-            // SAFETY: consume assignment operator
-            unsafe { tokens.consume() }
-            let right_hand_side = parse_assign(input, tokens)?;
-            return Ok(Some(PTerm::new(
-                Range::new(start, tokens.prev_end()),
-                Term::Assignment {
-                    operator,
-                    pos_operator: Range::new(op_start, op_end),
-                    left_hand_side: left_hand_side.map(Box::new),
-                    right_hand_side: right_hand_side.map(Box::new),
-                },
-            )));
-        }
+pub fn parse_assign<'id>(
+    chars: &mut lexer::CharsPeekable<'id>,
+    peeked: &mut Option<Token<'id>>,
+) -> Result<Option<PTerm<'id>>, Error> {
+    let left_hand_side = parse_binary_operator(chars, peeked)?;
+    if let Some(operator) = peeked.as_ref().and_then(assignment_operator) {
+        *peeked = lexer::next_token(chars)?;
+        let right_hand_side = parse_assign(chars, peeked)?;
+        Ok(Some(PTerm::new(
+            Range::new(0, 0),
+            Term::Assignment {
+                operator,
+                pos_operator: Range::new(0, 0),
+                left_hand_side: left_hand_side.map(Box::new),
+                right_hand_side: right_hand_side.map(Box::new),
+            },
+        )))
+    } else {
+        Ok(left_hand_side)
     }
-    Ok(left_hand_side)
 }
 
 fn parse_binary_operator<'id>(
-    input: &'id str,
-    tokens: &mut TokenSeq,
+    chars: &mut lexer::CharsPeekable<'id>,
+    peeked: &mut Option<Token<'id>>,
 ) -> Result<Option<PTerm<'id>>, Error> {
-    parse_binary_operator_rec(input, tokens, Precedence::first().unwrap())
+    parse_binary_operator_rec(chars, peeked, Precedence::first())
 }
 
 fn parse_binary_operator_rec<'id>(
-    input: &'id str,
-    tokens: &mut TokenSeq,
-    current_precedence: Precedence,
+    chars: &mut lexer::CharsPeekable<'id>,
+    peeked: &mut Option<Token<'id>>,
+    precedence: Option<Precedence>,
 ) -> Result<Option<PTerm<'id>>, Error> {
-    let Some(next_precedence) = current_precedence.next() else {
-        return parse_factor(input, tokens);
+    let Some(precedence) = precedence else {
+        return parse_factor(chars, peeked);
     };
-    let Some(start) = tokens.next_start() else {
-        return Ok(None);
-    };
-    let mut left_operand = parse_binary_operator_rec(input, tokens, next_precedence)?;
-    loop {
-        if let Some(Token {
-            token_kind,
-            start: op_start,
-            end: op_end,
-        }) = tokens.peek()
-        {
-            if let Some(operator) = infix_operator(token_kind, current_precedence) {
-                // SAFETY: consume infix operator
-                unsafe { tokens.consume() }
-                let right_operand = parse_binary_operator_rec(input, tokens, next_precedence)?;
-                left_operand = Some(PTerm::new(
-                    Range::new(start, tokens.prev_end()),
-                    Term::BinaryOperation {
-                        operator,
-                        pos_operator: Range::new(op_start, op_end),
-                        left_operand: left_operand.map(Box::new),
-                        right_operand: right_operand.map(Box::new),
-                    },
-                ));
-                continue;
-            }
-        }
-        return Ok(left_operand);
+    let mut left_operand = parse_binary_operator_rec(chars, peeked, precedence.next())?;
+    while let Some(operator) = peeked
+        .as_ref()
+        .and_then(|token| infix_operator(token, precedence))
+    {
+        *peeked = lexer::next_token(chars)?;
+        let right_operand = parse_binary_operator_rec(chars, peeked, precedence.next())?;
+        left_operand = Some(PTerm::new(
+            Range::new(0, 0),
+            Term::BinaryOperation {
+                pos_operator: Range::new(0, 0),
+                left_operand: left_operand.map(Box::new),
+                operator,
+                right_operand: right_operand.map(Box::new),
+            },
+        ));
     }
+    Ok(left_operand)
 }
 
-fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PTerm<'id>>, Error> {
-    let Some(Token {token_kind, start, end}) = tokens.peek() else {
+fn parse_factor<'id>(
+    chars: &mut lexer::CharsPeekable<'id>,
+    peeked: &mut Option<Token<'id>>,
+) -> Result<Option<PTerm<'id>>, Error> {
+    let Some(first_token) = peeked else {
         return Ok(None);
     };
     let mut antecedent = 'ant: {
-        let term = if token_kind == TokenKind::Identifier {
-            Term::Identifier(unsafe { input.get_unchecked(start..end) })
-        } else if token_kind == TokenKind::Number {
-            let value: String = unsafe { input.get_unchecked(start..end) }
-                .chars()
-                .filter(|&ch| ch != '_')
-                .collect();
+        let term = if let Token::Identifier(name) = *first_token {
+            *peeked = lexer::next_token(chars)?;
+            Term::Identifier(name)
+        } else if let Token::Number(str) = *first_token {
+            *peeked = lexer::next_token(chars)?;
+            let value: String = str.chars().filter(|&ch| ch != '_').collect();
             if value.chars().all(|ch| ch.is_ascii_digit()) {
                 Term::Integer(value.parse().unwrap())
             } else {
                 Term::Float(value.parse().unwrap())
             }
-        } else if token_kind == TokenKind::String {
-            let mut chars = unsafe { input.get_unchecked(start + 1..end - 1) }.chars();
-            let mut value = String::new();
-            while let Some(mut ch) = chars.next() {
-                if ch == '\\' {
-                    ch = match chars.next().unwrap() {
-                        'n' => '\n',
-                        'r' => '\r',
-                        't' => '\t',
-                        '0' => '\0',
-                        'x' => {
-                            let code: String = chars.by_ref().take(2).collect();
-                            let code: u8 = code.parse().unwrap();
-                            code as char
-                        }
-                        ch => ch,
-                    }
-                };
-                value.push(ch);
-            }
-            Term::String(value)
-        } else if let Some(operator) = prefix_operator(token_kind) {
-            unsafe { tokens.consume() }
-            let operand = parse_factor(input, tokens)?;
+        } else if let Token::String(components) = first_token {
+            let components = std::mem::take(components);
+            *peeked = lexer::next_token(chars)?;
+            Term::String(components)
+        } else if let Some(operator) = prefix_operator(&first_token) {
+            *peeked = lexer::next_token(chars)?;
+            let operand = parse_factor(chars, peeked)?;
             return Ok(Some(PTerm::new(
-                Range::new(start, tokens.prev_end()),
+                Range::new(0, 0),
                 Term::UnaryOperation {
                     operator,
-                    pos_operator: Range::new(start, end),
+                    pos_operator: Range::new(0, 0),
                     operand: operand.map(Box::new),
                 },
             )));
         } else {
             break 'ant None;
         };
-        unsafe { tokens.consume() }
-        Some(PTerm::new(Range::new(start, end), term))
+        Some(PTerm::new(Range::new(0, 0), term))
     };
     loop {
         let term = {
-            let Some(Token { token_kind, start, end }) = tokens.peek() else {
+            let Some(token) = peeked else {
                 return Ok(antecedent);
             };
-            if token_kind == TokenKind::OpeningParenthesis {
-                unsafe { tokens.consume() }
+            if let Token::OpeningParenthesis = token {
+                *peeked = lexer::next_token(chars)?;
                 let mut elements = Vec::new();
                 let has_trailing_comma;
                 loop {
-                    let element = parse_assign(input, tokens)?;
-                    if let Some(Token {
-                        token_kind: TokenKind::Comma,
-                        start,
-                        end,
-                    }) = tokens.peek()
-                    {
-                        unsafe { tokens.consume() }
-                        elements.push(element.ok_or(Range::new(start, end)));
+                    let element = parse_assign(chars, peeked)?;
+                    if let Some(Token::Comma) = peeked {
+                        *peeked = lexer::next_token(chars)?;
+                        elements.push(element.ok_or(Range::new(0, 0)));
                     } else {
                         if let Some(element) = element {
                             has_trailing_comma = false;
@@ -336,88 +267,74 @@ fn parse_factor<'id>(input: &'id str, tokens: &mut TokenSeq) -> Result<Option<PT
                         break;
                     }
                 }
-                consume_if_eq_or_err(
-                    tokens,
-                    TokenKind::ClosingParenthesis,
-                    Range::new(start, end),
-                )?;
+                match peeked {
+                    Some(Token::ClosingParenthesis) => {
+                        *peeked = lexer::next_token(chars)?;
+                    }
+                    Some(other) => {
+                        return Err(Error::UnexpectedTokenAfter {
+                            token: Range::new(0, 0),
+                            reason: Range::new(0, 0),
+                        })
+                    }
+                    None => {
+                        return Err(Error::EOFAfter {
+                            reason: Range::new(0, 0),
+                        })
+                    }
+                }
                 Term::Parenthesized {
                     antecedent: antecedent.map(Box::new),
                     elements,
                     has_trailing_comma,
                 }
-            } else if token_kind == TokenKind::Colon {
-                unsafe { tokens.consume() }
-                let ty = parse_factor(input, tokens)?;
+            } else if let Token::Colon = token {
+                *peeked = lexer::next_token(chars)?;
+                let ty = parse_factor(chars, peeked)?;
                 Term::TypeAnnotation {
-                    pos_colon: Range::new(start, end),
+                    pos_colon: Range::new(0, 0),
                     term: antecedent.map(Box::new),
                     ty: ty.map(Box::new),
                 }
-            } else if token_kind == TokenKind::HyphenGreater {
-                unsafe { tokens.consume() }
-                let ty = parse_factor(input, tokens)?;
+            } else if let Token::HyphenGreater = token {
+                *peeked = lexer::next_token(chars)?;
+                let ty = parse_factor(chars, peeked)?;
                 Term::ReturnType {
-                    pos_arrow: Range::new(start, end),
+                    pos_arrow: Range::new(0, 0),
                     term: antecedent.map(Box::new),
                     ty: ty.map(Box::new),
                 }
-            } else if let Some(operator) = postfix_operator(token_kind) {
-                unsafe { tokens.consume() }
+            } else if let Some(operator) = postfix_operator(token) {
+                *peeked = lexer::next_token(chars)?;
                 Term::UnaryOperation {
                     operator,
-                    pos_operator: Range::new(start, end),
+                    pos_operator: Range::new(0, 0),
                     operand: antecedent.map(Box::new),
                 }
             } else {
                 return Ok(antecedent);
             }
         };
-        antecedent = Some(PTerm::new(Range::new(start, tokens.prev_end()), term));
+        antecedent = Some(PTerm::new(Range::new(0, 0), term));
     }
 }
 
-fn consume_if_eq_or_err(
-    tokens: &mut TokenSeq,
-    expected: TokenKind,
-    reason: Range,
-) -> Result<(), Error> {
-    if let Some(Token {
-        token_kind,
-        start,
-        end,
-    }) = tokens.peek()
-    {
-        if token_kind == expected {
-            unsafe { tokens.consume() }
-            Ok(())
-        } else {
-            Err(Error::UnexpectedTokenAfter {
-                token: Range::new(start, end),
-                reason,
-            })
-        }
-    } else {
-        Err(Error::EOFAfter { reason })
-    }
-}
-
-fn prefix_operator(token_kind: TokenKind) -> Option<Operator> {
-    match token_kind {
-        TokenKind::Plus => Some(Operator::Plus),
-        TokenKind::Hyphen => Some(Operator::Minus),
-        TokenKind::Slash => Some(Operator::Recip),
-        TokenKind::Exclamation => Some(Operator::LogicalNot),
-        TokenKind::Tilde => Some(Operator::BitNot),
-        TokenKind::DoublePlus => Some(Operator::PreInc),
-        TokenKind::DoubleHyphen => Some(Operator::PreDec),
+fn prefix_operator(token: &Token) -> Option<Operator> {
+    match token {
+        Token::Plus => Some(Operator::Plus),
+        Token::Hyphen => Some(Operator::Minus),
+        Token::Slash => Some(Operator::Recip),
+        Token::Exclamation => Some(Operator::LogicalNot),
+        Token::Tilde => Some(Operator::BitNot),
+        Token::DoublePlus => Some(Operator::PreInc),
+        Token::DoubleHyphen => Some(Operator::PreDec),
         _ => None,
     }
 }
-fn postfix_operator(token_kind: TokenKind) -> Option<Operator> {
-    match token_kind {
-        TokenKind::DoublePlus => Some(Operator::PostInc),
-        TokenKind::DoubleHyphen => Some(Operator::PostDec),
+fn postfix_operator(token: &Token) -> Option<Operator> {
+    match token {
+        Token::DoublePlus => Some(Operator::PostInc),
+        Token::DoubleHyphen => Some(Operator::PostDec),
         _ => None,
     }
 }
@@ -438,47 +355,47 @@ enum Precedence {
     TimeShift,
 }
 
-fn infix_operator(token_kind: TokenKind, precedence: Precedence) -> Option<Operator> {
-    match (token_kind, precedence) {
-        (TokenKind::TripleGreater, Precedence::TimeShift) => Some(Operator::ForwardShift),
-        (TokenKind::TripleLess, Precedence::TimeShift) => Some(Operator::BackwardShift),
-        (TokenKind::Asterisk, Precedence::MulDivRem) => Some(Operator::Mul),
-        (TokenKind::Slash, Precedence::MulDivRem) => Some(Operator::Div),
-        (TokenKind::Percent, Precedence::MulDivRem) => Some(Operator::Rem),
-        (TokenKind::Plus, Precedence::AddSub) => Some(Operator::Add),
-        (TokenKind::Hyphen, Precedence::AddSub) => Some(Operator::Sub),
-        (TokenKind::DoubleGreater, Precedence::BitShift) => Some(Operator::RightShift),
-        (TokenKind::DoubleLess, Precedence::BitShift) => Some(Operator::LeftShift),
-        (TokenKind::Ampersand, Precedence::BitAnd) => Some(Operator::BitAnd),
-        (TokenKind::Circumflex, Precedence::BitXor) => Some(Operator::BitXor),
-        (TokenKind::Bar, Precedence::BitOr) => Some(Operator::BitOr),
-        (TokenKind::Greater, Precedence::Inequality) => Some(Operator::Greater),
-        (TokenKind::GreaterEqual, Precedence::Inequality) => Some(Operator::GreaterEqual),
-        (TokenKind::Less, Precedence::Inequality) => Some(Operator::Less),
-        (TokenKind::LessEqual, Precedence::Inequality) => Some(Operator::LessEqual),
-        (TokenKind::DoubleEqual, Precedence::Equality) => Some(Operator::Equal),
-        (TokenKind::ExclamationEqual, Precedence::Equality) => Some(Operator::NotEqual),
-        (TokenKind::DoubleAmpersand, Precedence::LogicalAnd) => Some(Operator::LogicalAnd),
-        (TokenKind::DoubleBar, Precedence::LogicalOr) => Some(Operator::LogicalOr),
+fn infix_operator(token: &Token, precedence: Precedence) -> Option<Operator> {
+    match (token, precedence) {
+        (Token::TripleGreater, Precedence::TimeShift) => Some(Operator::ForwardShift),
+        (Token::TripleLess, Precedence::TimeShift) => Some(Operator::BackwardShift),
+        (Token::Asterisk, Precedence::MulDivRem) => Some(Operator::Mul),
+        (Token::Slash, Precedence::MulDivRem) => Some(Operator::Div),
+        (Token::Percent, Precedence::MulDivRem) => Some(Operator::Rem),
+        (Token::Plus, Precedence::AddSub) => Some(Operator::Add),
+        (Token::Hyphen, Precedence::AddSub) => Some(Operator::Sub),
+        (Token::DoubleGreater, Precedence::BitShift) => Some(Operator::RightShift),
+        (Token::DoubleLess, Precedence::BitShift) => Some(Operator::LeftShift),
+        (Token::Ampersand, Precedence::BitAnd) => Some(Operator::BitAnd),
+        (Token::Circumflex, Precedence::BitXor) => Some(Operator::BitXor),
+        (Token::Bar, Precedence::BitOr) => Some(Operator::BitOr),
+        (Token::Greater, Precedence::Inequality) => Some(Operator::Greater),
+        (Token::GreaterEqual, Precedence::Inequality) => Some(Operator::GreaterEqual),
+        (Token::Less, Precedence::Inequality) => Some(Operator::Less),
+        (Token::LessEqual, Precedence::Inequality) => Some(Operator::LessEqual),
+        (Token::DoubleEqual, Precedence::Equality) => Some(Operator::Equal),
+        (Token::ExclamationEqual, Precedence::Equality) => Some(Operator::NotEqual),
+        (Token::DoubleAmpersand, Precedence::LogicalAnd) => Some(Operator::LogicalAnd),
+        (Token::DoubleBar, Precedence::LogicalOr) => Some(Operator::LogicalOr),
         _ => None,
     }
 }
 
-fn assignment_operator(token_kind: TokenKind) -> Option<Operator> {
-    match token_kind {
-        TokenKind::Equal => Some(Operator::Assign),
-        TokenKind::PlusEqual => Some(Operator::AddAssign),
-        TokenKind::HyphenEqual => Some(Operator::SubAssign),
-        TokenKind::AsteriskEqual => Some(Operator::MulAssign),
-        TokenKind::SlashEqual => Some(Operator::DivAssign),
-        TokenKind::PercentEqual => Some(Operator::RemAssign),
-        TokenKind::DoubleGreaterEqual => Some(Operator::RightShiftAssign),
-        TokenKind::TripleGreaterEqual => Some(Operator::ForwardShiftAssign),
-        TokenKind::DoubleLessEqual => Some(Operator::LeftShiftAssign),
-        TokenKind::TripleLessEqual => Some(Operator::BackwardShiftAssign),
-        TokenKind::AmpersandEqual => Some(Operator::BitAndAssign),
-        TokenKind::CircumflexEqual => Some(Operator::BitXorAssign),
-        TokenKind::BarEqual => Some(Operator::BitOrAssign),
+fn assignment_operator(token: &Token) -> Option<Operator> {
+    match token {
+        Token::Equal => Some(Operator::Assign),
+        Token::PlusEqual => Some(Operator::AddAssign),
+        Token::HyphenEqual => Some(Operator::SubAssign),
+        Token::AsteriskEqual => Some(Operator::MulAssign),
+        Token::SlashEqual => Some(Operator::DivAssign),
+        Token::PercentEqual => Some(Operator::RemAssign),
+        Token::DoubleGreaterEqual => Some(Operator::RightShiftAssign),
+        Token::TripleGreaterEqual => Some(Operator::ForwardShiftAssign),
+        Token::DoubleLessEqual => Some(Operator::LeftShiftAssign),
+        Token::TripleLessEqual => Some(Operator::BackwardShiftAssign),
+        Token::AmpersandEqual => Some(Operator::BitAndAssign),
+        Token::CircumflexEqual => Some(Operator::BitXorAssign),
+        Token::BarEqual => Some(Operator::BitOrAssign),
         _ => None,
     }
 }

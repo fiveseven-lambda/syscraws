@@ -16,6 +16,8 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use either::Either;
+
 use super::{PStmt, PTerm, Stmt, Term};
 
 pub fn _debug_print(stmts: &[PStmt]) {
@@ -110,7 +112,20 @@ impl<'id> PTerm<'id> {
             Term::Identifier(name) => eprintln!("{indent}{pos:?} Identifier ({name})"),
             Term::Integer(value) => eprintln!("{indent}{pos:?} Integer ({value})"),
             Term::Float(value) => eprintln!("{indent}{pos:?} Float ({value})"),
-            Term::String(value) => eprintln!("{indent}{pos:?} String ({value})"),
+            Term::String(components) => {
+                eprintln!("{indent}{pos:?} String");
+                for component in components {
+                    match component {
+                        Either::Left(string) => println!("{indent}string({string})"),
+                        Either::Right(term) => {
+                            println!("{indent}term");
+                            if let Some(term) = term {
+                                term._debug_print(depth + 1);
+                            }
+                        }
+                    }
+                }
+            }
             Term::UnaryOperation {
                 operator,
                 pos_operator,
