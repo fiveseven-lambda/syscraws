@@ -16,25 +16,27 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::lexer;
 use crate::pre_ast::{Operator, PStmt, PTerm, Stmt, Term};
 use crate::range::Range;
-use crate::token::Token;
 use std::iter;
 
-pub mod error;
-use error::Error;
+mod token;
+use token::Token;
+mod chars_peekable;
+use chars_peekable::CharsPeekable;
+mod error;
+pub use error::Error;
 
 pub fn parse(input: &str) -> Result<Vec<PStmt>, Error> {
-    let mut chars = lexer::CharsPeekable::new(input);
-    let mut peeked = lexer::next_token(&mut chars)?;
+    let mut chars = CharsPeekable::new(input);
+    let mut peeked = token::next(&mut chars)?;
     let ret = iter::from_fn(|| parse_stmt(&mut chars, &mut peeked).transpose()).collect();
     assert!(peeked.is_none());
     ret
 }
 
 fn parse_stmt<'id>(
-    chars: &mut lexer::CharsPeekable<'id>,
+    chars: &mut CharsPeekable<'id>,
     peeked: &mut Option<Token<'id>>,
 ) -> Result<Option<PStmt<'id>>, Error> {
     let Some(first_token) = peeked else {
@@ -42,19 +44,19 @@ fn parse_stmt<'id>(
     };
     match first_token {
         Token::KeywordIf => {
-            *peeked = lexer::next_token(chars)?;
+            *peeked = token::next(chars)?;
             match peeked {
-                Some(Token::OpeningParenthesis) => *peeked = lexer::next_token(chars)?,
+                Some(Token::OpeningParenthesis) => *peeked = token::next(chars)?,
                 _ => panic!(),
             }
             let cond = parse_assign(chars, peeked)?;
             match peeked {
-                Some(Token::ClosingParenthesis) => *peeked = lexer::next_token(chars)?,
+                Some(Token::ClosingParenthesis) => *peeked = token::next(chars)?,
                 _ => panic!(),
             }
             let stmt_then = parse_stmt(chars, peeked)?;
             let (pos_else, stmt_else) = if let Some(Token::KeywordElse) = peeked {
-                *peeked = lexer::next_token(chars)?;
+                *peeked = token::next(chars)?;
                 (Some(Range::new(0, 0)), parse_stmt(chars, peeked)?)
             } else {
                 (None, None)
@@ -71,14 +73,14 @@ fn parse_stmt<'id>(
             )))
         }
         Token::KeywordWhile => {
-            *peeked = lexer::next_token(chars)?;
+            *peeked = token::next(chars)?;
             match peeked {
-                Some(Token::OpeningParenthesis) => *peeked = lexer::next_token(chars)?,
+                Some(Token::OpeningParenthesis) => *peeked = token::next(chars)?,
                 _ => panic!(),
             }
             let cond = parse_assign(chars, peeked)?;
             match peeked {
-                Some(Token::ClosingParenthesis) => *peeked = lexer::next_token(chars)?,
+                Some(Token::ClosingParenthesis) => *peeked = token::next(chars)?,
                 _ => panic!(),
             }
             let stmt = parse_stmt(chars, peeked)?;
@@ -92,10 +94,10 @@ fn parse_stmt<'id>(
             )))
         }
         Token::KeywordReturn => {
-            *peeked = lexer::next_token(chars)?;
+            *peeked = token::next(chars)?;
             let term = parse_assign(chars, peeked)?;
             match peeked {
-                Some(Token::OpeningParenthesis) => *peeked = lexer::next_token(chars)?,
+                Some(Token::OpeningParenthesis) => *peeked = token::next(chars)?,
                 _ => panic!(),
             }
             Ok(Some(PStmt::new(Range::new(0, 0), Stmt::Return(term))))
@@ -104,15 +106,15 @@ fn parse_stmt<'id>(
             let term = parse_assign(chars, peeked)?;
             match peeked {
                 Some(Token::Semicolon) => {
-                    *peeked = lexer::next_token(chars)?;
+                    *peeked = token::next(chars)?;
                     Ok(Some(PStmt::new(Range::new(0, 0), Stmt::Term(term))))
                 }
                 Some(Token::OpeningBrace) => {
-                    *peeked = lexer::next_token(chars)?;
+                    *peeked = token::next(chars)?;
                     let mut stmts = Vec::new();
                     loop {
                         if let Some(Token::ClosingBrace) = peeked {
-                            *peeked = lexer::next_token(chars)?;
+                            *peeked = token::next(chars)?;
                             break;
                         } else if let Some(stmt) = parse_stmt(chars, peeked)? {
                             stmts.push(stmt);
@@ -148,12 +150,12 @@ fn parse_stmt<'id>(
 }
 
 pub fn parse_assign<'id>(
-    chars: &mut lexer::CharsPeekable<'id>,
+    chars: &mut CharsPeekable<'id>,
     peeked: &mut Option<Token<'id>>,
 ) -> Result<Option<PTerm<'id>>, Error> {
     let left_hand_side = parse_binary_operator(chars, peeked)?;
     if let Some(operator) = peeked.as_ref().and_then(assignment_operator) {
-        *peeked = lexer::next_token(chars)?;
+        *peeked = token::next(chars)?;
         let right_hand_side = parse_assign(chars, peeked)?;
         Ok(Some(PTerm::new(
             Range::new(0, 0),
@@ -170,14 +172,14 @@ pub fn parse_assign<'id>(
 }
 
 fn parse_binary_operator<'id>(
-    chars: &mut lexer::CharsPeekable<'id>,
+    chars: &mut CharsPeekable<'id>,
     peeked: &mut Option<Token<'id>>,
 ) -> Result<Option<PTerm<'id>>, Error> {
     parse_binary_operator_rec(chars, peeked, Precedence::first())
 }
 
 fn parse_binary_operator_rec<'id>(
-    chars: &mut lexer::CharsPeekable<'id>,
+    chars: &mut CharsPeekable<'id>,
     peeked: &mut Option<Token<'id>>,
     precedence: Option<Precedence>,
 ) -> Result<Option<PTerm<'id>>, Error> {
@@ -189,7 +191,7 @@ fn parse_binary_operator_rec<'id>(
         .as_ref()
         .and_then(|token| infix_operator(token, precedence))
     {
-        *peeked = lexer::next_token(chars)?;
+        *peeked = token::next(chars)?;
         let right_operand = parse_binary_operator_rec(chars, peeked, precedence.next())?;
         left_operand = Some(PTerm::new(
             Range::new(0, 0),
@@ -205,7 +207,7 @@ fn parse_binary_operator_rec<'id>(
 }
 
 fn parse_factor<'id>(
-    chars: &mut lexer::CharsPeekable<'id>,
+    chars: &mut CharsPeekable<'id>,
     peeked: &mut Option<Token<'id>>,
 ) -> Result<Option<PTerm<'id>>, Error> {
     let Some(first_token) = peeked else {
@@ -213,10 +215,10 @@ fn parse_factor<'id>(
     };
     let mut antecedent = 'ant: {
         let term = if let Token::Identifier(name) = *first_token {
-            *peeked = lexer::next_token(chars)?;
+            *peeked = token::next(chars)?;
             Term::Identifier(name)
         } else if let Token::Number(str) = *first_token {
-            *peeked = lexer::next_token(chars)?;
+            *peeked = token::next(chars)?;
             let value: String = str.chars().filter(|&ch| ch != '_').collect();
             if value.chars().all(|ch| ch.is_ascii_digit()) {
                 Term::Integer(value.parse().unwrap())
@@ -225,10 +227,10 @@ fn parse_factor<'id>(
             }
         } else if let Token::String(components) = first_token {
             let components = std::mem::take(components);
-            *peeked = lexer::next_token(chars)?;
+            *peeked = token::next(chars)?;
             Term::String(components)
         } else if let Some(operator) = prefix_operator(&first_token) {
-            *peeked = lexer::next_token(chars)?;
+            *peeked = token::next(chars)?;
             let operand = parse_factor(chars, peeked)?;
             return Ok(Some(PTerm::new(
                 Range::new(0, 0),
@@ -249,13 +251,13 @@ fn parse_factor<'id>(
                 return Ok(antecedent);
             };
             if let Token::OpeningParenthesis = token {
-                *peeked = lexer::next_token(chars)?;
+                *peeked = token::next(chars)?;
                 let mut elements = Vec::new();
                 let has_trailing_comma;
                 loop {
                     let element = parse_assign(chars, peeked)?;
                     if let Some(Token::Comma) = peeked {
-                        *peeked = lexer::next_token(chars)?;
+                        *peeked = token::next(chars)?;
                         elements.push(element.ok_or(Range::new(0, 0)));
                     } else {
                         if let Some(element) = element {
@@ -269,7 +271,7 @@ fn parse_factor<'id>(
                 }
                 match peeked {
                     Some(Token::ClosingParenthesis) => {
-                        *peeked = lexer::next_token(chars)?;
+                        *peeked = token::next(chars)?;
                     }
                     Some(other) => {
                         return Err(Error::UnexpectedTokenAfter {
@@ -289,7 +291,7 @@ fn parse_factor<'id>(
                     has_trailing_comma,
                 }
             } else if let Token::Colon = token {
-                *peeked = lexer::next_token(chars)?;
+                *peeked = token::next(chars)?;
                 let ty = parse_factor(chars, peeked)?;
                 Term::TypeAnnotation {
                     pos_colon: Range::new(0, 0),
@@ -297,7 +299,7 @@ fn parse_factor<'id>(
                     ty: ty.map(Box::new),
                 }
             } else if let Token::HyphenGreater = token {
-                *peeked = lexer::next_token(chars)?;
+                *peeked = token::next(chars)?;
                 let ty = parse_factor(chars, peeked)?;
                 Term::ReturnType {
                     pos_arrow: Range::new(0, 0),
@@ -305,7 +307,7 @@ fn parse_factor<'id>(
                     ty: ty.map(Box::new),
                 }
             } else if let Some(operator) = postfix_operator(token) {
-                *peeked = lexer::next_token(chars)?;
+                *peeked = token::next(chars)?;
                 Term::UnaryOperation {
                     operator,
                     pos_operator: Range::new(0, 0),

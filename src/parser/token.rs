@@ -16,17 +16,74 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-mod chars_peekable;
-mod error;
-#[cfg(test)]
-mod test;
+use super::CharsPeekable;
+use super::Error;
 use either::Either;
-use error::Error;
 
-use crate::token::Token;
-pub use chars_peekable::CharsPeekable;
+use crate::pre_ast::PTerm;
 
-pub fn next_token<'id>(chars: &mut CharsPeekable<'id>) -> Result<Option<Token<'id>>, Error> {
+pub enum Token<'id> {
+    Identifier(&'id str),
+    KeywordIf,
+    KeywordElse,
+    KeywordWhile,
+    KeywordReturn,
+    Number(&'id str),
+    String(Vec<Either<String, Option<PTerm<'id>>>>),
+    Plus,
+    PlusEqual,
+    DoublePlus,
+    Hyphen,
+    HyphenEqual,
+    DoubleHyphen,
+    HyphenGreater,
+    Asterisk,
+    AsteriskEqual,
+    Slash,
+    SlashEqual,
+    Percent,
+    PercentEqual,
+    Equal,
+    DoubleEqual,
+    EqualGreater,
+    Exclamation,
+    ExclamationEqual,
+    Greater,
+    GreaterEqual,
+    DoubleGreater,
+    DoubleGreaterEqual,
+    TripleGreater,
+    TripleGreaterEqual,
+    Less,
+    LessEqual,
+    DoubleLess,
+    DoubleLessEqual,
+    TripleLess,
+    TripleLessEqual,
+    Ampersand,
+    AmpersandEqual,
+    DoubleAmpersand,
+    Bar,
+    BarEqual,
+    DoubleBar,
+    Circumflex,
+    CircumflexEqual,
+    Dot,
+    Colon,
+    Semicolon,
+    Comma,
+    Question,
+    Hash,
+    Tilde,
+    OpeningParenthesis,
+    ClosingParenthesis,
+    OpeningBracket,
+    ClosingBracket,
+    OpeningBrace,
+    ClosingBrace,
+}
+
+pub fn next<'id>(chars: &mut CharsPeekable<'id>) -> Result<Option<Token<'id>>, Error> {
     chars.consume_while(|ch| ch.is_ascii_whitespace());
     let start = chars.offset();
     let Some(first_ch) = chars.next() else {
@@ -82,7 +139,7 @@ pub fn next_token<'id>(chars: &mut CharsPeekable<'id>) -> Result<Option<Token<'i
         '/' => {
             if chars.consume_if_eq('/') {
                 chars.consume_while(|ch| ch != '\n');
-                return next_token(chars);
+                return next(chars);
             } else if chars.consume_if_eq('*') {
                 let mut comments = vec![start];
                 while !comments.is_empty() {
@@ -96,7 +153,7 @@ pub fn next_token<'id>(chars: &mut CharsPeekable<'id>) -> Result<Option<Token<'i
                         None => return Err(Error::UnterminatedComment(comments)),
                     }
                 }
-                return next_token(chars);
+                return next(chars);
             } else if chars.consume_if_eq('=') {
                 Token::SlashEqual
             } else {
@@ -239,7 +296,7 @@ pub fn next_token<'id>(chars: &mut CharsPeekable<'id>) -> Result<Option<Token<'i
                     components.push(Either::Left(std::mem::take(&mut string)))
                 }
                 if action == Action::Expr {
-                    let mut peeked = next_token(chars)?;
+                    let mut peeked = next(chars)?;
                     let term = crate::parser::parse_assign(chars, &mut peeked);
                     assert!(matches!(peeked, Some(Token::ClosingBrace)));
                     components.push(Either::Right(term.unwrap()));

@@ -18,12 +18,10 @@
 
 mod ast;
 mod ir;
-mod lexer;
 mod lines;
 mod parser;
 mod pre_ast;
 mod range;
-mod token;
 mod ty;
 
 use std::io::Read;

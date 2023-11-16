@@ -23,14 +23,13 @@ use std::iter;
 
 use crate::{ir, ty};
 use either::Either;
-use num::BigInt;
 mod debug_print;
 
 pub enum Expr {
     Variable(usize),
     Global(usize),
     Func(usize),
-    Integer(BigInt),
+    Integer(i32),
     Float(f64),
     String(Vec<Either<String, Expr>>),
     Call(Box<Expr>, Vec<Expr>),

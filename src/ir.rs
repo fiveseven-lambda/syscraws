@@ -21,12 +21,11 @@ use std::hint::unreachable_unchecked;
 
 use crate::expr;
 use crate::ty;
-use num::BigInt;
 
 #[derive(Clone)]
 pub enum Value {
     Void,
-    Integer(BigInt),
+    Integer(i32),
     Boolean(bool),
     Address(Address),
     Float(f64),
@@ -36,7 +35,7 @@ pub enum Value {
 }
 
 impl Value {
-    unsafe fn into_integer_unchecked(self) -> BigInt {
+    unsafe fn into_integer_unchecked(self) -> i32 {
         match self {
             Value::Integer(value) => value,
             _ => panic!(),
@@ -315,9 +314,8 @@ impl BuiltinFunc {
                 Value::Void
             }
             BuiltinFunc::IntegerToFloat => {
-                use num::ToPrimitive;
                 let value = arg().into_integer_unchecked();
-                Value::Float(value.to_f64().unwrap())
+                Value::Float(value.into())
             }
             BuiltinFunc::PrintBoolean => {
                 let value = arg().into_boolean_unchecked();

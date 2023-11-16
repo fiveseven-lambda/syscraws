@@ -21,10 +21,8 @@ use crate::range::Range;
 use crate::{ast, ir, ty};
 use either::Either;
 use enum_iterator::Sequence;
-use num::BigInt;
 
 mod debug_print;
-pub use debug_print::_debug_print;
 mod error;
 mod map;
 pub use error::eprint_errors;
@@ -78,7 +76,7 @@ pub enum Operator {
 
 pub enum Term<'id> {
     Identifier(&'id str),
-    Integer(BigInt),
+    Integer(i32),
     Float(f64),
     String(Vec<Either<String, Option<PTerm<'id>>>>),
     UnaryOperation {
