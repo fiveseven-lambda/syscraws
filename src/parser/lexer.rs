@@ -25,11 +25,23 @@ use either::Either;
 pub struct Lexer<'id, 'chars> {
     chars: &'chars mut CharsPeekable<'id>,
     last_end: usize,
+    next_start: usize,
+    pub peeked: Option<Token<'id>>,
 }
 
 impl<'id, 'chars> Lexer<'id, 'chars> {
-    pub fn new(chars: &'chars mut CharsPeekable<'id>) -> Lexer<'id, 'chars> {
-        Lexer { chars, last_end: 0 }
+    pub fn new(chars: &'chars mut CharsPeekable<'id>) -> Result<Lexer<'id, 'chars>, Error> {
+        let mut lexer = Lexer {
+            chars,
+            last_end: 0,
+            next_start: 0,
+            peeked: None,
+        };
+        lexer.next_token()?;
+        Ok(lexer)
+    }
+    pub fn next_start(&self) -> usize {
+        self.next_start
     }
     pub fn range_from(&self, start: usize) -> Range {
         Range {
@@ -37,35 +49,35 @@ impl<'id, 'chars> Lexer<'id, 'chars> {
             end: self.last_end,
         }
     }
-    pub fn consume(&mut self, peeked: &mut (usize, Option<Token<'id>>)) -> Result<(), Error> {
-        *peeked = self.next_token()?;
-        Ok(())
+    pub fn consume(&mut self) -> Result<(), Error> {
+        self.next_token()
     }
     pub fn consume_if_or_err(
         &mut self,
-        peeked: &mut (usize, Option<Token<'id>>),
         pred: impl FnOnce(&Token) -> bool,
         reason_pos: Range,
     ) -> Result<(), Error> {
-        match *peeked {
-            (_, Some(ref token)) if pred(token) => {
-                *peeked = self.next_token()?;
+        match self.peeked {
+            Some(ref token) if pred(token) => {
+                self.consume()?;
                 Ok(())
             }
-            (token_start, Some(_)) => Err(Error::UnexpectedTokenAfter {
-                error_pos: self.range_from(token_start),
+            Some(_) => Err(Error::UnexpectedTokenAfter {
+                error_pos: self.range_from(self.next_start),
                 reason_pos,
             }),
-            (_, None) => Err(Error::EOFAfter { reason_pos }),
+            None => Err(Error::EOFAfter { reason_pos }),
         }
     }
     // 非公開にしたい
-    pub fn next_token(&mut self) -> Result<(usize, Option<Token<'id>>), Error> {
+    pub fn next_token(&mut self) -> Result<(), Error> {
         self.last_end = self.chars.offset();
         self.chars.consume_while(|ch| ch.is_ascii_whitespace());
         let start = self.chars.offset();
+        self.next_start = start;
         let Some(first_ch) = self.chars.next() else {
-            return Ok((start, None));
+            self.peeked = None;
+            return Ok(());
         };
         let token = match first_ch {
             'a'..='z' | 'A'..='Z' | '_' => {
@@ -282,10 +294,9 @@ impl<'id, 'chars> Lexer<'id, 'chars> {
                         components.push(Either::Left(std::mem::take(&mut string)))
                     }
                     if action == Action::Expr {
-                        let mut lexer = Lexer::new(&mut self.chars);
-                        let mut peeked = lexer.next_token()?;
-                        let term = super::parse_assign(&mut lexer, &mut peeked);
-                        assert!(matches!(peeked, (_, Some(Token::ClosingBrace))));
+                        let mut lexer = Lexer::new(self.chars)?;
+                        let term = super::parse_assign(&mut lexer);
+                        assert!(matches!(lexer.peeked, Some(Token::ClosingBrace)));
                         components.push(Either::Right(term.unwrap()));
                     } else if action == Action::Border {
                         break;
@@ -296,7 +307,8 @@ impl<'id, 'chars> Lexer<'id, 'chars> {
             }
             _ => return Err(Error::UnexpectedCharacter(start)),
         };
-        Ok((start, Some(token)))
+        self.peeked = Some(token);
+        Ok(())
     }
 
     fn read_number(&mut self) {

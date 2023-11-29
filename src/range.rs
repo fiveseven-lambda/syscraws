@@ -22,11 +22,13 @@ pub struct Range {
     pub end: usize,
 }
 
+/*
 impl Range {
     pub fn new(start: usize, end: usize) -> Range {
         Range { start, end }
     }
 }
+*/
 
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 impl Debug for Range {
