@@ -46,9 +46,9 @@ impl<'id> PStmt<'id> {
             }
             Stmt::If {
                 cond,
-                pos_if,
+                if_pos: pos_if,
                 stmt_then,
-                pos_else,
+                else_pos: pos_else,
                 stmt_else,
             } => {
                 eprintln!("{indent}{pos:?} If statement");
@@ -75,7 +75,7 @@ impl<'id> PStmt<'id> {
             }
             Stmt::While {
                 cond,
-                pos_while,
+                while_pos: pos_while,
                 stmt,
             } => {
                 eprintln!("{indent}{pos:?} While statement");
@@ -128,7 +128,7 @@ impl<'id> PTerm<'id> {
             }
             Term::UnaryOperation {
                 operator,
-                pos_operator,
+                operator_pos: pos_operator,
                 operand,
             } => {
                 eprintln!("{indent}{pos:?} Unary Operation");
@@ -140,7 +140,7 @@ impl<'id> PTerm<'id> {
             }
             Term::BinaryOperation {
                 operator,
-                pos_operator,
+                operator_pos: pos_operator,
                 left_operand,
                 right_operand,
             } => {
@@ -156,7 +156,7 @@ impl<'id> PTerm<'id> {
                 }
             }
             Term::TypeAnnotation {
-                pos_colon,
+                colon_pos: pos_colon,
                 term,
                 ty,
             } => {
@@ -196,7 +196,7 @@ impl<'id> PTerm<'id> {
             }
             Term::Assignment {
                 operator,
-                pos_operator,
+                operator_pos: pos_operator,
                 left_hand_side,
                 right_hand_side,
             } => {
@@ -212,7 +212,7 @@ impl<'id> PTerm<'id> {
                 }
             }
             Term::ReturnType {
-                pos_arrow,
+                arrow_pos: pos_arrow,
                 term,
                 ty,
             } => {

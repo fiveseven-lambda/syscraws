@@ -33,6 +33,7 @@ fn main() {
         Ok(pre_ast) => pre_ast,
         Err(error) => return error.eprint(&input),
     };
+    // pre_ast::_debug_print(&pre_ast);
     let (overloads, defs) = match pre_ast::into_ast(pre_ast) {
         Ok(ast) => ast,
         Err(errors) => return pre_ast::eprint_errors(&errors, &input),

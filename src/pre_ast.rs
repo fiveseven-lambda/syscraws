@@ -23,6 +23,7 @@ use either::Either;
 use enum_iterator::Sequence;
 
 mod debug_print;
+pub use debug_print::_debug_print;
 mod error;
 mod map;
 pub use error::eprint_errors;
@@ -81,22 +82,22 @@ pub enum Term<'id> {
     String(Vec<Either<String, Option<PTerm<'id>>>>),
     UnaryOperation {
         operator: Operator,
-        pos_operator: Range,
+        operator_pos: Range,
         operand: Option<Box<PTerm<'id>>>,
     },
     BinaryOperation {
         operator: Operator,
-        pos_operator: Range,
+        operator_pos: Range,
         left_operand: Option<Box<PTerm<'id>>>,
         right_operand: Option<Box<PTerm<'id>>>,
     },
     TypeAnnotation {
-        pos_colon: Range,
+        colon_pos: Range,
         term: Option<Box<PTerm<'id>>>,
         ty: Option<Box<PTerm<'id>>>,
     },
     ReturnType {
-        pos_arrow: Range,
+        arrow_pos: Range,
         term: Option<Box<PTerm<'id>>>,
         ty: Option<Box<PTerm<'id>>>,
     },
@@ -107,7 +108,7 @@ pub enum Term<'id> {
     },
     Assignment {
         operator: Operator,
-        pos_operator: Range,
+        operator_pos: Range,
         left_hand_side: Option<Box<PTerm<'id>>>,
         right_hand_side: Option<Box<PTerm<'id>>>,
     },
@@ -130,14 +131,14 @@ pub enum Stmt<'id> {
     Return(Option<PTerm<'id>>),
     If {
         cond: Option<PTerm<'id>>,
-        pos_if: Range,
+        if_pos: Range,
         stmt_then: Option<Box<PStmt<'id>>>,
-        pos_else: Option<Range>,
+        else_pos: Option<Range>,
         stmt_else: Option<Box<PStmt<'id>>>,
     },
     While {
         cond: Option<PTerm<'id>>,
-        pos_while: Range,
+        while_pos: Range,
         stmt: Option<Box<PStmt<'id>>>,
     },
     Block {
@@ -181,7 +182,7 @@ impl<'id> PTerm<'id> {
                     .collect(),
             )),
             Term::TypeAnnotation {
-                pos_colon,
+                colon_pos: pos_colon,
                 term,
                 ty,
             } => {
@@ -208,7 +209,7 @@ impl<'id> PTerm<'id> {
                 Ok(ast::Expr::Variable(id))
             }
             Term::ReturnType {
-                pos_arrow,
+                arrow_pos: pos_arrow,
                 term,
                 ty,
             } => Err(()),
@@ -258,7 +259,7 @@ impl<'id> PTerm<'id> {
             }
             Term::UnaryOperation {
                 operator,
-                pos_operator,
+                operator_pos: pos_operator,
                 operand,
             } => {
                 let operand = operand
@@ -271,7 +272,7 @@ impl<'id> PTerm<'id> {
             }
             Term::BinaryOperation {
                 operator,
-                pos_operator,
+                operator_pos: pos_operator,
                 left_operand,
                 right_operand,
             } => {
@@ -288,7 +289,7 @@ impl<'id> PTerm<'id> {
             }
             Term::Assignment {
                 operator,
-                pos_operator,
+                operator_pos: pos_operator,
                 left_hand_side,
                 right_hand_side,
             } => {
@@ -310,7 +311,7 @@ impl<'id> PTerm<'id> {
             Term::Identifier("int") => Ok(expr!(Integer)),
             Term::Identifier("float") => Ok(expr!(Float)),
             Term::ReturnType {
-                pos_arrow: _,
+                arrow_pos: _,
                 term,
                 ty,
             } => {
@@ -356,9 +357,9 @@ impl<'id> PStmt<'id> {
             }
             Stmt::If {
                 cond,
-                pos_if,
+                if_pos: pos_if,
                 stmt_then,
-                pos_else,
+                else_pos: pos_else,
                 stmt_else,
             } => {
                 let mut scope_if = Vec::new();
@@ -396,7 +397,7 @@ impl<'id> PStmt<'id> {
             }
             Stmt::While {
                 cond,
-                pos_while,
+                while_pos: pos_while,
                 stmt,
             } => {
                 let mut scope_while = Vec::new();
@@ -441,7 +442,7 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ir::Func>>, Vec<ast::FuncD
         match arg {
             Ok(PTerm { term, pos }) => match term {
                 Term::TypeAnnotation {
-                    pos_colon: _,
+                    colon_pos: _,
                     term,
                     ty,
                 } => {
@@ -476,7 +477,7 @@ pub fn into_ast(stmts: Vec<PStmt>) -> Result<(Vec<Vec<ir::Func>>, Vec<ast::FuncD
     ) -> Result<(), ()> {
         let (name, args, ret_ty) = match sig.term {
             Term::ReturnType {
-                pos_arrow: _,
+                arrow_pos: _,
                 term: Some(name_and_args),
                 ty: Some(ret_ty),
             } => match name_and_args.term {

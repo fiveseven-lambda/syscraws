@@ -24,9 +24,9 @@ pub enum Error {
     UnterminatedComment(Vec<usize>),
     UnterminatedStringLiteral(usize),
     InvalidEscapeSequence(usize),
-    UnexpectedToken { token: Range },
-    UnexpectedTokenAfter { token: Range, reason: Range },
-    EOFAfter { reason: Range },
+    UnexpectedToken { error_pos: Range },
+    UnexpectedTokenAfter { error_pos: Range, reason_pos: Range },
+    EOFAfter { reason_pos: Range },
 }
 
 impl Error {
@@ -54,20 +54,24 @@ impl Error {
                 eprintln!("Invalid escape sequence at {:?}", lines.line_column(pos));
                 lines.eprint_pos(pos);
             }
-            Error::UnexpectedToken { ref token } => {
+            Error::UnexpectedToken {
+                error_pos: ref token,
+            } => {
                 eprintln!("Unexpected token at {:?}", token);
                 lines.eprint_range(token);
             }
             Error::UnexpectedTokenAfter {
-                ref token,
-                ref reason,
+                error_pos: ref token,
+                reason_pos: ref reason,
             } => {
                 eprintln!("Unexpected token at {:?}", token);
                 lines.eprint_range(token);
                 eprintln!("Note:");
                 lines.eprint_range(reason);
             }
-            Error::EOFAfter { ref reason } => {
+            Error::EOFAfter {
+                reason_pos: ref reason,
+            } => {
                 eprintln!("Unexpected EOF");
                 lines.eprint_range(reason);
             }

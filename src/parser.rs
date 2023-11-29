@@ -17,9 +17,9 @@
  */
 
 use crate::pre_ast::{Operator, PStmt, PTerm, Stmt, Term};
-use crate::range::Range;
 use std::iter;
-
+mod lexer;
+use lexer::Lexer;
 mod token;
 use token::Token;
 mod chars_peekable;
@@ -29,139 +29,165 @@ pub use error::Error;
 
 pub fn parse(input: &str) -> Result<Vec<PStmt>, Error> {
     let mut chars = CharsPeekable::new(input);
-    let mut peeked = token::next(&mut chars)?;
-    let ret = iter::from_fn(|| parse_stmt(&mut chars, &mut peeked).transpose()).collect();
-    assert!(peeked.is_none());
-    ret
+    let mut lexer = Lexer::new(&mut chars);
+    let mut peeked = lexer.next_token()?;
+    iter::from_fn(|| parse_stmt(&mut lexer, &mut peeked).transpose()).collect()
 }
 
-fn parse_stmt<'id>(
-    chars: &mut CharsPeekable<'id>,
-    peeked: &mut Option<Token<'id>>,
+fn parse_stmt<'id, 'chars>(
+    lexer: &mut Lexer<'id, 'chars>,
+    peeked: &mut (usize, Option<Token<'id>>),
 ) -> Result<Option<PStmt<'id>>, Error> {
-    let Some(first_token) = peeked else {
+    let (first_token_start, Some(ref mut first_token)) = *peeked else {
         return Ok(None);
     };
     match first_token {
         Token::KeywordIf => {
-            *peeked = token::next(chars)?;
-            match peeked {
-                Some(Token::OpeningParenthesis) => *peeked = token::next(chars)?,
-                _ => panic!(),
-            }
-            let cond = parse_assign(chars, peeked)?;
-            match peeked {
-                Some(Token::ClosingParenthesis) => *peeked = token::next(chars)?,
-                _ => panic!(),
-            }
-            let stmt_then = parse_stmt(chars, peeked)?;
-            let (pos_else, stmt_else) = if let Some(Token::KeywordElse) = peeked {
-                *peeked = token::next(chars)?;
-                (Some(Range::new(0, 0)), parse_stmt(chars, peeked)?)
+            lexer.consume(peeked)?;
+            let if_pos = lexer.range_from(first_token_start);
+            let open_start = peeked.0;
+            lexer.consume_if_or_err(
+                peeked,
+                |token| matches!(token, Token::OpeningParenthesis),
+                if_pos.clone(),
+            )?;
+            let open_pos = lexer.range_from(open_start);
+            let cond = parse_assign(lexer, peeked)?;
+            lexer.consume_if_or_err(
+                peeked,
+                |token| matches!(token, Token::ClosingParenthesis),
+                open_pos,
+            )?;
+            let stmt_then = parse_stmt(lexer, peeked)?;
+            let (else_pos, stmt_else) = if let (else_start, Some(Token::KeywordElse)) = *peeked {
+                lexer.consume(peeked)?;
+                let else_pos = lexer.range_from(else_start);
+                (Some(else_pos), parse_stmt(lexer, peeked)?)
             } else {
                 (None, None)
             };
+            let pos = lexer.range_from(first_token_start);
             Ok(Some(PStmt::new(
-                Range::new(0, 0),
+                pos,
                 Stmt::If {
                     cond,
-                    pos_if: Range::new(0, 0),
+                    if_pos,
                     stmt_then: stmt_then.map(Box::new),
-                    pos_else,
+                    else_pos,
                     stmt_else: stmt_else.map(Box::new),
                 },
             )))
         }
         Token::KeywordWhile => {
-            *peeked = token::next(chars)?;
-            match peeked {
-                Some(Token::OpeningParenthesis) => *peeked = token::next(chars)?,
-                _ => panic!(),
-            }
-            let cond = parse_assign(chars, peeked)?;
-            match peeked {
-                Some(Token::ClosingParenthesis) => *peeked = token::next(chars)?,
-                _ => panic!(),
-            }
-            let stmt = parse_stmt(chars, peeked)?;
+            lexer.consume(peeked)?;
+            let while_pos = lexer.range_from(first_token_start);
+            let open_start = peeked.0;
+            lexer.consume_if_or_err(
+                peeked,
+                |token| matches!(token, Token::OpeningParenthesis),
+                while_pos.clone(),
+            )?;
+            let open_pos = lexer.range_from(open_start);
+            let cond = parse_assign(lexer, peeked)?;
+            lexer.consume_if_or_err(
+                peeked,
+                |token| matches!(token, Token::ClosingParenthesis),
+                open_pos,
+            )?;
+            let stmt = parse_stmt(lexer, peeked)?;
+            let pos = lexer.range_from(first_token_start);
             Ok(Some(PStmt::new(
-                Range::new(0, 0),
+                pos,
                 Stmt::While {
                     cond,
-                    pos_while: Range::new(0, 0),
+                    while_pos,
                     stmt: stmt.map(Box::new),
                 },
             )))
         }
         Token::KeywordReturn => {
-            *peeked = token::next(chars)?;
-            let term = parse_assign(chars, peeked)?;
-            match peeked {
-                Some(Token::OpeningParenthesis) => *peeked = token::next(chars)?,
-                _ => panic!(),
-            }
-            Ok(Some(PStmt::new(Range::new(0, 0), Stmt::Return(term))))
+            lexer.consume(peeked)?;
+            let term = parse_assign(lexer, peeked)?;
+            let pos_excluding_semicolon = lexer.range_from(first_token_start);
+            lexer.consume_if_or_err(
+                peeked,
+                |token| matches!(token, Token::Semicolon),
+                pos_excluding_semicolon,
+            )?;
+            let pos = lexer.range_from(first_token_start);
+            Ok(Some(PStmt::new(pos, Stmt::Return(term))))
         }
         _ => {
-            let term = parse_assign(chars, peeked)?;
-            match peeked {
+            let term = parse_assign(lexer, peeked)?;
+            match peeked.1 {
                 Some(Token::Semicolon) => {
-                    *peeked = token::next(chars)?;
-                    Ok(Some(PStmt::new(Range::new(0, 0), Stmt::Term(term))))
+                    lexer.consume(peeked)?;
+                    let pos = lexer.range_from(first_token_start);
+                    Ok(Some(PStmt::new(pos, Stmt::Term(term))))
                 }
                 Some(Token::OpeningBrace) => {
-                    *peeked = token::next(chars)?;
+                    let open_start = peeked.0;
+                    lexer.consume(peeked)?;
+                    let open_pos = lexer.range_from(open_start);
                     let mut stmts = Vec::new();
                     loop {
-                        if let Some(Token::ClosingBrace) = peeked {
-                            *peeked = token::next(chars)?;
+                        if let Some(Token::ClosingBrace) = peeked.1 {
+                            lexer.consume(peeked)?;
                             break;
-                        } else if let Some(stmt) = parse_stmt(chars, peeked)? {
+                        } else if let Some(stmt) = parse_stmt(lexer, peeked)? {
                             stmts.push(stmt);
                         } else {
                             return Err(Error::EOFAfter {
-                                reason: Range::new(0, 0),
+                                reason_pos: open_pos,
                             });
                         }
                     }
+                    let pos = lexer.range_from(first_token_start);
                     Ok(Some(PStmt::new(
-                        Range::new(0, 0),
+                        pos,
                         Stmt::Block {
                             antecedent: term,
                             stmts,
                         },
                     )))
                 }
-                Some(_) => match term {
-                    Some(term) => Err(Error::UnexpectedTokenAfter {
-                        token: Range::new(0, 0),
-                        reason: term.pos(),
-                    }),
-                    None => Err(Error::UnexpectedToken {
-                        token: Range::new(0, 0),
-                    }),
-                },
+                Some(_) => {
+                    let error_start = peeked.0;
+                    lexer.consume(peeked)?;
+                    let error_pos = lexer.range_from(error_start);
+                    match term {
+                        Some(term) => Err(Error::UnexpectedTokenAfter {
+                            error_pos,
+                            reason_pos: term.pos(),
+                        }),
+                        None => Err(Error::UnexpectedToken { error_pos }),
+                    }
+                }
                 None => Err(Error::EOFAfter {
-                    reason: term.unwrap().pos(),
+                    reason_pos: term.unwrap().pos(),
                 }),
             }
         }
     }
 }
 
-pub fn parse_assign<'id>(
-    chars: &mut CharsPeekable<'id>,
-    peeked: &mut Option<Token<'id>>,
+pub fn parse_assign<'id, 'chars>(
+    lexer: &mut Lexer<'id, 'chars>,
+    peeked: &mut (usize, Option<Token<'id>>),
 ) -> Result<Option<PTerm<'id>>, Error> {
-    let left_hand_side = parse_binary_operator(chars, peeked)?;
-    if let Some(operator) = peeked.as_ref().and_then(assignment_operator) {
-        *peeked = token::next(chars)?;
-        let right_hand_side = parse_assign(chars, peeked)?;
+    let start = peeked.0;
+    let left_hand_side = parse_binary_operator(lexer, peeked)?;
+    if let Some(operator) = peeked.1.as_ref().and_then(assignment_operator) {
+        let operator_start = peeked.0;
+        lexer.consume(peeked)?;
+        let operator_pos = lexer.range_from(operator_start);
+        let right_hand_side = parse_assign(lexer, peeked)?;
+        let pos = lexer.range_from(start);
         Ok(Some(PTerm::new(
-            Range::new(0, 0),
+            pos,
             Term::Assignment {
                 operator,
-                pos_operator: Range::new(0, 0),
+                operator_pos,
                 left_hand_side: left_hand_side.map(Box::new),
                 right_hand_side: right_hand_side.map(Box::new),
             },
@@ -171,32 +197,37 @@ pub fn parse_assign<'id>(
     }
 }
 
-fn parse_binary_operator<'id>(
-    chars: &mut CharsPeekable<'id>,
-    peeked: &mut Option<Token<'id>>,
+fn parse_binary_operator<'id, 'chars>(
+    lexer: &mut Lexer<'id, 'chars>,
+    peeked: &mut (usize, Option<Token<'id>>),
 ) -> Result<Option<PTerm<'id>>, Error> {
-    parse_binary_operator_rec(chars, peeked, Precedence::first())
+    parse_binary_operator_rec(lexer, peeked, Precedence::first())
 }
 
-fn parse_binary_operator_rec<'id>(
-    chars: &mut CharsPeekable<'id>,
-    peeked: &mut Option<Token<'id>>,
+fn parse_binary_operator_rec<'id, 'chars>(
+    lexer: &mut Lexer<'id, 'chars>,
+    peeked: &mut (usize, Option<Token<'id>>),
     precedence: Option<Precedence>,
 ) -> Result<Option<PTerm<'id>>, Error> {
     let Some(precedence) = precedence else {
-        return parse_factor(chars, peeked);
+        return parse_factor(lexer, peeked);
     };
-    let mut left_operand = parse_binary_operator_rec(chars, peeked, precedence.next())?;
+    let start = peeked.0;
+    let mut left_operand = parse_binary_operator_rec(lexer, peeked, precedence.next())?;
     while let Some(operator) = peeked
+        .1
         .as_ref()
-        .and_then(|token| infix_operator(token, precedence))
+        .and_then(|token| infix_operator(&token, precedence))
     {
-        *peeked = token::next(chars)?;
-        let right_operand = parse_binary_operator_rec(chars, peeked, precedence.next())?;
+        let operator_start = peeked.0;
+        lexer.consume(peeked)?;
+        let operator_pos = lexer.range_from(operator_start);
+        let right_operand = parse_binary_operator_rec(lexer, peeked, precedence.next())?;
+        let pos = lexer.range_from(start);
         left_operand = Some(PTerm::new(
-            Range::new(0, 0),
+            pos,
             Term::BinaryOperation {
-                pos_operator: Range::new(0, 0),
+                operator_pos,
                 left_operand: left_operand.map(Box::new),
                 operator,
                 right_operand: right_operand.map(Box::new),
@@ -206,19 +237,19 @@ fn parse_binary_operator_rec<'id>(
     Ok(left_operand)
 }
 
-fn parse_factor<'id>(
-    chars: &mut CharsPeekable<'id>,
-    peeked: &mut Option<Token<'id>>,
+fn parse_factor<'id, 'chars>(
+    lexer: &mut Lexer<'id, 'chars>,
+    peeked: &mut (usize, Option<Token<'id>>),
 ) -> Result<Option<PTerm<'id>>, Error> {
-    let Some(first_token) = peeked else {
+    let (first_token_start, Some(ref mut first_token)) = *peeked else {
         return Ok(None);
     };
     let mut antecedent = 'ant: {
         let term = if let Token::Identifier(name) = *first_token {
-            *peeked = token::next(chars)?;
+            lexer.consume(peeked)?;
             Term::Identifier(name)
         } else if let Token::Number(str) = *first_token {
-            *peeked = token::next(chars)?;
+            lexer.consume(peeked)?;
             let value: String = str.chars().filter(|&ch| ch != '_').collect();
             if value.chars().all(|ch| ch.is_ascii_digit()) {
                 Term::Integer(value.parse().unwrap())
@@ -227,38 +258,41 @@ fn parse_factor<'id>(
             }
         } else if let Token::String(components) = first_token {
             let components = std::mem::take(components);
-            *peeked = token::next(chars)?;
+            lexer.consume(peeked)?;
             Term::String(components)
         } else if let Some(operator) = prefix_operator(&first_token) {
-            *peeked = token::next(chars)?;
-            let operand = parse_factor(chars, peeked)?;
+            lexer.consume(peeked)?;
+            let operator_pos = lexer.range_from(first_token_start);
+            let operand = parse_factor(lexer, peeked)?;
             return Ok(Some(PTerm::new(
-                Range::new(0, 0),
+                lexer.range_from(first_token_start),
                 Term::UnaryOperation {
                     operator,
-                    pos_operator: Range::new(0, 0),
+                    operator_pos,
                     operand: operand.map(Box::new),
                 },
             )));
         } else {
             break 'ant None;
         };
-        Some(PTerm::new(Range::new(0, 0), term))
+        Some(PTerm::new(lexer.range_from(first_token_start), term))
     };
     loop {
         let term = {
-            let Some(token) = peeked else {
+            let (token_start, Some(ref token)) = *peeked else {
                 return Ok(antecedent);
             };
             if let Token::OpeningParenthesis = token {
-                *peeked = token::next(chars)?;
+                lexer.consume(peeked)?;
+                let open_pos = lexer.range_from(token_start);
                 let mut elements = Vec::new();
                 let has_trailing_comma;
                 loop {
-                    let element = parse_assign(chars, peeked)?;
-                    if let Some(Token::Comma) = peeked {
-                        *peeked = token::next(chars)?;
-                        elements.push(element.ok_or(Range::new(0, 0)));
+                    let element = parse_assign(lexer, peeked)?;
+                    if let (comma_start, Some(Token::Comma)) = *peeked {
+                        lexer.consume(peeked)?;
+                        let comma_pos = lexer.range_from(comma_start);
+                        elements.push(element.ok_or(comma_pos));
                     } else {
                         if let Some(element) = element {
                             has_trailing_comma = false;
@@ -269,55 +303,48 @@ fn parse_factor<'id>(
                         break;
                     }
                 }
-                match peeked {
-                    Some(Token::ClosingParenthesis) => {
-                        *peeked = token::next(chars)?;
-                    }
-                    Some(other) => {
-                        return Err(Error::UnexpectedTokenAfter {
-                            token: Range::new(0, 0),
-                            reason: Range::new(0, 0),
-                        })
-                    }
-                    None => {
-                        return Err(Error::EOFAfter {
-                            reason: Range::new(0, 0),
-                        })
-                    }
-                }
+                lexer.consume_if_or_err(
+                    peeked,
+                    |token| matches!(token, Token::ClosingParenthesis),
+                    open_pos,
+                )?;
                 Term::Parenthesized {
                     antecedent: antecedent.map(Box::new),
                     elements,
                     has_trailing_comma,
                 }
             } else if let Token::Colon = token {
-                *peeked = token::next(chars)?;
-                let ty = parse_factor(chars, peeked)?;
+                lexer.consume(peeked)?;
+                let colon_pos = lexer.range_from(token_start);
+                let ty = parse_factor(lexer, peeked)?;
                 Term::TypeAnnotation {
-                    pos_colon: Range::new(0, 0),
+                    colon_pos,
                     term: antecedent.map(Box::new),
                     ty: ty.map(Box::new),
                 }
             } else if let Token::HyphenGreater = token {
-                *peeked = token::next(chars)?;
-                let ty = parse_factor(chars, peeked)?;
+                lexer.consume(peeked)?;
+                let arrow_pos = lexer.range_from(token_start);
+                let ty = parse_factor(lexer, peeked)?;
                 Term::ReturnType {
-                    pos_arrow: Range::new(0, 0),
+                    arrow_pos,
                     term: antecedent.map(Box::new),
                     ty: ty.map(Box::new),
                 }
             } else if let Some(operator) = postfix_operator(token) {
-                *peeked = token::next(chars)?;
+                lexer.consume(peeked)?;
+                let operator_pos = lexer.range_from(token_start);
                 Term::UnaryOperation {
                     operator,
-                    pos_operator: Range::new(0, 0),
+                    operator_pos,
                     operand: antecedent.map(Box::new),
                 }
             } else {
                 return Ok(antecedent);
             }
         };
-        antecedent = Some(PTerm::new(Range::new(0, 0), term));
+        let pos = lexer.range_from(first_token_start);
+        antecedent = Some(PTerm::new(pos, term));
     }
 }
 
