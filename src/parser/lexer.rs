@@ -37,7 +37,7 @@ impl<'id, 'chars> Lexer<'id, 'chars> {
             next_start: 0,
             peeked: None,
         };
-        lexer.next_token()?;
+        lexer.consume()?;
         Ok(lexer)
     }
     pub fn next_start(&self) -> usize {
@@ -50,7 +50,9 @@ impl<'id, 'chars> Lexer<'id, 'chars> {
         }
     }
     pub fn consume(&mut self) -> Result<(), Error> {
-        self.next_token()
+        self.last_end = self.chars.offset();
+        self.peeked = self.next_token()?;
+        Ok(())
     }
     pub fn consume_if_or_err(
         &mut self,
@@ -58,26 +60,24 @@ impl<'id, 'chars> Lexer<'id, 'chars> {
         reason_pos: Range,
     ) -> Result<(), Error> {
         match self.peeked {
-            Some(ref token) if pred(token) => {
+            Some(ref token) if pred(token) => self.consume(),
+            Some(_) => {
+                let start = self.next_start();
                 self.consume()?;
-                Ok(())
+                Err(Error::UnexpectedTokenAfter {
+                    error_pos: self.range_from(start),
+                    reason_pos,
+                })
             }
-            Some(_) => Err(Error::UnexpectedTokenAfter {
-                error_pos: self.range_from(self.next_start),
-                reason_pos,
-            }),
             None => Err(Error::EOFAfter { reason_pos }),
         }
     }
-    // 非公開にしたい
-    pub fn next_token(&mut self) -> Result<(), Error> {
-        self.last_end = self.chars.offset();
+    fn next_token(&mut self) -> Result<Option<Token<'id>>, Error> {
         self.chars.consume_while(|ch| ch.is_ascii_whitespace());
         let start = self.chars.offset();
         self.next_start = start;
         let Some(first_ch) = self.chars.next() else {
-            self.peeked = None;
-            return Ok(());
+            return Ok(None);
         };
         let token = match first_ch {
             'a'..='z' | 'A'..='Z' | '_' => {
@@ -307,8 +307,7 @@ impl<'id, 'chars> Lexer<'id, 'chars> {
             }
             _ => return Err(Error::UnexpectedCharacter(start)),
         };
-        self.peeked = Some(token);
-        Ok(())
+        Ok(Some(token))
     }
 
     fn read_number(&mut self) {
