@@ -17,41 +17,31 @@
  */
 
 mod ast;
-mod ir;
 mod lines;
 mod parser;
 mod pre_ast;
 mod range;
-mod ty;
 
 use std::io::Read;
 
 fn main() {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).unwrap();
-    let pre_ast = match parser::parse(&input) {
-        Ok(pre_ast) => pre_ast,
+    let stmts = match parser::parse(&input) {
+        Ok(stmts) => stmts,
         Err(error) => return error.eprint(&input),
     };
-    pre_ast::_debug_print(&pre_ast);
-    let (overloads, defs) = match pre_ast::into_ast(pre_ast) {
-        Ok(ast) => ast,
-        Err(errors) => return pre_ast::eprint_errors(&errors, &input),
+    let (functions_def, variables_ty) = match pre_ast::translate::translate(stmts) {
+        Ok(res) => res,
+        Err(errors) => return pre_ast::translate::eprint_errors(&errors, &input),
     };
-    for (i, funcs) in overloads.iter().enumerate() {
-        println!("{i}: {funcs:?}");
+    for (i, ty) in variables_ty.iter().enumerate() {
+        eprintln!("v{i}: {ty:?}")
     }
-    for (i, def) in defs.iter().enumerate() {
-        println!("#[{i}]");
-        def._debug_print();
-    }
-    let funcs_ty: Vec<_> = defs.iter().map(ast::FuncDef::get_ty).collect();
-    let funcs: Vec<_> = defs
-        .into_iter()
-        .map(|def| def.translate(&overloads, &funcs_ty))
-        .collect();
-    let mut memory = ir::Memory::new();
-    unsafe {
-        funcs.last().unwrap().run(vec![], &mut memory, &funcs);
+    for (i, defs) in functions_def.iter().enumerate() {
+        for (j, def) in defs.iter().enumerate() {
+            eprintln!("[f{i}:{j}]");
+            def._debug_print();
+        }
     }
 }

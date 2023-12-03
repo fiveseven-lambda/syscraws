@@ -16,9 +16,8 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use super::{Arg, PStmt, PTerm, Stmt, Term};
 use either::Either;
-
-use super::{PStmt, PTerm, Stmt, Term};
 
 pub fn _debug_print(stmts: &[PStmt]) {
     for stmt in stmts {
@@ -27,7 +26,7 @@ pub fn _debug_print(stmts: &[PStmt]) {
 }
 
 impl<'id> PStmt<'id> {
-    fn _debug_print(&self, depth: usize) {
+    pub fn _debug_print(&self, depth: usize) {
         let PStmt { pos, stmt } = self;
         let indent = "  ".repeat(depth);
         match stmt {
@@ -105,7 +104,7 @@ impl<'id> PStmt<'id> {
 }
 
 impl<'id> PTerm<'id> {
-    fn _debug_print(&self, depth: usize) {
+    pub fn _debug_print(&self, depth: usize) {
         let PTerm { pos, term } = self;
         let indent = "  ".repeat(depth);
         match term {
@@ -129,7 +128,7 @@ impl<'id> PTerm<'id> {
             Term::UnaryOperation {
                 operator,
                 operator_pos: pos_operator,
-                operand,
+                opt_operand: operand,
             } => {
                 eprintln!("{indent}{pos:?} Unary Operation");
                 eprintln!("{indent}{pos_operator:?} {operator:?}");
@@ -141,8 +140,8 @@ impl<'id> PTerm<'id> {
             Term::BinaryOperation {
                 operator,
                 operator_pos: pos_operator,
-                left_operand,
-                right_operand,
+                opt_left_operand: left_operand,
+                opt_right_operand: right_operand,
             } => {
                 eprintln!("{indent}{pos:?} Binary Operation");
                 eprintln!("{indent}{pos_operator:?} {operator:?}");
@@ -157,8 +156,8 @@ impl<'id> PTerm<'id> {
             }
             Term::TypeAnnotation {
                 colon_pos: pos_colon,
-                term,
-                ty,
+                opt_term: term,
+                opt_ty: ty,
             } => {
                 eprintln!("{indent}{pos:?} Type Annotation");
                 eprintln!("{indent}{pos_colon:?} Colon");
@@ -172,7 +171,7 @@ impl<'id> PTerm<'id> {
                 }
             }
             Term::Parenthesized {
-                antecedent,
+                opt_antecedent: antecedent,
                 elements,
                 has_trailing_comma,
             } => {
@@ -187,9 +186,9 @@ impl<'id> PTerm<'id> {
                 );
                 for elem in elements {
                     match elem {
-                        Ok(term) => term._debug_print(depth + 1),
-                        Err(pos_comma) => {
-                            eprintln!("{indent}  No element before comma at {pos_comma:?}")
+                        Arg::Term(term) => term._debug_print(depth + 1),
+                        Arg::Empty { comma_pos } => {
+                            eprintln!("{indent}  No element before comma at {comma_pos:?}")
                         }
                     }
                 }
@@ -197,8 +196,8 @@ impl<'id> PTerm<'id> {
             Term::Assignment {
                 operator,
                 operator_pos: pos_operator,
-                left_hand_side,
-                right_hand_side,
+                opt_left_hand_side: left_hand_side,
+                opt_right_hand_side: right_hand_side,
             } => {
                 eprintln!("{indent}{pos:?} Assignment");
                 eprintln!("{indent}{pos_operator:?} {operator:?}");
@@ -213,8 +212,8 @@ impl<'id> PTerm<'id> {
             }
             Term::ReturnType {
                 arrow_pos: pos_arrow,
-                term,
-                ty,
+                opt_term: term,
+                opt_ty: ty,
             } => {
                 eprintln!("{indent}{pos:?} Function");
                 eprintln!("{indent}{pos_arrow:?} Right Arrow");

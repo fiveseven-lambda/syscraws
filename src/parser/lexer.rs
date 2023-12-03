@@ -30,7 +30,7 @@ pub struct Lexer<'id, 'chars> {
 }
 
 impl<'id, 'chars> Lexer<'id, 'chars> {
-    pub fn new(chars: &'chars mut CharsPeekable<'id>) -> Result<Lexer<'id, 'chars>, Error> {
+    pub fn new(chars: &'chars mut CharsPeekable<'id>) -> Result<Self, Error> {
         let mut lexer = Lexer {
             chars,
             last_end: 0,

@@ -16,7 +16,7 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::pre_ast::{Operator, PStmt, PTerm, Stmt, Term};
+use crate::pre_ast::{Arg, Operator, PStmt, PTerm, Stmt, Term};
 use std::iter;
 mod lexer;
 use lexer::Lexer;
@@ -26,6 +26,7 @@ mod chars_peekable;
 use chars_peekable::CharsPeekable;
 mod error;
 pub use error::Error;
+mod tests;
 
 pub fn parse(input: &str) -> Result<Vec<PStmt>, Error> {
     let mut chars = CharsPeekable::new(input);
@@ -60,17 +61,16 @@ fn parse_stmt<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PStmt<'id>>, Err
             } else {
                 (None, None)
             };
-            let pos = lexer.range_from(first_token_start);
-            Ok(Some(PStmt::new(
-                pos,
-                Stmt::If {
+            Ok(Some(PStmt {
+                pos: lexer.range_from(first_token_start),
+                stmt: Stmt::If {
                     cond,
                     if_pos,
                     stmt_then: stmt_then.map(Box::new),
                     else_pos,
                     stmt_else: stmt_else.map(Box::new),
                 },
-            )))
+            }))
         }
         Token::KeywordWhile => {
             lexer.consume()?;
@@ -85,15 +85,14 @@ fn parse_stmt<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PStmt<'id>>, Err
             lexer
                 .consume_if_or_err(|token| matches!(token, Token::ClosingParenthesis), open_pos)?;
             let stmt = parse_stmt(lexer)?;
-            let pos = lexer.range_from(first_token_start);
-            Ok(Some(PStmt::new(
-                pos,
-                Stmt::While {
+            Ok(Some(PStmt {
+                pos: lexer.range_from(first_token_start),
+                stmt: Stmt::While {
                     cond,
                     while_pos,
                     stmt: stmt.map(Box::new),
                 },
-            )))
+            }))
         }
         Token::KeywordReturn => {
             lexer.consume()?;
@@ -103,16 +102,20 @@ fn parse_stmt<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PStmt<'id>>, Err
                 |token| matches!(token, Token::Semicolon),
                 pos_excluding_semicolon,
             )?;
-            let pos = lexer.range_from(first_token_start);
-            Ok(Some(PStmt::new(pos, Stmt::Return(term))))
+            Ok(Some(PStmt {
+                pos: lexer.range_from(first_token_start),
+                stmt: Stmt::Return(term),
+            }))
         }
         _ => {
             let term = parse_assign(lexer)?;
             match lexer.peeked {
                 Some(Token::Semicolon) => {
                     lexer.consume()?;
-                    let pos = lexer.range_from(first_token_start);
-                    Ok(Some(PStmt::new(pos, Stmt::Term(term))))
+                    Ok(Some(PStmt {
+                        pos: lexer.range_from(first_token_start),
+                        stmt: Stmt::Term(term),
+                    }))
                 }
                 Some(Token::OpeningBrace) => {
                     let open_start = lexer.next_start();
@@ -131,14 +134,13 @@ fn parse_stmt<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PStmt<'id>>, Err
                             });
                         }
                     }
-                    let pos = lexer.range_from(first_token_start);
-                    Ok(Some(PStmt::new(
-                        pos,
-                        Stmt::Block {
+                    Ok(Some(PStmt {
+                        pos: lexer.range_from(first_token_start),
+                        stmt: Stmt::Block {
                             antecedent: term,
                             stmts,
                         },
-                    )))
+                    }))
                 }
                 Some(_) => {
                     let error_start = lexer.next_start();
@@ -147,13 +149,13 @@ fn parse_stmt<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PStmt<'id>>, Err
                     match term {
                         Some(term) => Err(Error::UnexpectedTokenAfter {
                             error_pos,
-                            reason_pos: term.pos(),
+                            reason_pos: term.pos,
                         }),
                         None => Err(Error::UnexpectedToken { error_pos }),
                     }
                 }
                 None => Err(Error::EOFAfter {
-                    reason_pos: term.unwrap().pos(),
+                    reason_pos: term.unwrap().pos,
                 }),
             }
         }
@@ -168,16 +170,15 @@ pub fn parse_assign<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>
         lexer.consume()?;
         let operator_pos = lexer.range_from(operator_start);
         let right_hand_side = parse_assign(lexer)?;
-        let pos = lexer.range_from(start);
-        Ok(Some(PTerm::new(
-            pos,
-            Term::Assignment {
+        Ok(Some(PTerm {
+            pos: lexer.range_from(start),
+            term: Term::Assignment {
                 operator,
                 operator_pos,
-                left_hand_side: left_hand_side.map(Box::new),
-                right_hand_side: right_hand_side.map(Box::new),
+                opt_left_hand_side: left_hand_side.map(Box::new),
+                opt_right_hand_side: right_hand_side.map(Box::new),
             },
-        )))
+        }))
     } else {
         Ok(left_hand_side)
     }
@@ -205,16 +206,15 @@ fn parse_binary_operator_rec<'id>(
         lexer.consume()?;
         let operator_pos = lexer.range_from(operator_start);
         let right_operand = parse_binary_operator_rec(lexer, precedence.next())?;
-        let pos = lexer.range_from(start);
-        left_operand = Some(PTerm::new(
-            pos,
-            Term::BinaryOperation {
+        left_operand = Some(PTerm {
+            pos: lexer.range_from(start),
+            term: Term::BinaryOperation {
                 operator_pos,
-                left_operand: left_operand.map(Box::new),
+                opt_left_operand: left_operand.map(Box::new),
                 operator,
-                right_operand: right_operand.map(Box::new),
+                opt_right_operand: right_operand.map(Box::new),
             },
-        ));
+        });
     }
     Ok(left_operand)
 }
@@ -244,18 +244,21 @@ fn parse_factor<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>>, E
             lexer.consume()?;
             let operator_pos = lexer.range_from(first_token_start);
             let operand = parse_factor(lexer)?;
-            return Ok(Some(PTerm::new(
-                lexer.range_from(first_token_start),
-                Term::UnaryOperation {
+            return Ok(Some(PTerm {
+                pos: lexer.range_from(first_token_start),
+                term: Term::UnaryOperation {
                     operator,
                     operator_pos,
-                    operand: operand.map(Box::new),
+                    opt_operand: operand.map(Box::new),
                 },
-            )));
+            }));
         } else {
             break 'ant None;
         };
-        Some(PTerm::new(lexer.range_from(first_token_start), term))
+        Some(PTerm {
+            pos: lexer.range_from(first_token_start),
+            term,
+        })
     };
     loop {
         let term = {
@@ -274,11 +277,14 @@ fn parse_factor<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>>, E
                         let comma_start = lexer.next_start();
                         lexer.consume()?;
                         let comma_pos = lexer.range_from(comma_start);
-                        elements.push(element.ok_or(comma_pos));
+                        elements.push(match element {
+                            Some(element) => Arg::Term(element),
+                            None => Arg::Empty { comma_pos },
+                        });
                     } else {
                         if let Some(element) = element {
                             has_trailing_comma = false;
-                            elements.push(Ok(element));
+                            elements.push(Arg::Term(element));
                         } else {
                             has_trailing_comma = true;
                         }
@@ -290,7 +296,7 @@ fn parse_factor<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>>, E
                     open_pos,
                 )?;
                 Term::Parenthesized {
-                    antecedent: antecedent.map(Box::new),
+                    opt_antecedent: antecedent.map(Box::new),
                     elements,
                     has_trailing_comma,
                 }
@@ -300,8 +306,8 @@ fn parse_factor<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>>, E
                 let ty = parse_factor(lexer)?;
                 Term::TypeAnnotation {
                     colon_pos,
-                    term: antecedent.map(Box::new),
-                    ty: ty.map(Box::new),
+                    opt_term: antecedent.map(Box::new),
+                    opt_ty: ty.map(Box::new),
                 }
             } else if let Token::HyphenGreater = token {
                 lexer.consume()?;
@@ -309,8 +315,8 @@ fn parse_factor<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>>, E
                 let ty = parse_factor(lexer)?;
                 Term::ReturnType {
                     arrow_pos,
-                    term: antecedent.map(Box::new),
-                    ty: ty.map(Box::new),
+                    opt_term: antecedent.map(Box::new),
+                    opt_ty: ty.map(Box::new),
                 }
             } else if let Some(operator) = postfix_operator(token) {
                 lexer.consume()?;
@@ -318,14 +324,14 @@ fn parse_factor<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>>, E
                 Term::UnaryOperation {
                     operator,
                     operator_pos,
-                    operand: antecedent.map(Box::new),
+                    opt_operand: antecedent.map(Box::new),
                 }
             } else {
                 return Ok(antecedent);
             }
         };
         let pos = lexer.range_from(first_token_start);
-        antecedent = Some(PTerm::new(pos, term));
+        antecedent = Some(PTerm { pos, term });
     }
 }
 
@@ -367,8 +373,8 @@ enum Precedence {
 
 fn infix_operator(token: &Token, precedence: Precedence) -> Option<Operator> {
     match (token, precedence) {
-        (Token::TripleGreater, Precedence::TimeShift) => Some(Operator::ForwardShift),
-        (Token::TripleLess, Precedence::TimeShift) => Some(Operator::BackwardShift),
+        // (Token::TripleGreater, Precedence::TimeShift) => Some(Operator::ForwardShift),
+        // (Token::TripleLess, Precedence::TimeShift) => Some(Operator::BackwardShift),
         (Token::Asterisk, Precedence::MulDivRem) => Some(Operator::Mul),
         (Token::Slash, Precedence::MulDivRem) => Some(Operator::Div),
         (Token::Percent, Precedence::MulDivRem) => Some(Operator::Rem),
@@ -385,8 +391,8 @@ fn infix_operator(token: &Token, precedence: Precedence) -> Option<Operator> {
         (Token::LessEqual, Precedence::Inequality) => Some(Operator::LessEqual),
         (Token::DoubleEqual, Precedence::Equality) => Some(Operator::Equal),
         (Token::ExclamationEqual, Precedence::Equality) => Some(Operator::NotEqual),
-        (Token::DoubleAmpersand, Precedence::LogicalAnd) => Some(Operator::LogicalAnd),
-        (Token::DoubleBar, Precedence::LogicalOr) => Some(Operator::LogicalOr),
+        // (Token::DoubleAmpersand, Precedence::LogicalAnd) => Some(Operator::LogicalAnd),
+        // (Token::DoubleBar, Precedence::LogicalOr) => Some(Operator::LogicalOr),
         _ => None,
     }
 }
@@ -400,9 +406,9 @@ fn assignment_operator(token: &Token) -> Option<Operator> {
         Token::SlashEqual => Some(Operator::DivAssign),
         Token::PercentEqual => Some(Operator::RemAssign),
         Token::DoubleGreaterEqual => Some(Operator::RightShiftAssign),
-        Token::TripleGreaterEqual => Some(Operator::ForwardShiftAssign),
+        // Token::TripleGreaterEqual => Some(Operator::ForwardShiftAssign),
         Token::DoubleLessEqual => Some(Operator::LeftShiftAssign),
-        Token::TripleLessEqual => Some(Operator::BackwardShiftAssign),
+        // Token::TripleLessEqual => Some(Operator::BackwardShiftAssign),
         Token::AmpersandEqual => Some(Operator::BitAndAssign),
         Token::CircumflexEqual => Some(Operator::BitXorAssign),
         Token::BarEqual => Some(Operator::BitOrAssign),

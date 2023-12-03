@@ -16,31 +16,37 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use either::Either;
+use super::{Block, Expr, Func, Stmt, Ty};
 
-use super::{Block, Expr, FuncDef, Stmt};
+impl Debug for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Expr::Variable(id) => write!(f, "v{id}"),
+            Expr::Func(id) => write!(f, "f{id}"),
+            Expr::Integer(value) => write!(f, "{value}i"),
+            Expr::Float(value) => write!(f, "{value}f"),
+            Expr::String(value) => write!(f, "\"{value}\""),
+            Expr::Call(func, args) => write!(
+                f,
+                "{func:?}({})",
+                args.iter()
+                    .map(|arg| format!("{arg:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
 
 impl Expr {
     pub fn _debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
         match self {
             Expr::Variable(id) => println!("{indent}variable({id})"),
-            Expr::Global(id) => println!("{indent}global({id})"),
             Expr::Func(id) => println!("{indent}func({id})"),
             Expr::Integer(value) => println!("{indent}integer({value})"),
             Expr::Float(value) => println!("{indent}float({value})"),
-            Expr::String(components) => {
-                eprintln!("{indent}string");
-                for component in components {
-                    match component {
-                        Either::Left(string) => println!("{indent}string({string})"),
-                        Either::Right(expr) => {
-                            println!("{indent}expr");
-                            expr._debug_print(depth + 1);
-                        }
-                    }
-                }
-            }
+            Expr::String(value) => eprintln!("{indent}string({value})"),
             Expr::Call(func, args) => {
                 println!("{indent}call");
                 func._debug_print(depth + 1);
@@ -56,24 +62,18 @@ impl Stmt {
         let indent = "  ".repeat(depth);
         match self {
             Stmt::Expr(expr) => {
-                println!("{indent}expression statement");
-                expr._debug_print(depth + 1);
+                println!("{indent}{expr:?}");
             }
             Stmt::Return(expr) => {
-                println!("{indent}return statement");
-                if let Some(expr) = expr {
-                    expr._debug_print(depth + 1);
-                }
+                println!("{indent}return {expr:?}");
             }
             Stmt::If(cond, stmts_then, stmts_else) => {
-                println!("{indent}if statement");
-                cond._debug_print(depth + 1);
+                println!("{indent}if {cond:?}");
                 stmts_then._debug_print(depth);
                 stmts_else._debug_print(depth);
             }
             Stmt::While(cond, stmts) => {
-                println!("{indent}while statement");
-                cond._debug_print(depth + 1);
+                println!("{indent}while {cond:?}");
                 stmts._debug_print(depth);
             }
         }
@@ -82,19 +82,45 @@ impl Stmt {
 impl Block {
     pub fn _debug_print(&self, depth: usize) {
         let indent = "  ".repeat(depth);
-        println!("{indent} block (size: {})", self.size);
+        println!("{indent}block (size: {})", self.size);
         for stmt in &self.stmts {
             stmt._debug_print(depth + 1);
         }
     }
 }
-impl FuncDef {
+impl Func {
     pub fn _debug_print(&self) {
-        println!("{} args, {} locals", self.num_args, self.tys.len());
-        for (i, ty) in self.tys.iter().enumerate() {
-            println!("{i}: {ty:?}");
+        match self {
+            Func::Builtin(func) => eprintln!("Builtin({func:?})"),
+            Func::Defined { body, args, ret_ty } => {
+                eprintln!(
+                    "({}) -> {ret_ty:?}",
+                    args.iter()
+                        .map(|arg| format!("v{arg}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                body._debug_print(0);
+            }
         }
-        println!("{:?}", self.ret_ty);
-        self.body._debug_print(0);
+    }
+}
+
+use std::fmt::{self, Debug, Formatter};
+impl Debug for Ty {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.kind)?;
+        if !self.args.is_empty() {
+            write!(
+                f,
+                "[{}]",
+                self.args
+                    .iter()
+                    .map(|arg| format!("{arg:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )?;
+        }
+        Ok(())
     }
 }

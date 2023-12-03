@@ -26,9 +26,10 @@ pub enum Error {
     EmptyRightOperand(Range),
     EmptyLeftHandSide(Range),
     EmptyRightHandSide(Range),
-    EmptyLeftHandSideDecl { colon: Range },
-    InvalidLeftHandSideDecl { term: Range, colon: Range },
-    EmptyArgument { pos_comma: Range },
+    EmptyLeftHandSideDecl { colon_pos: Range },
+    InvalidLeftHandSideDecl { error_pos: Range, colon_pos: Range },
+    EmptyArgument { comma_pos: Range },
+    EmptyArgumentWithType { colon_pos: Range },
     EmptyConditionIf(Range),
     EmptyStatementIf(Range),
     EmptyStatementElse(Range),
@@ -36,6 +37,8 @@ pub enum Error {
     EmptyStatementWhile(Range),
     UnexpectedExpressionBeforeBlock(Range),
     InvalidFunctionName(Range),
+    EmptyReturnType { arrow_pos: Range },
+    EmptyFunctionNameAndArgs { arrow_pos: Range },
     InvalidArgumentInDef(Range),
 }
 
@@ -63,19 +66,26 @@ pub fn eprint_errors(errors: &[Error], input: &str) {
                 eprintln!("No right hand side of binary operator at {range:?}");
                 lines.eprint_range(range);
             }
-            Error::EmptyLeftHandSideDecl { colon } => {
-                eprintln!("No name given for declaration (colon at {colon:?})");
-                lines.eprint_range(colon);
+            Error::EmptyLeftHandSideDecl { colon_pos } => {
+                eprintln!("No name given for declaration (colon at {colon_pos:?})");
+                lines.eprint_range(colon_pos);
             }
-            Error::InvalidLeftHandSideDecl { term, colon } => {
-                eprintln!("Invalid expression at {term:?} for declaration");
-                lines.eprint_range(term);
-                eprintln!("Note: colon at {colon:?}");
-                lines.eprint_range(colon);
+            Error::InvalidLeftHandSideDecl {
+                error_pos,
+                colon_pos,
+            } => {
+                eprintln!("Invalid expression at {error_pos:?} for declaration");
+                lines.eprint_range(error_pos);
+                eprintln!("Note: colon at {colon_pos:?}");
+                lines.eprint_range(colon_pos);
             }
-            Error::EmptyArgument { pos_comma } => {
-                eprintln!("No argument before comma at {pos_comma:?}");
-                lines.eprint_range(pos_comma);
+            Error::EmptyArgument { comma_pos } => {
+                eprintln!("No argument before comma at {comma_pos:?}");
+                lines.eprint_range(comma_pos);
+            }
+            Error::EmptyArgumentWithType { colon_pos } => {
+                eprintln!("No argument before colon at {colon_pos:?}");
+                lines.eprint_range(colon_pos);
             }
             Error::EmptyConditionIf(range) => {
                 eprintln!("No condition after `if` at {range:?}");
@@ -108,6 +118,14 @@ pub fn eprint_errors(errors: &[Error], input: &str) {
             Error::InvalidArgumentInDef(term) => {
                 eprintln!("Invalid argument {term:?} in function definition");
                 lines.eprint_range(term);
+            }
+            Error::EmptyFunctionNameAndArgs { arrow_pos } => {
+                eprintln!("Empty function name and args before `->` at {arrow_pos:?}");
+                lines.eprint_range(arrow_pos);
+            }
+            Error::EmptyReturnType { arrow_pos } => {
+                eprintln!("Empty return type after `->` at {arrow_pos:?}");
+                lines.eprint_range(arrow_pos);
             }
         }
     }
