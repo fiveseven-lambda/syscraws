@@ -22,7 +22,7 @@ use enum_iterator::Sequence;
 
 mod debug_print;
 pub use debug_print::_debug_print;
-pub mod translate;
+pub mod into_ast;
 
 #[derive(Debug, Sequence)]
 pub enum Operator {

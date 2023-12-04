@@ -21,6 +21,7 @@ mod lines;
 mod parser;
 mod pre_ast;
 mod range;
+mod ty;
 
 use std::io::Read;
 
@@ -31,17 +32,10 @@ fn main() {
         Ok(stmts) => stmts,
         Err(error) => return error.eprint(&input),
     };
-    let (functions_def, variables_ty) = match pre_ast::translate::translate(stmts) {
+    let program = match pre_ast::into_ast::into_ast(stmts) {
         Ok(res) => res,
-        Err(errors) => return pre_ast::translate::eprint_errors(&errors, &input),
+        Err(errors) => return pre_ast::into_ast::eprint_errors(&errors, &input),
     };
-    for (i, ty) in variables_ty.iter().enumerate() {
-        eprintln!("v{i}: {ty:?}")
-    }
-    for (i, defs) in functions_def.iter().enumerate() {
-        for (j, def) in defs.iter().enumerate() {
-            eprintln!("[f{i}:{j}]");
-            def._debug_print();
-        }
-    }
+    ast::type_check::TypeChecker::new(&program).run();
+    program._debug_print();
 }

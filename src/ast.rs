@@ -18,12 +18,34 @@
 
 //! 抽象構文木 AST を定義する．
 
+use std::cell::OnceCell;
+
 mod debug_print;
+pub mod type_check;
+
+pub struct Program {
+    pub funcs: Vec<Vec<(FuncTy, Func)>>,
+    pub defs: Vec<Block>,
+    pub vars: Vec<Option<Ty>>,
+}
+
+#[derive(Clone)]
+pub enum Func {
+    Builtin(BuiltinFunc),
+    Defined(usize),
+}
+
+#[derive(Clone)]
+pub struct FuncTy {
+    pub num_vars: usize,
+    pub args: Vec<Ty>,
+    pub ret: Ty,
+}
 
 #[derive(Clone)]
 pub enum Expr {
     Variable(usize),
-    Func(usize),
+    Func(usize, OnceCell<usize>),
     Integer(i32),
     Float(f64),
     String(String),
@@ -31,21 +53,12 @@ pub enum Expr {
 }
 
 #[derive(Clone)]
-pub struct Ty {
-    pub kind: TyKind,
-    pub args: Vec<Ty>,
-}
-
-#[derive(Clone, Debug)]
-pub enum TyKind {
-    Integer,
-    Float,
-    Boolean,
-    String,
-    Reference,
-    Tuple,
-    Function,
-    Sound,
+pub enum Ty {
+    Var(usize),
+    Const {
+        kind: crate::ty::Kind,
+        args: Vec<Ty>,
+    },
 }
 
 #[derive(Clone)]
@@ -77,16 +90,6 @@ impl Block {
         };
         self.stmts.push(stmt);
     }
-}
-
-#[derive(Clone)]
-pub enum Func {
-    Builtin(BuiltinFunc),
-    Defined {
-        args: Vec<usize>,
-        ret_ty: Option<Ty>,
-        body: Block,
-    },
 }
 
 #[derive(Debug, Clone)]

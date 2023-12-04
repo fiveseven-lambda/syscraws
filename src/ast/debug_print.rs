@@ -16,13 +16,16 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use super::{Block, Expr, Func, Stmt, Ty};
+use super::{Block, Expr, Func, FuncTy, Program, Stmt, Ty};
 
 impl Debug for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Variable(id) => write!(f, "v{id}"),
-            Expr::Func(id) => write!(f, "f{id}"),
+            Expr::Func(i, j) => match j.get() {
+                Some(j) => write!(f, "f{i}_{j}"),
+                None => write!(f, "f{i}"),
+            },
             Expr::Integer(value) => write!(f, "{value}i"),
             Expr::Float(value) => write!(f, "{value}f"),
             Expr::String(value) => write!(f, "\"{value}\""),
@@ -43,7 +46,7 @@ impl Expr {
         let indent = "  ".repeat(depth);
         match self {
             Expr::Variable(id) => println!("{indent}variable({id})"),
-            Expr::Func(id) => println!("{indent}func({id})"),
+            Expr::Func(id, _) => println!("{indent}func({id})"),
             Expr::Integer(value) => println!("{indent}integer({value})"),
             Expr::Float(value) => println!("{indent}float({value})"),
             Expr::String(value) => eprintln!("{indent}string({value})"),
@@ -88,20 +91,12 @@ impl Block {
         }
     }
 }
-impl Func {
-    pub fn _debug_print(&self) {
+
+impl Debug for Func {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Func::Builtin(func) => eprintln!("Builtin({func:?})"),
-            Func::Defined { body, args, ret_ty } => {
-                eprintln!(
-                    "({}) -> {ret_ty:?}",
-                    args.iter()
-                        .map(|arg| format!("v{arg}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                body._debug_print(0);
-            }
+            Func::Builtin(func) => write!(f, "Builtin({func:?})"),
+            Func::Defined(id) => write!(f, "Defined (def {id})"),
         }
     }
 }
@@ -109,18 +104,56 @@ impl Func {
 use std::fmt::{self, Debug, Formatter};
 impl Debug for Ty {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.kind)?;
-        if !self.args.is_empty() {
-            write!(
-                f,
-                "[{}]",
-                self.args
-                    .iter()
-                    .map(|arg| format!("{arg:?}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )?;
+        match self {
+            Ty::Const { kind, args } => {
+                write!(f, "{:?}", kind)?;
+                if !args.is_empty() {
+                    write!(
+                        f,
+                        "[{}]",
+                        args.iter()
+                            .map(|arg| format!("{arg:?}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )?;
+                }
+                Ok(())
+            }
+            Ty::Var(id) => write!(f, "#{id}"),
         }
-        Ok(())
+    }
+}
+impl Debug for FuncTy {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if self.num_vars > 0 {
+            write!(f, "[{}]", self.num_vars)?;
+        }
+        write!(
+            f,
+            "({}) -> {:?}",
+            self.args
+                .iter()
+                .map(|ty| format!("{ty:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.ret
+        )
+    }
+}
+
+impl Program {
+    pub fn _debug_print(&self) {
+        for (i, funcs) in self.funcs.iter().enumerate() {
+            for (j, (ty, func)) in funcs.iter().enumerate() {
+                eprintln!("f{i}_{j}{ty:?} = {func:?}");
+            }
+        }
+        for (i, ty) in self.vars.iter().enumerate() {
+            eprintln!("v{i}: {ty:?}");
+        }
+        for (i, def) in self.defs.iter().enumerate() {
+            eprintln!("def {i}:");
+            def._debug_print(0);
+        }
     }
 }

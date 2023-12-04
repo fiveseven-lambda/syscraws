@@ -20,38 +20,32 @@ pub mod error;
 use crate::{
     ast,
     pre_ast::{self, Arg},
+    ty,
 };
 use enum_iterator::Sequence;
 pub use error::eprint_errors;
 use error::Error;
-use std::collections::HashMap;
+use std::{cell::OnceCell, collections::HashMap};
 
-pub fn translate(
-    stmts: Vec<pre_ast::PStmt>,
-) -> Result<(Vec<Vec<ast::Func>>, Vec<Option<ast::Ty>>), Vec<Error>> {
+pub fn into_ast(stmts: Vec<pre_ast::PStmt>) -> Result<ast::Program, Vec<Error>> {
     let mut env = Environment::new();
     let mut main = ast::Block::new();
     let mut scope = Vec::new();
     for stmt in stmts {
         env.add_toplevel_stmt(&mut main, stmt, &mut scope);
     }
-    env.functions_def.push(vec![ast::Func::Defined {
-        args: vec![],
-        ret_ty: None,
-        body: main,
-    }]);
+    env.program.defs.push(main);
     if env.errors.is_empty() {
-        Ok((env.functions_def, env.variables_ty))
+        Ok(env.program)
     } else {
         Err(env.errors)
     }
 }
 
 struct Environment<'id> {
+    program: ast::Program,
     variables_name: HashMap<&'id str, usize>,
-    variables_ty: Vec<Option<ast::Ty>>,
     functions_name: HashMap<&'id str, usize>,
-    functions_def: Vec<Vec<ast::Func>>,
     errors: Vec<Error>,
 }
 #[derive(Debug)]
@@ -62,23 +56,64 @@ struct VariableInScope<'id> {
 type Scope<'id> = Vec<VariableInScope<'id>>;
 impl<'id> Environment<'id> {
     fn new() -> Self {
-        let mut functions_def = vec![Vec::new(); pre_ast::Operator::CARDINALITY];
-        functions_def[pre_ast::Operator::Add as usize] = vec![
-            ast::Func::Builtin(ast::BuiltinFunc::AddInt),
-            ast::Func::Builtin(ast::BuiltinFunc::AddFloat),
+        let mut funcs = vec![Vec::new(); pre_ast::Operator::CARDINALITY];
+        funcs[pre_ast::Operator::Add as usize] = vec![
+            (
+                ast::FuncTy {
+                    num_vars: 0,
+                    args: vec![
+                        ast::Ty::Const {
+                            kind: ty::Kind::Integer,
+                            args: vec![],
+                        },
+                        ast::Ty::Const {
+                            kind: ty::Kind::Integer,
+                            args: vec![],
+                        },
+                    ],
+                    ret: ast::Ty::Const {
+                        kind: ty::Kind::Integer,
+                        args: vec![],
+                    },
+                },
+                ast::Func::Builtin(ast::BuiltinFunc::AddInt),
+            ),
+            (
+                ast::FuncTy {
+                    num_vars: 0,
+                    args: vec![
+                        ast::Ty::Const {
+                            kind: ty::Kind::Float,
+                            args: vec![],
+                        },
+                        ast::Ty::Const {
+                            kind: ty::Kind::Float,
+                            args: vec![],
+                        },
+                    ],
+                    ret: ast::Ty::Const {
+                        kind: ty::Kind::Float,
+                        args: vec![],
+                    },
+                },
+                ast::Func::Builtin(ast::BuiltinFunc::AddFloat),
+            ),
         ];
         Environment {
+            program: ast::Program {
+                funcs,
+                defs: Vec::new(),
+                vars: Vec::new(),
+            },
             variables_name: HashMap::new(),
-            variables_ty: Vec::new(),
             functions_name: HashMap::new(),
-            functions_def,
             errors: Vec::new(),
         }
     }
     fn get_func_id(&mut self, name: &'id str) -> usize {
         *self.functions_name.entry(name).or_insert_with(|| {
-            let new_id = self.functions_def.len();
-            self.functions_def.push(Vec::new());
+            let new_id = self.program.funcs.len();
+            self.program.funcs.push(Vec::new());
             new_id
         })
     }
@@ -88,8 +123,8 @@ impl<'id> Environment<'id> {
         ty: Option<ast::Ty>,
         scope: &mut Scope<'id>,
     ) -> usize {
-        let new_id = self.variables_ty.len();
-        self.variables_ty.push(ty);
+        let new_id = self.program.vars.len();
+        self.program.vars.push(ty);
         let old_id = self.variables_name.insert(name, new_id);
         scope.push(VariableInScope { name, old_id });
         new_id
@@ -207,9 +242,12 @@ impl<'id> Environment<'id> {
                     }
                 }
                 let mut scope = Vec::new();
-                let args: Vec<_> = func_args
+                let args_ty: Vec<_> = func_args
                     .into_iter()
-                    .map(|(arg_name, arg_ty)| self.declare_variable(arg_name, arg_ty, &mut scope))
+                    .map(|(arg_name, arg_ty)| {
+                        self.declare_variable(arg_name, arg_ty.clone(), &mut scope);
+                        arg_ty.expect("Type inference of args is not implemented yet")
+                    })
                     .collect();
                 let mut body = ast::Block::new();
                 for stmt in stmts {
@@ -218,7 +256,17 @@ impl<'id> Environment<'id> {
                 self.drop_scope(scope);
                 if self.errors.is_empty() {
                     let func_id = self.get_func_id(func_name.unwrap());
-                    self.functions_def[func_id].push(ast::Func::Defined { args, ret_ty, body });
+                    let def_id = self.program.defs.len();
+                    self.program.defs.push(body);
+                    self.program.funcs[func_id].push((
+                        ast::FuncTy {
+                            num_vars: 0,
+                            args: args_ty,
+                            ret: ret_ty
+                                .expect("Type inference of return type is not implemented yet"),
+                        },
+                        ast::Func::Defined(def_id),
+                    ));
                 }
             }
             _ => self.add_stmt(target, stmt, scope),
@@ -341,7 +389,7 @@ impl<'id> Environment<'id> {
                     Some(ast::Expr::Variable(id))
                 } else {
                     let func_id = self.get_func_id(name);
-                    Some(ast::Expr::Func(func_id))
+                    Some(ast::Expr::Func(func_id, OnceCell::new()))
                 }
             }
             pre_ast::Term::UnaryOperation {
@@ -356,7 +404,7 @@ impl<'id> Environment<'id> {
                 }
                 self.errors.is_empty().then(|| {
                     ast::Expr::Call(
-                        Box::new(ast::Expr::Func(operator as usize)),
+                        Box::new(ast::Expr::Func(operator as usize, OnceCell::new())),
                         vec![operand.unwrap()],
                     )
                 })
@@ -383,7 +431,7 @@ impl<'id> Environment<'id> {
                 }
                 self.errors.is_empty().then(|| {
                     ast::Expr::Call(
-                        Box::new(ast::Expr::Func(operator as usize)),
+                        Box::new(ast::Expr::Func(operator as usize, OnceCell::new())),
                         vec![left_operand.unwrap(), right_operand.unwrap()],
                     )
                 })
@@ -410,7 +458,7 @@ impl<'id> Environment<'id> {
                 }
                 self.errors.is_empty().then(|| {
                     ast::Expr::Call(
-                        Box::new(ast::Expr::Func(operator as usize)),
+                        Box::new(ast::Expr::Func(operator as usize, OnceCell::new())),
                         vec![left_hand_side.unwrap(), right_hand_side.unwrap()],
                     )
                 })
@@ -420,8 +468,8 @@ impl<'id> Environment<'id> {
     }
     fn term_into_ty(&mut self, term: pre_ast::PTerm<'id>) -> Option<ast::Ty> {
         match term.term {
-            pre_ast::Term::Identifier("int") => Some(ast::Ty {
-                kind: ast::TyKind::Integer,
+            pre_ast::Term::Identifier("int") => Some(ast::Ty::Const {
+                kind: ty::Kind::Integer,
                 args: vec![],
             }),
             _ => todo!(),
