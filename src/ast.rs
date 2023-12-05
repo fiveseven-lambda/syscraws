@@ -21,6 +21,7 @@
 use std::cell::OnceCell;
 
 mod debug_print;
+pub mod translate;
 pub mod type_check;
 
 pub struct Program {
@@ -96,6 +97,7 @@ impl Block {
 pub enum BuiltinFunc {
     AddInt,
     AddFloat,
+    LessInt,
     Assign,
     New,
     Delete,

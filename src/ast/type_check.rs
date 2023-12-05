@@ -24,7 +24,7 @@ pub struct TypeChecker<'pr> {
     program: &'pr Program,
     overloads: Vec<(&'pr OnceCell<usize>, Vec<ty::Var>, ty::Var)>,
     calls: Vec<Vec<(ty::Var, ty::Var)>>,
-    vars: Vec<ty::Var>,
+    pub vars: Vec<ty::Var>,
 }
 
 impl FuncTy {
@@ -104,6 +104,11 @@ impl<'pr> TypeChecker<'pr> {
                 Stmt::Expr(expr) => {
                     self.get_ty(expr);
                 }
+                Stmt::While(cond, block) => {
+                    self.get_ty(cond)
+                        .unify(&ty::Var::ty(ty::Kind::Boolean, vec![]), &mut ());
+                    self.collect_info(block);
+                }
                 _ => todo!(),
             }
         }
@@ -137,7 +142,6 @@ impl<'pr> TypeChecker<'pr> {
                     .push(args_ty.into_iter().zip(func_args_ty).collect());
                 ret
             }
-            _ => todo!(),
         }
     }
     fn _debug_print(&self) {

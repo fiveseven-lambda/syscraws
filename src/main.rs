@@ -38,4 +38,5 @@ fn main() {
     };
     ast::type_check::TypeChecker::new(&program).run();
     program._debug_print();
+    ast::translate::translate(&program);
 }

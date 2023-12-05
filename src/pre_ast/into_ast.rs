@@ -94,6 +94,14 @@ impl<'id> Environment<'id> {
                 ast::Func::Builtin(ast::BuiltinFunc::AddFloat),
             ),
         ];
+        funcs[pre_ast::Operator::Less as usize] = vec![(
+            ast::FuncTy {
+                num_vars: 0,
+                args: vec![ty!(Integer), ty!(Integer)],
+                ret: ty!(Boolean),
+            },
+            ast::Func::Builtin(ast::BuiltinFunc::LessInt),
+        )];
         funcs[pre_ast::Operator::New as usize] = vec![(
             ast::FuncTy {
                 num_vars: 1,
@@ -536,6 +544,17 @@ impl<'id> Environment<'id> {
                     )
                 })
             }
+            pre_ast::Term::Identifier(name) => {
+                if let Some(&id) = self.variables_name.get(name) {
+                    Some(ast::Expr::Call(
+                        Box::new(ast::Expr::Func(Operator::Deref as usize, OnceCell::new())),
+                        vec![ast::Expr::Variable(id)],
+                    ))
+                } else {
+                    let func_id = self.get_func_id(name);
+                    Some(ast::Expr::Func(func_id, OnceCell::new()))
+                }
+            }
             _ => {
                 let term = self.term_into_left_expr(term, scope);
                 self.errors.is_empty().then(|| {
@@ -585,8 +604,7 @@ impl<'id> Environment<'id> {
                 if let Some(&id) = self.variables_name.get(name) {
                     Some(ast::Expr::Variable(id))
                 } else {
-                    let func_id = self.get_func_id(name);
-                    Some(ast::Expr::Func(func_id, OnceCell::new()))
+                    panic!();
                 }
             }
             pre_ast::Term::Deref {
