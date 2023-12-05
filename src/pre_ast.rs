@@ -16,13 +16,22 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::range::Range;
-use either::Either;
-use enum_iterator::Sequence;
+/*!
+ * AST の前段階である pre AST を定義する．
+ *
+ * pre AST は，以下の変換を経て AST となる．
+ * - 変数名・関数名を除去し，整数値の ID で表す．
+ * - 単項演算・二項演算を，関数呼び出しに書き換える．
+ */
 
 mod debug_print;
+mod into_ast;
 pub use debug_print::_debug_print;
-pub mod into_ast;
+use either::Either;
+use enum_iterator::Sequence;
+pub use into_ast::eprint_errors;
+pub use into_ast::into_ast;
+use std::ops::Range;
 
 #[derive(Debug, Sequence)]
 pub enum Operator {
@@ -81,31 +90,31 @@ pub enum Term<'id> {
     Float(f64),
     String(Vec<Either<String, Option<PTerm<'id>>>>),
     Ref {
-        operator_pos: Range,
+        operator_pos: Range<usize>,
         opt_operand: Option<Box<PTerm<'id>>>,
     },
     Deref {
-        operator_pos: Range,
+        operator_pos: Range<usize>,
         opt_operand: Option<Box<PTerm<'id>>>,
     },
     UnaryOperation {
         operator: Operator,
-        operator_pos: Range,
+        operator_pos: Range<usize>,
         opt_operand: Option<Box<PTerm<'id>>>,
     },
     BinaryOperation {
         operator: Operator,
-        operator_pos: Range,
+        operator_pos: Range<usize>,
         opt_left_operand: Option<Box<PTerm<'id>>>,
         opt_right_operand: Option<Box<PTerm<'id>>>,
     },
     TypeAnnotation {
-        colon_pos: Range,
+        colon_pos: Range<usize>,
         opt_term: Option<Box<PTerm<'id>>>,
         opt_ty: Option<Box<PTerm<'id>>>,
     },
     ReturnType {
-        arrow_pos: Range,
+        arrow_pos: Range<usize>,
         opt_term: Option<Box<PTerm<'id>>>,
         opt_ty: Option<Box<PTerm<'id>>>,
     },
@@ -116,7 +125,7 @@ pub enum Term<'id> {
     },
     Assignment {
         operator: Operator,
-        operator_pos: Range,
+        operator_pos: Range<usize>,
         opt_left_hand_side: Option<Box<PTerm<'id>>>,
         opt_right_hand_side: Option<Box<PTerm<'id>>>,
     },
@@ -124,11 +133,11 @@ pub enum Term<'id> {
 
 pub enum Arg<'id> {
     Term(PTerm<'id>),
-    Empty { comma_pos: Range },
+    Empty { comma_pos: Range<usize> },
 }
 
 pub struct PTerm<'id> {
-    pub pos: Range,
+    pub pos: Range<usize>,
     pub term: Term<'id>,
 }
 
@@ -137,14 +146,14 @@ pub enum Stmt<'id> {
     Return(Option<PTerm<'id>>),
     If {
         cond: Option<PTerm<'id>>,
-        if_pos: Range,
+        if_pos: Range<usize>,
         stmt_then: Option<Box<PStmt<'id>>>,
-        else_pos: Option<Range>,
+        else_pos: Option<Range<usize>>,
         stmt_else: Option<Box<PStmt<'id>>>,
     },
     While {
         cond: Option<PTerm<'id>>,
-        while_pos: Range,
+        while_pos: Range<usize>,
         stmt: Option<Box<PStmt<'id>>>,
     },
     Block {
@@ -154,6 +163,6 @@ pub enum Stmt<'id> {
 }
 
 pub struct PStmt<'id> {
-    pub pos: Range,
+    pub pos: Range<usize>,
     pub stmt: Stmt<'id>,
 }

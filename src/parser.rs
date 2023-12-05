@@ -16,24 +16,32 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::pre_ast::{Arg, Operator, PStmt, PTerm, Stmt, Term};
-use std::iter;
-mod lexer;
-use lexer::Lexer;
-mod token;
-use token::Token;
-mod chars_peekable;
-use chars_peekable::CharsPeekable;
-mod error;
-pub use error::Error;
-mod tests;
+//! 構文解析を行い，ソースコードの文字列から pre AST を得る．
 
+mod chars_peekable;
+mod error;
+mod lexer;
+mod tests;
+mod token;
+use crate::pre_ast::{Arg, Operator, PStmt, PTerm, Stmt, Term};
+use chars_peekable::CharsPeekable;
+use error::Error;
+use lexer::Lexer;
+use std::iter;
+use token::Token;
+
+/**
+ * 構文解析を行う．内部では [`Lexer`] 構造体を作り，[`parse_stmt()`] を繰り返し呼び出している．
+ */
 pub fn parse(input: &str) -> Result<Vec<PStmt>, Error> {
     let mut chars = CharsPeekable::new(input);
     let mut lexer = Lexer::new(&mut chars)?;
     iter::from_fn(|| parse_stmt(&mut lexer).transpose()).collect()
 }
 
+/**
+ * 文をパースする．
+ */
 fn parse_stmt<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PStmt<'id>>, Error> {
     let first_token_start = lexer.next_start();
     let Some(ref mut first_token) = lexer.peeked else {
@@ -162,7 +170,7 @@ fn parse_stmt<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PStmt<'id>>, Err
     }
 }
 
-pub fn parse_assign<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>>, Error> {
+fn parse_assign<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>>, Error> {
     let start = lexer.next_start();
     let left_hand_side = parse_binary_operator(lexer)?;
     if let Some(operator) = lexer.peeked.as_ref().and_then(assignment_operator) {

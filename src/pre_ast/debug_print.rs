@@ -16,6 +16,8 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+//! pre AST をデバッグ出力する．
+
 use super::{Arg, PStmt, PTerm, Stmt, Term};
 use either::Either;
 

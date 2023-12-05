@@ -20,8 +20,6 @@ mod ast;
 mod lines;
 mod parser;
 mod pre_ast;
-mod range;
-mod ty;
 
 use std::io::Read;
 
@@ -32,11 +30,11 @@ fn main() {
         Ok(stmts) => stmts,
         Err(error) => return error.eprint(&input),
     };
-    let program = match pre_ast::into_ast::into_ast(stmts) {
+    let program = match pre_ast::into_ast(stmts) {
         Ok(res) => res,
-        Err(errors) => return pre_ast::into_ast::eprint_errors(&errors, &input),
+        Err(errors) => return pre_ast::eprint_errors(&errors, &input),
     };
-    ast::type_check::TypeChecker::new(&program).run();
+    ast::ty::Checker::new(&program).run();
     program._debug_print();
     ast::translate::translate(&program);
 }

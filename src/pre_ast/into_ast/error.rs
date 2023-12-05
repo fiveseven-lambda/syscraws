@@ -16,32 +16,51 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+//! pre AST から AST へ変換する過程で起こるエラーを定義する．
+
 use crate::lines::Lines;
-use crate::range::Range;
+use std::ops::Range;
 
 #[derive(Debug)]
 pub enum Error {
-    EmptyUnaryOperand(Range),
-    EmptyLeftOperand(Range),
-    EmptyRightOperand(Range),
-    EmptyLeftHandSide(Range),
-    EmptyRightHandSide(Range),
-    EmptyLeftHandSideDecl { colon_pos: Range },
-    InvalidLeftHandSideDecl { error_pos: Range, colon_pos: Range },
-    ReferenceOfRvalue { error_pos: Range },
-    EmptyArgument { comma_pos: Range },
-    EmptyArgumentWithType { colon_pos: Range },
-    EmptyBraceInStringLiteral { literal_pos: Range },
-    EmptyConditionIf(Range),
-    EmptyStatementIf(Range),
-    EmptyStatementElse(Range),
-    EmptyConditionWhile(Range),
-    EmptyStatementWhile(Range),
-    UnexpectedExpressionBeforeBlock(Range),
-    InvalidFunctionName(Range),
-    EmptyReturnType { arrow_pos: Range },
-    EmptyFunctionNameAndArgs { arrow_pos: Range },
-    InvalidArgumentInDef(Range),
+    EmptyUnaryOperand(Range<usize>),
+    EmptyLeftOperand(Range<usize>),
+    EmptyRightOperand(Range<usize>),
+    EmptyLeftHandSide(Range<usize>),
+    EmptyRightHandSide(Range<usize>),
+    EmptyLeftHandSideDecl {
+        colon_pos: Range<usize>,
+    },
+    InvalidLeftHandSideDecl {
+        error_pos: Range<usize>,
+        colon_pos: Range<usize>,
+    },
+    ReferenceOfRvalue {
+        error_pos: Range<usize>,
+    },
+    EmptyArgument {
+        comma_pos: Range<usize>,
+    },
+    EmptyArgumentWithType {
+        colon_pos: Range<usize>,
+    },
+    EmptyBraceInStringLiteral {
+        literal_pos: Range<usize>,
+    },
+    EmptyConditionIf(Range<usize>),
+    EmptyStatementIf(Range<usize>),
+    EmptyStatementElse(Range<usize>),
+    EmptyConditionWhile(Range<usize>),
+    EmptyStatementWhile(Range<usize>),
+    UnexpectedExpressionBeforeBlock(Range<usize>),
+    InvalidFunctionName(Range<usize>),
+    EmptyReturnType {
+        arrow_pos: Range<usize>,
+    },
+    EmptyFunctionNameAndArgs {
+        arrow_pos: Range<usize>,
+    },
+    InvalidArgumentInDef(Range<usize>),
 }
 
 pub fn eprint_errors(errors: &[Error], input: &str) {

@@ -16,22 +16,67 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::range::Range;
+//! [`Error`] を定義する．[`parse()`](super::parse) が吐く．
 
+use crate::lines::Lines;
+use std::ops::Range;
+
+/**
+ * ソースコードの文字列から pre AST を得る過程（字句解析，構文解析）で起こるエラーを定義する．
+ */
 #[derive(Debug)]
 pub enum Error {
+    /**
+     * 字句解析の段階で，予期せぬ文字が見つかった．
+     */
     UnexpectedCharacter(usize),
+    /**
+     * コメントが終了しなかった．
+     *
+     * コメントはネストされている可能性がある．終了しなかったコメントの開始位置を `Vec` で全て持っている．
+     */
     UnterminatedComment(Vec<usize>),
+    /**
+     * 文字列リテラルが終了しなかった．
+     *
+     * 文字列リテラルもネストの可能性があるが，今のところ最も内側しか報告できない．
+     */
     UnterminatedStringLiteral(usize),
+    /**
+     * 文字列リテラル中に無効なエスケープシーケンスがあった．
+     */
     InvalidEscapeSequence(usize),
-    UnexpectedToken { error_pos: Range },
-    UnexpectedTokenAfter { error_pos: Range, reason_pos: Range },
-    EOFAfter { reason_pos: Range },
+    /**
+     * 予期せぬトークンがあった．
+     *
+     * 文の先頭で起こる．
+     */
+    UnexpectedToken { error_pos: Range<usize> },
+    /**
+     * 予期せぬトークンがあった．
+     *
+     * 文の最後のセミコロンを忘れた可能性が高い．
+     */
+    UnexpectedTokenAfter {
+        /// 予期せぬトークン．
+        error_pos: Range<usize>,
+        /// 直前のトークン．
+        reason_pos: Range<usize>,
+    },
+    /**
+     * トークンが期待されたが，EOF があった．
+     *
+     * 文の最後のセミコロンを忘れたか，`{` を閉じ忘れたか．
+     */
+    EOFAfter {
+        /// 直前のトークン．
+        reason_pos: Range<usize>,
+    },
 }
 
 impl Error {
     pub fn eprint(&self, input: &str) {
-        let lines = crate::lines::Lines::new(input);
+        let lines = Lines::new(input);
         match *self {
             Error::UnexpectedCharacter(pos) => {
                 eprintln!("Unexpected character at {:?}", lines.line_column(pos));

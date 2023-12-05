@@ -16,10 +16,14 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use either::Either;
+//! [`Token`] を定義する．
 
 use crate::pre_ast::PTerm;
+use either::Either;
 
+/**
+ * トークン．
+ */
 pub enum Token<'id> {
     Identifier(&'id str),
     KeywordIf,

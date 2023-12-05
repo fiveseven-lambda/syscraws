@@ -16,10 +16,10 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use super::{Kind, Node, Ty, Var};
+use super::{Expr, Kind, Node, Var};
 use std::fmt::{self, Debug, Formatter};
 
-impl Debug for Ty {
+impl Debug for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.kind == Kind::Function {
             let mut iter = self.args.iter().rev();

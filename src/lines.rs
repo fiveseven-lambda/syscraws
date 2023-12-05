@@ -16,15 +16,22 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::range::Range;
+//! ソースコード中の位置情報を扱う．
 
-#[derive(Debug)]
+use std::ops::Range;
+
+/**
+ * ソースコードの何行目が何バイト目から何バイト目までか覚えている．
+ */
 pub struct Lines<'s> {
+    /// 行ごとに分割された元のソースコード．
     lines: Vec<&'s str>,
+    /// 各行頭の位置．
     fronts: Vec<usize>,
 }
 
 impl<'s> Lines<'s> {
+    /// ソースコードを受け取って行に分割し，Lines 構造体を構築する．
     pub fn new(input: &'s str) -> Lines<'s> {
         let mut fronts = Vec::new();
         let mut iter = input.char_indices();
@@ -43,11 +50,13 @@ impl<'s> Lines<'s> {
         split_lines(input, &fronts, &mut lines);
         Lines { lines, fronts }
     }
+    /// 「ソースコードの先頭から何バイト目」を受け取って，「何行目の何バイト目」を返す．
     pub fn line_column(&self, pos: usize) -> (usize, usize) {
         let line = self.fronts.partition_point(|&front| front <= pos) - 1;
         let column = pos - self.fronts[line];
         (line, column)
     }
+    /// 「ソースコードの先頭から何バイト目」を受け取って，該当箇所を stderr に出力する．
     pub fn eprint_pos(&self, pos: usize) {
         let (line, column) = self.line_column(pos);
         eprintln!(
@@ -57,7 +66,8 @@ impl<'s> Lines<'s> {
             &self.lines[line][column..].escape_default()
         );
     }
-    pub fn eprint_range(&self, &Range { start, end }: &Range) {
+    /// 「ソースコードの先頭から何バイト目から何バイト目まで」を受け取って，該当箇所を stderr に出力する．
+    pub fn eprint_range(&self, &Range { start, end }: &Range<usize>) {
         let (start_line, start_column) = self.line_column(start);
         let (end_line, end_column) = self.line_column(end);
         if start_line == end_line {

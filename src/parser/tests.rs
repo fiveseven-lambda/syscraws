@@ -19,7 +19,7 @@
 #![cfg(test)]
 
 use super::*;
-use crate::{pre_ast, range::Range};
+use crate::pre_ast;
 
 macro_rules! match_stmt {
     ($stmt:expr => $pos:pat, $expected:pat) => {
@@ -47,12 +47,6 @@ macro_rules! match_term {
     };
 }
 
-impl Range {
-    fn str<'s>(&self, s: &'s str) -> &'s str {
-        &s[self.start..self.end]
-    }
-}
-
 #[test]
 fn example() {
     let s = "abc;";
@@ -65,9 +59,9 @@ fn example() {
     let mut iter = stmts.into_iter();
     let stmt = iter.next().unwrap();
     match_stmt!(stmt => stmt_pos, Stmt::Term(Some(term)));
-    assert_eq!(stmt_pos.str(&s), "abc;");
+    assert_eq!(&s[stmt_pos], "abc;");
     match_term!(term => term_pos, Term::Identifier("abc"));
-    assert_eq!(term_pos.str(&s), "abc");
+    assert_eq!(&s[term_pos], "abc");
 }
 
 #[test]
@@ -84,7 +78,7 @@ fn arithmetic() {
     let mut iter = stmts.into_iter();
     let stmt = iter.next().unwrap();
     match_stmt!(stmt => stmt_pos, Stmt::Term(Some(term)));
-    assert_eq!(stmt_pos.str(&s), "a + 100 - 5;");
+    assert_eq!(&s[stmt_pos], "a + 100 - 5;");
     match_term!(
         term =>
         term_pos,
@@ -95,8 +89,8 @@ fn arithmetic() {
             opt_right_operand: Some(right)
         }
     );
-    assert_eq!(term_pos.str(&s), "a + 100 - 5");
-    assert_eq!(operator_pos.str(&s), "-");
+    assert_eq!(&s[term_pos], "a + 100 - 5");
+    assert_eq!(&s[operator_pos], "-");
     {
         match_term!(
             *left =>
@@ -108,13 +102,13 @@ fn arithmetic() {
                 opt_right_operand: Some(right)
             }
         );
-        assert_eq!(left_pos.str(&s), "a + 100");
-        assert_eq!(operator_pos.str(&s), "+");
+        assert_eq!(&s[left_pos], "a + 100");
+        assert_eq!(&s[operator_pos], "+");
         match_term!(*left => left_pos, Term::Identifier("a"));
-        assert_eq!(left_pos.str(&s), "a");
+        assert_eq!(&s[left_pos], "a");
         match_term!(*right => right_pos, Term::Integer(100));
-        assert_eq!(right_pos.str(&s), "100");
+        assert_eq!(&s[right_pos], "100");
     }
     match_term!(*right => right_pos, Term::Integer(5));
-    assert_eq!(right_pos.str(&s), "5");
+    assert_eq!(&s[right_pos], "5");
 }

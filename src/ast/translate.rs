@@ -16,12 +16,11 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::{ast, ty};
+use super::Stmt;
+use crate::ast;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::Module;
-
-use super::Stmt;
 
 pub fn translate(program: &ast::Program) {
     let module =
@@ -126,7 +125,7 @@ pub fn translate_stmt(
                 builder,
                 program,
                 body,
-                &blocks,
+                blocks,
                 vars,
                 current_idx + 1,
                 Some(current_idx),

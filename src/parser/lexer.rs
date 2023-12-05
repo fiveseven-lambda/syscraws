@@ -16,12 +16,23 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+//! 字句解析を担う [`Lexer`] を定義する．
+
 use super::chars_peekable::CharsPeekable;
 use super::token::Token;
 use super::Error;
-use crate::range::Range;
 use either::Either;
+use std::ops::Range;
 
+/**
+ * ソースコードの文字列をトークンに分解する．
+ *
+ * 空白，コメントを読み飛ばす仕事も担っている．
+ *
+ * 基本的な使い方としては，以下の 2 つを繰り返す．
+ * - public なフィールド [`Self::peeked`] を見る．`peek()` のようなメソッドは存在せず，何もしなくても `peeked` が常に次のトークンを指している．`Lexer` は `peeked` を所有しているので，`lexer: &mut Lexer` を持っていれば `lexer.peeked` は煮るなり焼くなりできる．
+ * - [`Self::consume()`] でトークンを読み進める．これによって [`Self::peeked`] が更新される．
+ */
 pub struct Lexer<'id, 'chars> {
     chars: &'chars mut CharsPeekable<'id>,
     last_end: usize,
@@ -40,24 +51,35 @@ impl<'id, 'chars> Lexer<'id, 'chars> {
         lexer.consume()?;
         Ok(lexer)
     }
+    /**
+     * [`Self::peeked`] の先頭位置を返す．
+     *
+     * EOF に達して `peeked` が `None` なときは，ソースコード全体の長さを返す．
+     */
     pub fn next_start(&self) -> usize {
         self.next_start
     }
-    pub fn range_from(&self, start: usize) -> Range {
-        Range {
-            start,
-            end: self.last_end,
-        }
+    /**
+     * [`Lexer`] は，最後に consume したトークン（`Self::peeked` の 1 個前のトークン）の末尾位置 `last_end` を保存している．本メソッドは，引数として受け取った `start` と保存していた `last_end` を合わせ，[`Range`] にして返す．
+     */
+    pub fn range_from(&self, start: usize) -> Range<usize> {
+        start..self.last_end
     }
+    /**
+     * 次のトークンを読み，[`Self::peeked`] に格納する．
+     */
     pub fn consume(&mut self) -> Result<(), Error> {
         self.last_end = self.chars.offset();
         self.peeked = self.next_token()?;
         Ok(())
     }
+    /**
+     * [`Self::peeked`] が条件 `pred` を満たせば，次のトークンを読み進める．さもなくば，エラーを返す．
+     */
     pub fn consume_if_or_err(
         &mut self,
         pred: impl FnOnce(&Token) -> bool,
-        reason_pos: Range,
+        reason_pos: Range<usize>,
     ) -> Result<(), Error> {
         match self.peeked {
             Some(ref token) if pred(token) => self.consume(),
@@ -72,6 +94,11 @@ impl<'id, 'chars> Lexer<'id, 'chars> {
             None => Err(Error::EOFAfter { reason_pos }),
         }
     }
+    /**
+     * トークンを 1 つ読み進める．
+     *
+     * 確か，[`Self::consume()`] と統合できない理由があったと思う．
+     */
     fn next_token(&mut self) -> Result<Option<Token<'id>>, Error> {
         self.chars.consume_while(|ch| ch.is_ascii_whitespace());
         let start = self.chars.offset();

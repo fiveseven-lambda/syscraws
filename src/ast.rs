@@ -22,7 +22,7 @@ use std::cell::OnceCell;
 
 mod debug_print;
 pub mod translate;
-pub mod type_check;
+pub mod ty;
 
 pub struct Program {
     pub funcs: Vec<Vec<(FuncTy, Func)>>,
@@ -56,10 +56,7 @@ pub enum Expr {
 #[derive(Clone)]
 pub enum Ty {
     Var(usize),
-    Const {
-        kind: crate::ty::Kind,
-        args: Vec<Ty>,
-    },
+    Const { kind: ty::Kind, args: Vec<Ty> },
 }
 
 #[derive(Clone)]
