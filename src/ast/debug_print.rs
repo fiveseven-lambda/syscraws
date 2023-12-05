@@ -119,14 +119,21 @@ impl Debug for Ty {
                 }
                 Ok(())
             }
-            Ty::Var(id) => write!(f, "#{id}"),
+            Ty::Var(id) => write!(f, "T{id}"),
         }
     }
 }
 impl Debug for FuncTy {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.num_vars > 0 {
-            write!(f, "[{}]", self.num_vars)?;
+            write!(
+                f,
+                "[{}]",
+                (0..self.num_vars)
+                    .map(|i| format!("T{i}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )?;
         }
         write!(
             f,

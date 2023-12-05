@@ -33,7 +33,6 @@ pub enum Kind {
     Reference,
     Tuple,
     Function,
-    Sound,
 }
 
 pub struct Ty {

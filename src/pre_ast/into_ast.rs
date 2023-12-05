@@ -22,10 +22,13 @@ use crate::{
     pre_ast::{self, Arg},
     ty,
 };
+use either::Either;
 use enum_iterator::Sequence;
 pub use error::eprint_errors;
 use error::Error;
 use std::{cell::OnceCell, collections::HashMap};
+
+use super::Operator;
 
 pub fn into_ast(stmts: Vec<pre_ast::PStmt>) -> Result<ast::Program, Vec<Error>> {
     let mut env = Environment::new();
@@ -34,12 +37,28 @@ pub fn into_ast(stmts: Vec<pre_ast::PStmt>) -> Result<ast::Program, Vec<Error>> 
     for stmt in stmts {
         env.add_toplevel_stmt(&mut main, stmt, &mut scope);
     }
+    env.drop_scope(scope, &mut main);
     env.program.defs.push(main);
     if env.errors.is_empty() {
         Ok(env.program)
     } else {
         Err(env.errors)
     }
+}
+
+macro_rules! ty {
+    ($kind:ident) => {
+        ty!($kind,)
+    };
+    ($kind:ident, $($args:expr),*) => {
+        ast::Ty::Const {
+            kind: ty::Kind::$kind,
+            args: vec![ $($args),* ],
+        }
+    };
+    ($id:literal) => {
+        ast::Ty::Var($id)
+    };
 }
 
 struct Environment<'id> {
@@ -61,44 +80,68 @@ impl<'id> Environment<'id> {
             (
                 ast::FuncTy {
                     num_vars: 0,
-                    args: vec![
-                        ast::Ty::Const {
-                            kind: ty::Kind::Integer,
-                            args: vec![],
-                        },
-                        ast::Ty::Const {
-                            kind: ty::Kind::Integer,
-                            args: vec![],
-                        },
-                    ],
-                    ret: ast::Ty::Const {
-                        kind: ty::Kind::Integer,
-                        args: vec![],
-                    },
+                    args: vec![ty!(Integer), ty!(Integer)],
+                    ret: ty!(Integer),
                 },
                 ast::Func::Builtin(ast::BuiltinFunc::AddInt),
             ),
             (
                 ast::FuncTy {
                     num_vars: 0,
-                    args: vec![
-                        ast::Ty::Const {
-                            kind: ty::Kind::Float,
-                            args: vec![],
-                        },
-                        ast::Ty::Const {
-                            kind: ty::Kind::Float,
-                            args: vec![],
-                        },
-                    ],
-                    ret: ast::Ty::Const {
-                        kind: ty::Kind::Float,
-                        args: vec![],
-                    },
+                    args: vec![ty!(Float), ty!(Float)],
+                    ret: ty!(Float),
                 },
                 ast::Func::Builtin(ast::BuiltinFunc::AddFloat),
             ),
         ];
+        funcs[pre_ast::Operator::New as usize] = vec![(
+            ast::FuncTy {
+                num_vars: 1,
+                args: vec![ty!(Reference, ty!(0))],
+                ret: ty!(Reference, ty!(0)),
+            },
+            ast::Func::Builtin(ast::BuiltinFunc::New),
+        )];
+        funcs[pre_ast::Operator::Assign as usize] = vec![(
+            ast::FuncTy {
+                num_vars: 1,
+                args: vec![ty!(Reference, ty!(0)), ty!(0)],
+                ret: ty!(Reference, ty!(0)),
+            },
+            ast::Func::Builtin(ast::BuiltinFunc::Assign),
+        )];
+        funcs[pre_ast::Operator::Delete as usize] = vec![(
+            ast::FuncTy {
+                num_vars: 1,
+                args: vec![ty!(0)],
+                ret: ty!(Tuple),
+            },
+            ast::Func::Builtin(ast::BuiltinFunc::Delete),
+        )];
+        funcs[pre_ast::Operator::Deref as usize] = vec![(
+            ast::FuncTy {
+                num_vars: 1,
+                args: vec![ty!(Reference, ty!(0))],
+                ret: ty!(0),
+            },
+            ast::Func::Builtin(ast::BuiltinFunc::Deref),
+        )];
+        funcs[pre_ast::Operator::ToString as usize] = vec![(
+            ast::FuncTy {
+                num_vars: 1,
+                args: vec![ty!(0)],
+                ret: ty!(String),
+            },
+            ast::Func::Builtin(ast::BuiltinFunc::ToString),
+        )];
+        funcs[pre_ast::Operator::Concat as usize] = vec![(
+            ast::FuncTy {
+                num_vars: 1,
+                args: vec![ty!(String), ty!(String)],
+                ret: ty!(String),
+            },
+            ast::Func::Builtin(ast::BuiltinFunc::Concat),
+        )];
         Environment {
             program: ast::Program {
                 funcs,
@@ -129,12 +172,20 @@ impl<'id> Environment<'id> {
         scope.push(VariableInScope { name, old_id });
         new_id
     }
-    fn drop_scope(&mut self, scope: Scope<'id>) {
+    fn drop_scope(&mut self, scope: Scope<'id>, block: &mut ast::Block) {
         for VariableInScope { name, old_id } in scope.into_iter().rev() {
-            match old_id {
+            let id = match old_id {
                 Some(old_id) => self.variables_name.insert(name, old_id),
                 None => self.variables_name.remove(name),
-            };
+            }
+            .unwrap();
+            block.add_stmt(ast::Stmt::Expr(ast::Expr::Call(
+                Box::new(ast::Expr::Func(
+                    pre_ast::Operator::Delete as usize,
+                    OnceCell::new(),
+                )),
+                vec![ast::Expr::Variable(id)],
+            )))
         }
     }
     fn add_toplevel_stmt(
@@ -253,7 +304,7 @@ impl<'id> Environment<'id> {
                 for stmt in stmts {
                     self.add_stmt(&mut body, stmt, &mut scope);
                 }
-                self.drop_scope(scope);
+                self.drop_scope(scope, target);
                 if self.errors.is_empty() {
                     let func_id = self.get_func_id(func_name.unwrap());
                     let def_id = self.program.defs.len();
@@ -280,7 +331,7 @@ impl<'id> Environment<'id> {
     ) {
         match stmt.stmt {
             pre_ast::Stmt::Term(Some(term)) => {
-                let expr = self.term_into_expr(term, scope);
+                let expr = self.term_into_right_expr(term, scope);
                 if self.errors.is_empty() {
                     target.add_stmt(ast::Stmt::Expr(expr.unwrap()));
                 }
@@ -294,7 +345,7 @@ impl<'id> Environment<'id> {
                 for stmt in stmts {
                     self.add_stmt(target, stmt, &mut scope);
                 }
-                self.drop_scope(scope);
+                self.drop_scope(scope, target);
             }
             pre_ast::Stmt::While {
                 cond,
@@ -303,7 +354,7 @@ impl<'id> Environment<'id> {
             } => {
                 let mut cond_expr = None;
                 match cond {
-                    Some(term) => cond_expr = self.term_into_expr(term, scope),
+                    Some(term) => cond_expr = self.term_into_right_expr(term, scope),
                     None => self
                         .errors
                         .push(Error::EmptyConditionWhile(while_pos.clone())),
@@ -321,7 +372,7 @@ impl<'id> Environment<'id> {
             _ => todo!(),
         }
     }
-    fn term_into_expr(
+    fn term_into_right_expr(
         &mut self,
         term: pre_ast::PTerm<'id>,
         scope: &mut Scope<'id>,
@@ -329,16 +380,57 @@ impl<'id> Environment<'id> {
         match term.term {
             pre_ast::Term::Integer(value) => Some(ast::Expr::Integer(value)),
             pre_ast::Term::Float(value) => Some(ast::Expr::Float(value)),
+            pre_ast::Term::String(components) => {
+                let ret = components
+                    .into_iter()
+                    .map(|component| match component {
+                        Either::Left(string) => Some(ast::Expr::String(string)),
+                        Either::Right(t) => {
+                            let mut expr = None;
+                            match t {
+                                Some(t) => expr = self.term_into_right_expr(t, scope),
+                                None => self.errors.push(Error::EmptyBraceInStringLiteral {
+                                    literal_pos: term.pos.clone(),
+                                }),
+                            }
+                            self.errors.is_empty().then(|| {
+                                ast::Expr::Call(
+                                    Box::new(ast::Expr::Func(
+                                        pre_ast::Operator::ToString as usize,
+                                        OnceCell::new(),
+                                    )),
+                                    vec![expr.unwrap()],
+                                )
+                            })
+                        }
+                    })
+                    .reduce(|s, t| {
+                        s.zip(t).map(|(s, t)| {
+                            ast::Expr::Call(
+                                Box::new(ast::Expr::Func(
+                                    pre_ast::Operator::Concat as usize,
+                                    OnceCell::new(),
+                                )),
+                                vec![s, t],
+                            )
+                        })
+                    });
+                self.errors.is_empty().then(|| match ret {
+                    Some(expr) => expr.unwrap(),
+                    None => ast::Expr::String(String::from("")),
+                })
+            }
+            pre_ast::Term::ReturnType { .. } => todo!(),
             pre_ast::Term::Parenthesized {
                 opt_antecedent: Some(func),
                 elements: args_term,
                 has_trailing_comma: _,
             } => {
-                let func = self.term_into_expr(*func, scope);
+                let func = self.term_into_right_expr(*func, scope);
                 let mut args_expr = Vec::new();
                 for arg in args_term {
                     match arg {
-                        Arg::Term(term) => args_expr.extend(self.term_into_expr(term, scope)),
+                        Arg::Term(term) => args_expr.extend(self.term_into_right_expr(term, scope)),
                         Arg::Empty { comma_pos } => {
                             self.errors.push(Error::EmptyArgument { comma_pos })
                         }
@@ -357,40 +449,21 @@ impl<'id> Environment<'id> {
                     let Arg::Term(term) = opt_elements.into_iter().next().unwrap() else {
                         unreachable!()
                     };
-                    self.term_into_expr(term, scope)
+                    self.term_into_right_expr(term, scope)
                 } else {
                     todo!();
                 }
             }
-            pre_ast::Term::TypeAnnotation {
-                colon_pos,
-                opt_term,
-                opt_ty,
+            pre_ast::Term::Ref {
+                operator_pos,
+                opt_operand,
             } => {
-                let mut name = None;
-                match opt_term {
-                    Some(term) => match term.term {
-                        pre_ast::Term::Identifier(s) => name = Some(s),
-                        _ => self.errors.push(Error::InvalidLeftHandSideDecl {
-                            error_pos: term.pos,
-                            colon_pos,
-                        }),
-                    },
-                    None => self.errors.push(Error::EmptyLeftHandSideDecl { colon_pos }),
-                };
-                let ty = opt_ty.and_then(|ty| self.term_into_ty(*ty));
-                self.errors.is_empty().then(|| {
-                    let id = self.declare_variable(name.unwrap(), ty, scope);
-                    ast::Expr::Variable(id)
-                })
-            }
-            pre_ast::Term::Identifier(name) => {
-                if let Some(&id) = self.variables_name.get(name) {
-                    Some(ast::Expr::Variable(id))
-                } else {
-                    let func_id = self.get_func_id(name);
-                    Some(ast::Expr::Func(func_id, OnceCell::new()))
+                let mut operand = None;
+                match opt_operand {
+                    Some(term) => operand = self.term_into_left_expr(*term, scope),
+                    None => self.errors.push(Error::EmptyUnaryOperand(operator_pos)),
                 }
+                self.errors.is_empty().then(|| operand.unwrap())
             }
             pre_ast::Term::UnaryOperation {
                 operator,
@@ -399,7 +472,7 @@ impl<'id> Environment<'id> {
             } => {
                 let mut operand = None;
                 match opt_operand {
-                    Some(term) => operand = self.term_into_expr(*term, scope),
+                    Some(term) => operand = self.term_into_right_expr(*term, scope),
                     None => self.errors.push(Error::EmptyUnaryOperand(operator_pos)),
                 }
                 self.errors.is_empty().then(|| {
@@ -417,14 +490,14 @@ impl<'id> Environment<'id> {
             } => {
                 let mut left_operand = None;
                 match opt_left_operand {
-                    Some(term) => left_operand = self.term_into_expr(*term, scope),
+                    Some(term) => left_operand = self.term_into_right_expr(*term, scope),
                     None => self
                         .errors
                         .push(Error::EmptyLeftOperand(operator_pos.clone())),
                 }
                 let mut right_operand = None;
                 match opt_right_operand {
-                    Some(term) => right_operand = self.term_into_expr(*term, scope),
+                    Some(term) => right_operand = self.term_into_right_expr(*term, scope),
                     None => self
                         .errors
                         .push(Error::EmptyRightOperand(operator_pos.clone())),
@@ -444,14 +517,14 @@ impl<'id> Environment<'id> {
             } => {
                 let mut right_hand_side = None;
                 match opt_right_hand_side {
-                    Some(term) => right_hand_side = self.term_into_expr(*term, scope),
+                    Some(term) => right_hand_side = self.term_into_right_expr(*term, scope),
                     None => self
                         .errors
                         .push(Error::EmptyRightHandSide(operator_pos.clone())),
                 }
                 let mut left_hand_side = None;
                 match opt_left_hand_side {
-                    Some(term) => left_hand_side = self.term_into_expr(*term, scope),
+                    Some(term) => left_hand_side = self.term_into_left_expr(*term, scope),
                     None => self
                         .errors
                         .push(Error::EmptyLeftHandSide(operator_pos.clone())),
@@ -463,7 +536,93 @@ impl<'id> Environment<'id> {
                     )
                 })
             }
-            _ => todo!(),
+            _ => {
+                let term = self.term_into_left_expr(term, scope);
+                self.errors.is_empty().then(|| {
+                    ast::Expr::Call(
+                        Box::new(ast::Expr::Func(Operator::Deref as usize, OnceCell::new())),
+                        vec![term.unwrap()],
+                    )
+                })
+            }
+        }
+    }
+    fn term_into_left_expr(
+        &mut self,
+        term: pre_ast::PTerm<'id>,
+        scope: &mut Scope<'id>,
+    ) -> Option<ast::Expr> {
+        match term.term {
+            pre_ast::Term::TypeAnnotation {
+                colon_pos,
+                opt_term,
+                opt_ty,
+            } => {
+                let mut name = None;
+                match opt_term {
+                    Some(term) => match term.term {
+                        pre_ast::Term::Identifier(s) => name = Some(s),
+                        _ => self.errors.push(Error::InvalidLeftHandSideDecl {
+                            error_pos: term.pos,
+                            colon_pos,
+                        }),
+                    },
+                    None => self.errors.push(Error::EmptyLeftHandSideDecl { colon_pos }),
+                };
+                let ty = opt_ty.and_then(|ty| self.term_into_ty(*ty));
+                self.errors.is_empty().then(|| {
+                    let id = self.declare_variable(name.unwrap(), ty, scope);
+                    ast::Expr::Call(
+                        Box::new(ast::Expr::Func(
+                            pre_ast::Operator::New as usize,
+                            OnceCell::new(),
+                        )),
+                        vec![ast::Expr::Variable(id)],
+                    )
+                })
+            }
+            pre_ast::Term::Identifier(name) => {
+                if let Some(&id) = self.variables_name.get(name) {
+                    Some(ast::Expr::Variable(id))
+                } else {
+                    let func_id = self.get_func_id(name);
+                    Some(ast::Expr::Func(func_id, OnceCell::new()))
+                }
+            }
+            pre_ast::Term::Deref {
+                operator_pos,
+                opt_operand,
+            } => {
+                let mut operand = None;
+                match opt_operand {
+                    Some(term) => operand = self.term_into_right_expr(*term, scope),
+                    None => self.errors.push(Error::EmptyUnaryOperand(operator_pos)),
+                }
+                self.errors.is_empty().then(|| operand.unwrap())
+            }
+            pre_ast::Term::Parenthesized {
+                opt_antecedent: None,
+                elements: opt_elements,
+                has_trailing_comma,
+            } => {
+                if opt_elements.len() == 1 && !has_trailing_comma {
+                    let Arg::Term(term) = opt_elements.into_iter().next().unwrap() else {
+                        unreachable!()
+                    };
+                    self.term_into_left_expr(term, scope)
+                } else {
+                    self.errors.push(Error::ReferenceOfRvalue {
+                        error_pos: term.pos,
+                    });
+                    None
+                }
+            }
+            _ => {
+                self.errors.push(Error::ReferenceOfRvalue {
+                    error_pos: term.pos,
+                });
+                None
+            }
         }
     }
     fn term_into_ty(&mut self, term: pre_ast::PTerm<'id>) -> Option<ast::Ty> {

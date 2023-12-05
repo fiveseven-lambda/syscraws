@@ -240,6 +240,28 @@ fn parse_factor<'id>(lexer: &mut Lexer<'id, '_>) -> Result<Option<PTerm<'id>>, E
             let components = std::mem::take(components);
             lexer.consume()?;
             Term::String(components)
+        } else if let Token::Ampersand = first_token {
+            lexer.consume()?;
+            let operator_pos = lexer.range_from(first_token_start);
+            let opt_operand = parse_factor(lexer)?;
+            return Ok(Some(PTerm {
+                pos: lexer.range_from(first_token_start),
+                term: Term::Ref {
+                    operator_pos,
+                    opt_operand: opt_operand.map(Box::new),
+                },
+            }));
+        } else if let Token::Asterisk = first_token {
+            lexer.consume()?;
+            let operator_pos = lexer.range_from(first_token_start);
+            let opt_operand = parse_factor(lexer)?;
+            return Ok(Some(PTerm {
+                pos: lexer.range_from(first_token_start),
+                term: Term::Deref {
+                    operator_pos,
+                    opt_operand: opt_operand.map(Box::new),
+                },
+            }));
         } else if let Some(operator) = prefix_operator(first_token) {
             lexer.consume()?;
             let operator_pos = lexer.range_from(first_token_start);

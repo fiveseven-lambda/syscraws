@@ -125,6 +125,28 @@ impl<'id> PTerm<'id> {
                     }
                 }
             }
+            Term::Ref {
+                operator_pos,
+                opt_operand,
+            } => {
+                eprintln!("{indent}{pos:?} Ref");
+                eprintln!("{indent}{operator_pos:?} Ref operator");
+                match opt_operand {
+                    Some(operand) => operand._debug_print(depth + 1),
+                    None => eprintln!("{indent}  (operand is empty)"),
+                }
+            }
+            Term::Deref {
+                operator_pos,
+                opt_operand,
+            } => {
+                eprintln!("{indent}{pos:?} Deref");
+                eprintln!("{indent}{operator_pos:?} Deref operator");
+                match opt_operand {
+                    Some(operand) => operand._debug_print(depth + 1),
+                    None => eprintln!("{indent}  (operand is empty)"),
+                }
+            }
             Term::UnaryOperation {
                 operator,
                 operator_pos: pos_operator,

@@ -24,6 +24,7 @@ pub struct TypeChecker<'pr> {
     program: &'pr Program,
     overloads: Vec<(&'pr OnceCell<usize>, Vec<ty::Var>, ty::Var)>,
     calls: Vec<Vec<(ty::Var, ty::Var)>>,
+    vars: Vec<ty::Var>,
 }
 
 impl FuncTy {
@@ -52,6 +53,14 @@ impl<'pr> TypeChecker<'pr> {
             program,
             overloads: Vec::new(),
             calls: Vec::new(),
+            vars: program
+                .vars
+                .iter()
+                .map(|ty| match ty {
+                    Some(ty) => ty.get_ty(&[]),
+                    None => ty::Var::new(),
+                })
+                .collect(),
         }
     }
     pub fn run(mut self) {
@@ -87,6 +96,7 @@ impl<'pr> TypeChecker<'pr> {
                 break;
             }
         }
+        self._debug_print();
     }
     fn collect_info(&mut self, block: &'pr Block) {
         for stmt in &block.stmts {
@@ -100,12 +110,10 @@ impl<'pr> TypeChecker<'pr> {
     }
     fn get_ty(&mut self, expr: &'pr Expr) -> ty::Var {
         match *expr {
-            Expr::Variable(id) => match &self.program.vars[id] {
-                Some(ty) => ty.get_ty(&[]),
-                None => ty::Var::new(),
-            },
+            Expr::Variable(id) => ty::Var::ty(ty::Kind::Reference, vec![self.vars[id].clone()]),
             Expr::Integer(_) => ty::Var::ty(ty::Kind::Integer, vec![]),
             Expr::Float(_) => ty::Var::ty(ty::Kind::Float, vec![]),
+            Expr::String(_) => ty::Var::ty(ty::Kind::String, vec![]),
             Expr::Func(i, ref j) => {
                 let ret = ty::Var::new();
                 let candidates = self.program.funcs[i]
@@ -133,6 +141,9 @@ impl<'pr> TypeChecker<'pr> {
         }
     }
     fn _debug_print(&self) {
+        for (i, ty) in self.vars.iter().enumerate() {
+            eprintln!("v{i}: {ty:?}");
+        }
         for (selected, candidates, ty) in &self.overloads {
             eprintln!(
                 "{ty:?} = {}",

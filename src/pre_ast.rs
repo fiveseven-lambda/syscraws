@@ -68,6 +68,11 @@ pub enum Operator {
     BitAndAssign,
     BitXorAssign,
     BitOrAssign,
+    New,
+    Delete,
+    Deref,
+    ToString,
+    Concat,
 }
 
 pub enum Term<'id> {
@@ -75,6 +80,14 @@ pub enum Term<'id> {
     Integer(i32),
     Float(f64),
     String(Vec<Either<String, Option<PTerm<'id>>>>),
+    Ref {
+        operator_pos: Range,
+        opt_operand: Option<Box<PTerm<'id>>>,
+    },
+    Deref {
+        operator_pos: Range,
+        opt_operand: Option<Box<PTerm<'id>>>,
+    },
     UnaryOperation {
         operator: Operator,
         operator_pos: Range,

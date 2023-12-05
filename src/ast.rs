@@ -96,4 +96,10 @@ impl Block {
 pub enum BuiltinFunc {
     AddInt,
     AddFloat,
+    Assign,
+    New,
+    Delete,
+    Deref,
+    ToString,
+    Concat,
 }

@@ -28,8 +28,10 @@ pub enum Error {
     EmptyRightHandSide(Range),
     EmptyLeftHandSideDecl { colon_pos: Range },
     InvalidLeftHandSideDecl { error_pos: Range, colon_pos: Range },
+    ReferenceOfRvalue { error_pos: Range },
     EmptyArgument { comma_pos: Range },
     EmptyArgumentWithType { colon_pos: Range },
+    EmptyBraceInStringLiteral { literal_pos: Range },
     EmptyConditionIf(Range),
     EmptyStatementIf(Range),
     EmptyStatementElse(Range),
@@ -78,6 +80,14 @@ pub fn eprint_errors(errors: &[Error], input: &str) {
                 lines.eprint_range(error_pos);
                 eprintln!("Note: colon at {colon_pos:?}");
                 lines.eprint_range(colon_pos);
+            }
+            Error::ReferenceOfRvalue { error_pos } => {
+                eprintln!("Cannot take reference of rvalue at {error_pos:?}");
+                lines.eprint_range(error_pos);
+            }
+            Error::EmptyBraceInStringLiteral { literal_pos } => {
+                eprintln!("Empty brace in string literal at {literal_pos:?}");
+                lines.eprint_range(literal_pos);
             }
             Error::EmptyArgument { comma_pos } => {
                 eprintln!("No argument before comma at {comma_pos:?}");
