@@ -29,20 +29,15 @@ macro_rules! ty {
         ty!($kind,)
     };
     ($kind:ident, $($args:expr),*) => {
-        ast::Ty::Const {
+        ast::Ty {
             kind: ast::ty::Kind::$kind,
             args: vec![ $($args),* ],
         }
-    };
-    ($id:literal) => {
-        ast::Ty::Var($id)
     };
 }
 
 /**
  * 変換の中心となる，文脈を格納する構造体．
- *
- * ちょいとインターフェースがよろしくない．要修正．
  */
 pub struct Context<'id> {
     /// 生成した AST の格納先．
@@ -53,6 +48,7 @@ pub struct Context<'id> {
     functions_name: HashMap<&'id str, usize>,
     /// 変換の過程で起こったエラーを格納する．
     pub errors: Vec<Error>,
+    ret: usize,
 }
 
 /// スコープ中の変数．スコープが終わると [`Context::drop_scope()`] で消える．
@@ -66,88 +62,32 @@ impl<'id> Context<'id> {
     pub fn new() -> Self {
         let mut funcs = vec![Vec::new(); pre_ast::Operator::CARDINALITY];
         funcs[pre_ast::Operator::Add as usize] = vec![
-            (
-                ast::FuncTy {
-                    num_vars: 0,
-                    args: vec![ty!(Integer), ty!(Integer)],
-                    ret: ty!(Integer),
-                },
-                ast::Func::Builtin(ast::BuiltinFunc::AddInt),
-            ),
-            (
-                ast::FuncTy {
-                    num_vars: 0,
-                    args: vec![ty!(Float), ty!(Float)],
-                    ret: ty!(Float),
-                },
-                ast::Func::Builtin(ast::BuiltinFunc::AddFloat),
-            ),
+            (ast::Func::Builtin(ast::BuiltinFunc::AddInt)),
+            (ast::Func::Builtin(ast::BuiltinFunc::AddFloat)),
         ];
-        funcs[pre_ast::Operator::Less as usize] = vec![(
-            ast::FuncTy {
-                num_vars: 0,
-                args: vec![ty!(Integer), ty!(Integer)],
-                ret: ty!(Boolean),
-            },
-            ast::Func::Builtin(ast::BuiltinFunc::LessInt),
-        )];
-        funcs[pre_ast::Operator::New as usize] = vec![(
-            ast::FuncTy {
-                num_vars: 1,
-                args: vec![ty!(Reference, ty!(0))],
-                ret: ty!(Reference, ty!(0)),
-            },
-            ast::Func::Builtin(ast::BuiltinFunc::New),
-        )];
-        funcs[pre_ast::Operator::Assign as usize] = vec![(
-            ast::FuncTy {
-                num_vars: 1,
-                args: vec![ty!(Reference, ty!(0)), ty!(0)],
-                ret: ty!(Reference, ty!(0)),
-            },
-            ast::Func::Builtin(ast::BuiltinFunc::Assign),
-        )];
-        funcs[pre_ast::Operator::Delete as usize] = vec![(
-            ast::FuncTy {
-                num_vars: 1,
-                args: vec![ty!(0)],
-                ret: ty!(Tuple),
-            },
-            ast::Func::Builtin(ast::BuiltinFunc::Delete),
-        )];
-        funcs[pre_ast::Operator::Deref as usize] = vec![(
-            ast::FuncTy {
-                num_vars: 1,
-                args: vec![ty!(Reference, ty!(0))],
-                ret: ty!(0),
-            },
-            ast::Func::Builtin(ast::BuiltinFunc::Deref),
-        )];
-        funcs[pre_ast::Operator::ToString as usize] = vec![(
-            ast::FuncTy {
-                num_vars: 1,
-                args: vec![ty!(0)],
-                ret: ty!(String),
-            },
-            ast::Func::Builtin(ast::BuiltinFunc::ToString),
-        )];
-        funcs[pre_ast::Operator::Concat as usize] = vec![(
-            ast::FuncTy {
-                num_vars: 1,
-                args: vec![ty!(String), ty!(String)],
-                ret: ty!(String),
-            },
-            ast::Func::Builtin(ast::BuiltinFunc::Concat),
-        )];
+        funcs[pre_ast::Operator::Less as usize] =
+            vec![(ast::Func::Builtin(ast::BuiltinFunc::LessInt))];
+        funcs[pre_ast::Operator::New as usize] = vec![(ast::Func::Builtin(ast::BuiltinFunc::New))];
+        funcs[pre_ast::Operator::Assign as usize] =
+            vec![(ast::Func::Builtin(ast::BuiltinFunc::Assign))];
+        funcs[pre_ast::Operator::Delete as usize] =
+            vec![(ast::Func::Builtin(ast::BuiltinFunc::Delete))];
+        funcs[pre_ast::Operator::Deref as usize] =
+            vec![(ast::Func::Builtin(ast::BuiltinFunc::Deref))];
+        funcs[pre_ast::Operator::ToString as usize] =
+            vec![(ast::Func::Builtin(ast::BuiltinFunc::ToString))];
+        funcs[pre_ast::Operator::Concat as usize] =
+            vec![(ast::Func::Builtin(ast::BuiltinFunc::Concat))];
         Context {
             program: ast::Program {
                 funcs,
                 defs: Vec::new(),
-                vars: Vec::new(),
+                vars: vec![None],
             },
             variables_name: HashMap::new(),
             functions_name: HashMap::new(),
             errors: Vec::new(),
+            ret: 0,
         }
     }
     fn get_func_id(&mut self, name: &'id str) -> usize {
@@ -291,31 +231,29 @@ impl<'id> Context<'id> {
                     }
                 }
                 let mut scope = Vec::new();
-                let args_ty: Vec<_> = func_args
+
+                // 無名の変数を定義し，返り値とする．改善の余地あり．
+                let ret = self.program.vars.len();
+                self.ret = ret;
+                self.program.vars.push(ret_ty);
+
+                let args: Vec<_> = func_args
                     .into_iter()
                     .map(|(arg_name, arg_ty)| {
-                        self.declare_variable(arg_name, arg_ty.clone(), &mut scope);
-                        arg_ty.expect("Type inference of args is not implemented yet")
+                        self.declare_variable(arg_name, arg_ty.clone(), &mut scope)
                     })
                     .collect();
                 let mut body = ast::Block::new();
                 for stmt in stmts {
                     self.add_stmt(&mut body, stmt, &mut scope);
                 }
-                self.drop_scope(scope, target);
+                self.drop_scope(scope, &mut body);
+                self.ret = 0;
                 if self.errors.is_empty() {
                     let func_id = self.get_func_id(func_name.unwrap());
                     let def_id = self.program.defs.len();
-                    self.program.defs.push(body);
-                    self.program.funcs[func_id].push((
-                        ast::FuncTy {
-                            num_vars: 0,
-                            args: args_ty,
-                            ret: ret_ty
-                                .expect("Type inference of return type is not implemented yet"),
-                        },
-                        ast::Func::Defined(def_id),
-                    ));
+                    self.program.defs.push(ast::Def { ret, args, body });
+                    self.program.funcs[func_id].push(ast::Func::Defined(def_id));
                 }
             }
             _ => self.add_stmt(target, stmt, scope),

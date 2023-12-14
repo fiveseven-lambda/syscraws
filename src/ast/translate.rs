@@ -30,7 +30,7 @@ pub fn translate(program: &ast::Program) {
         let mut ctx = module.make_context();
         let mut fn_builder_ctx = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
-        let blocks: Vec<_> = (0..def.size).map(|_| builder.create_block()).collect();
+        let blocks: Vec<_> = (0..def.body.size).map(|_| builder.create_block()).collect();
 
         let vars: Vec<_> = program
             .vars
@@ -43,7 +43,7 @@ pub fn translate(program: &ast::Program) {
             })
             .collect();
 
-        translate_block(&mut builder, program, def, &blocks, &vars, 0, None);
+        translate_block(&mut builder, program, &def.body, &blocks, &vars, 0, None);
         builder.seal_all_blocks();
         builder.finalize();
         println!("{}", ctx.func.display());
@@ -145,7 +145,7 @@ pub fn translate_expr(
         ast::Expr::Integer(value) => builder.ins().iconst(types::I32, *value as i64),
         ast::Expr::Call(func, args) => match **func {
             ast::Expr::Func(id, ref selected) => {
-                match program.funcs[id][*selected.get().unwrap()].1 {
+                match program.funcs[id][*selected.get().unwrap()] {
                     ast::Func::Defined(_) => todo!(),
                     ast::Func::Builtin(ref func) => {
                         let args_value: Vec<_> = args

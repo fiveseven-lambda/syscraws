@@ -16,53 +16,91 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use super::{Expr, Kind, Node, Var};
+use super::{Candidate, CandidateNode, Kind, Ty, TyNode};
 use std::fmt::{self, Debug, Formatter};
 
-impl Debug for Expr {
+impl Debug for CandidateNode {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if self.kind == Kind::Function {
-            let mut iter = self.args.iter().rev();
-            write!(
-                f,
-                "func({args}) -> {ret:?}",
-                ret = iter.next().unwrap(),
-                args = iter
-                    .rev()
-                    .map(|arg| format!("{arg:?}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        } else {
-            write!(f, "{:?}", self.kind)?;
-            if !self.args.is_empty() {
-                write!(
-                    f,
-                    "[{}]",
-                    self.args
-                        .iter()
-                        .map(|arg| format!("{arg:?}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )?;
+        match *self {
+            CandidateNode::Const { kind, ref args } => {
+                if kind == Kind::Function {
+                    let mut iter = args.iter().rev();
+                    write!(
+                        f,
+                        "func({args}) -> {ret:?}",
+                        ret = iter.next().unwrap(),
+                        args = iter
+                            .rev()
+                            .map(|arg| format!("{arg:?}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    write!(f, "{:?}", kind)?;
+                    if !args.is_empty() {
+                        write!(
+                            f,
+                            "[{}]",
+                            args.iter()
+                                .map(|arg| format!("{arg:?}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )?;
+                    }
+                    Ok(())
+                }
             }
-            Ok(())
+            CandidateNode::Var => {
+                write!(f, "?")
+            }
+        }
+    }
+}
+impl Debug for Candidate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.0.borrow())
+    }
+}
+impl Debug for TyNode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match *self {
+            TyNode::Const { kind, ref args } => {
+                if kind == Kind::Function {
+                    let mut iter = args.iter().rev();
+                    write!(
+                        f,
+                        "func({args}) -> {ret:?}",
+                        ret = iter.next().unwrap(),
+                        args = iter
+                            .rev()
+                            .map(|arg| format!("{arg:?}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    write!(f, "{:?}", kind)?;
+                    if !args.is_empty() {
+                        write!(
+                            f,
+                            "[{}]",
+                            args.iter()
+                                .map(|arg| format!("{arg:?}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )?;
+                    }
+                    Ok(())
+                }
+            }
+            TyNode::Var => {
+                write!(f, "?")
+            }
         }
     }
 }
 
-impl Debug for Var {
+impl Debug for Ty {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.node.borrow())
-    }
-}
-
-impl Debug for Node {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Node::Determined(ty) => write!(f, "{ty:?}"),
-            Node::SameAs(var) => write!(f, "{var:?}"),
-            Node::Undetermined { .. } => write!(f, "{self:p}"),
-        }
+        write!(f, "{:?}", self.0.borrow())
     }
 }

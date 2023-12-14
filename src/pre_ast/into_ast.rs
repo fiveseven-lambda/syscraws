@@ -33,7 +33,11 @@ pub fn into_ast(stmts: Vec<pre_ast::PStmt>) -> Result<ast::Program, Vec<Error>> 
         ctx.add_toplevel_stmt(&mut main, stmt, &mut scope);
     }
     ctx.drop_scope(scope, &mut main);
-    ctx.program.defs.push(main);
+    ctx.program.defs.push(ast::Def {
+        ret: 0,
+        args: vec![],
+        body: main,
+    });
     if ctx.errors.is_empty() {
         Ok(ctx.program)
     } else {

@@ -16,7 +16,7 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use super::{Block, Expr, Func, FuncTy, Program, Stmt, Ty};
+use super::{Block, Def, Expr, Func, Program, Stmt, Ty};
 
 impl Debug for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -104,55 +104,42 @@ impl Debug for Func {
 use std::fmt::{self, Debug, Formatter};
 impl Debug for Ty {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Ty::Const { kind, args } => {
-                write!(f, "{:?}", kind)?;
-                if !args.is_empty() {
-                    write!(
-                        f,
-                        "[{}]",
-                        args.iter()
-                            .map(|arg| format!("{arg:?}"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )?;
-                }
-                Ok(())
-            }
-            Ty::Var(id) => write!(f, "T{id}"),
-        }
-    }
-}
-impl Debug for FuncTy {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if self.num_vars > 0 {
+        let Ty { kind, args } = self;
+        write!(f, "{:?}", kind)?;
+        if !args.is_empty() {
             write!(
                 f,
                 "[{}]",
-                (0..self.num_vars)
-                    .map(|i| format!("T{i}"))
+                args.iter()
+                    .map(|arg| format!("{arg:?}"))
                     .collect::<Vec<_>>()
                     .join(", ")
             )?;
         }
-        write!(
-            f,
-            "({}) -> {:?}",
+        Ok(())
+    }
+}
+
+impl Def {
+    pub fn _debug_print(&self) {
+        println!(
+            "({}) -> v{}",
             self.args
                 .iter()
-                .map(|ty| format!("{ty:?}"))
+                .map(|arg| format!("v{arg}"))
                 .collect::<Vec<_>>()
                 .join(", "),
             self.ret
-        )
+        );
+        self.body._debug_print(0);
     }
 }
 
 impl Program {
     pub fn _debug_print(&self) {
         for (i, funcs) in self.funcs.iter().enumerate() {
-            for (j, (ty, func)) in funcs.iter().enumerate() {
-                eprintln!("f{i}_{j}{ty:?} = {func:?}");
+            for (j, func) in funcs.iter().enumerate() {
+                eprintln!("f{i}_{j} = {func:?}");
             }
         }
         for (i, ty) in self.vars.iter().enumerate() {
@@ -160,7 +147,7 @@ impl Program {
         }
         for (i, def) in self.defs.iter().enumerate() {
             eprintln!("def {i}:");
-            def._debug_print(0);
+            def._debug_print();
         }
     }
 }

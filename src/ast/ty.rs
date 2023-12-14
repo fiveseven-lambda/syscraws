@@ -17,161 +17,13 @@
  */
 
 mod debug_print;
-mod log;
-use super::{Block, FuncTy, Program, Stmt};
 use crate::ast;
 use std::{
-    cell::{Cell, OnceCell, RefCell},
+    cell::{OnceCell, RefCell},
     rc::Rc,
 };
 
-pub struct Checker<'pr> {
-    program: &'pr Program,
-    overloads: Vec<(&'pr OnceCell<usize>, Vec<Var>, Var)>,
-    calls: Vec<Vec<(Var, Var)>>,
-    pub vars: Vec<Var>,
-}
-
-impl FuncTy {
-    fn get_ty(&self) -> Var {
-        let vars: Vec<_> = (0..self.num_vars).map(|_| Var::new()).collect();
-        let mut args: Vec<_> = self.args.iter().map(|ty| ty.get_ty(&vars)).collect();
-        args.push(self.ret.get_ty(&vars));
-        Var::ty(Kind::Function, args)
-    }
-}
-impl ast::Ty {
-    fn get_ty(&self, vars: &[Var]) -> Var {
-        match *self {
-            ast::Ty::Const { ref kind, ref args } => Var::ty(
-                kind.clone(),
-                args.iter().map(|arg| arg.get_ty(vars)).collect(),
-            ),
-            ast::Ty::Var(id) => vars[id].clone(),
-        }
-    }
-}
-
-impl<'pr> Checker<'pr> {
-    pub fn new(program: &Program) -> Checker {
-        Checker {
-            program,
-            overloads: Vec::new(),
-            calls: Vec::new(),
-            vars: program
-                .vars
-                .iter()
-                .map(|ty| match ty {
-                    Some(ty) => ty.get_ty(&[]),
-                    None => Var::new(),
-                })
-                .collect(),
-        }
-    }
-    pub fn run(mut self) {
-        for def in &self.program.defs {
-            self.collect_info(def);
-        }
-        for args in &self.calls {
-            for (left, right) in args {
-                left.unify(right, &mut ());
-            }
-        }
-        loop {
-            let mut resolved = Vec::new();
-            for (eq_idx, &(ans, ref candidates, ref var)) in self.overloads.iter().enumerate() {
-                if ans.get().is_some() {
-                    continue;
-                }
-                let mut ok = Vec::new();
-                for (candidate_idx, candidate) in candidates.iter().enumerate() {
-                    let mut history = log::History::new();
-                    if var.unify(candidate, &mut history) {
-                        ok.push(candidate_idx);
-                    }
-                    history.rollback();
-                }
-                if let [i] = ok[..] {
-                    ans.set(i).unwrap();
-                    var.unify(&candidates[i], &mut ());
-                    resolved.push(eq_idx);
-                }
-            }
-            if resolved.is_empty() {
-                break;
-            }
-        }
-        self._debug_print();
-    }
-    fn collect_info(&mut self, block: &'pr Block) {
-        for stmt in &block.stmts {
-            match stmt {
-                Stmt::Expr(expr) => {
-                    self.get_ty(expr);
-                }
-                Stmt::While(cond, block) => {
-                    self.get_ty(cond)
-                        .unify(&Var::ty(Kind::Boolean, vec![]), &mut ());
-                    self.collect_info(block);
-                }
-                _ => todo!(),
-            }
-        }
-    }
-    fn get_ty(&mut self, expr: &'pr ast::Expr) -> Var {
-        match *expr {
-            ast::Expr::Variable(id) => Var::ty(Kind::Reference, vec![self.vars[id].clone()]),
-            ast::Expr::Integer(_) => Var::ty(Kind::Integer, vec![]),
-            ast::Expr::Float(_) => Var::ty(Kind::Float, vec![]),
-            ast::Expr::String(_) => Var::ty(Kind::String, vec![]),
-            ast::Expr::Func(i, ref j) => {
-                let ret = Var::new();
-                let candidates = self.program.funcs[i]
-                    .iter()
-                    .map(|(ty, _)| ty.get_ty())
-                    .collect();
-                self.overloads.push((j, candidates, ret.clone()));
-                ret
-            }
-            ast::Expr::Call(ref func, ref args) => {
-                let ret = Var::new();
-                let mut args_ty: Vec<_> = args.iter().map(|arg| self.get_ty(arg)).collect();
-                args_ty.push(ret.clone());
-                let mut func_args_ty: Vec<_> = (0..args.len()).map(|_| Var::new()).collect();
-                func_args_ty.push(Var::new());
-                self.get_ty(func)
-                    .unify(&Var::ty(Kind::Function, func_args_ty.clone()), &mut ());
-                self.calls
-                    .push(args_ty.into_iter().zip(func_args_ty).collect());
-                ret
-            }
-        }
-    }
-    fn _debug_print(&self) {
-        for (i, ty) in self.vars.iter().enumerate() {
-            eprintln!("v{i}: {ty:?}");
-        }
-        for (selected, candidates, ty) in &self.overloads {
-            eprintln!(
-                "{ty:?} = {}",
-                selected
-                    .get()
-                    .map(ToString::to_string)
-                    .unwrap_or("?".into())
-            );
-            for (i, candidate) in candidates.iter().enumerate() {
-                eprintln!("  {i}: {candidate:?}")
-            }
-        }
-        for args in &self.calls {
-            for (left, right) in args {
-                eprintln!("{left:?} = [(...)->]? {right:?}");
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Integer,
     Float,
@@ -182,98 +34,333 @@ pub enum Kind {
     Function,
 }
 
-pub struct Expr {
-    pub kind: Kind,
-    pub args: Vec<Var>,
+#[derive(Clone)]
+struct Ty(Rc<RefCell<TyNode>>);
+impl Ty {
+    fn new(node: TyNode) -> Ty {
+        Ty(Rc::new(RefCell::new(node)))
+    }
 }
 
 #[derive(Clone)]
-pub struct Var {
-    node: Rc<RefCell<Node>>,
+enum TyNode {
+    Var,
+    Const { kind: Kind, args: Vec<Ty> },
 }
 
-enum Node {
-    Determined(Expr),
-    Undetermined { size: Cell<u32> },
-    SameAs(Var),
+macro_rules! ty {
+    ($kind:ident) => {
+        ty!($kind,)
+    };
+    ($kind:ident, $($args:expr),*) => {
+        Ty::new(TyNode::Const {
+            kind: Kind::$kind,
+            args: vec![ $($args),* ],
+        })
+    };
+    ($id:literal) => {
+        Rc::new(Ty::Var($id))
+    };
+}
+macro_rules! cand {
+    ($kind:ident) => {
+        cand!($kind,)
+    };
+    ($kind:ident, $($args:expr),*) => {
+        Candidate::new(CandidateNode::Const {
+            kind: Kind::$kind,
+            args: vec![ $($args),* ],
+        })
+    };
+    ($id:literal) => {
+        Rc::new(Candidate::Var($id))
+    };
 }
 
-impl Expr {
-    fn contains(&self, target: &Var) -> bool {
-        self.args.iter().any(|arg| arg.contains(target))
+pub struct Checker<'program> {
+    vars: Vec<Ty>,
+    sigs: Vec<(Ty, Vec<Candidate>)>,
+    overloads: Vec<(Ty, Vec<Candidate>, &'program OnceCell<usize>)>,
+    calls: Vec<(Ty, Ty, Vec<Ty>)>,
+}
+
+#[derive(Clone)]
+struct Candidate(Rc<RefCell<CandidateNode>>);
+impl Candidate {
+    fn new(node: CandidateNode) -> Candidate {
+        Candidate(Rc::new(RefCell::new(node)))
+    }
+}
+enum CandidateNode {
+    Var,
+    Const { kind: Kind, args: Vec<Candidate> },
+}
+
+impl Ty {
+    fn generate_candidate(&self) -> CandidateNode {
+        match *self.0.borrow() {
+            TyNode::Var => CandidateNode::Var,
+            TyNode::Const { kind, ref args } => CandidateNode::Const {
+                kind,
+                args: args
+                    .iter()
+                    .map(|arg| Candidate::new(arg.generate_candidate()))
+                    .collect(),
+            },
+        }
+    }
+}
+impl Candidate {
+    fn generate_ty(&self) -> TyNode {
+        match *self.0.borrow() {
+            CandidateNode::Var => TyNode::Var,
+            CandidateNode::Const { kind, ref args } => TyNode::Const {
+                kind,
+                args: args.iter().map(|arg| Ty::new(arg.generate_ty())).collect(),
+            },
+        }
     }
 }
 
-impl Var {
-    pub fn new() -> Var {
-        Var {
-            node: Rc::new(RefCell::new(Node::Undetermined { size: Cell::new(1) })),
-        }
-    }
-    pub fn ty(kind: Kind, args: Vec<Var>) -> Var {
-        Var {
-            node: Rc::new(RefCell::new(Node::Determined(Expr { kind, args }))),
-        }
-    }
-    fn contains(&self, target: &Var) -> bool {
-        match *self.node.borrow() {
-            Node::Determined(ref ty) => ty.contains(target),
-            Node::Undetermined { .. } => Rc::ptr_eq(&self.node, &target.node),
-            Node::SameAs(ref parent) => parent.contains(target),
-        }
-    }
-    pub fn unify(&self, other: &Var, log: &mut impl log::Log) -> bool {
-        let self_binding = self.node.borrow();
-        let other_binding = other.node.borrow();
-        match (&*self_binding, &*other_binding) {
-            (Node::SameAs(parent), _) => {
-                drop(other_binding);
-                parent.unify(other, log)
-            }
-            (Node::Determined(self_ty), Node::Determined(other_ty)) => {
-                self_ty.kind == other_ty.kind
-                    && self_ty.args.len() == other_ty.args.len()
-                    && self_ty
-                        .args
-                        .iter()
-                        .zip(&other_ty.args)
-                        .all(|(self_arg, other_arg)| self_arg.unify(other_arg, log))
-            }
-            (Node::Undetermined { size }, Node::Determined(ty)) => {
-                if ty.contains(self) {
-                    return false;
+impl<'program> Checker<'program> {
+    pub fn new(program: &super::Program) -> Checker {
+        let vars: Vec<_> = program
+            .vars
+            .iter()
+            .map(|opt_ty| match opt_ty {
+                Some(ty) => translate_ty(ty),
+                None => Ty::new(TyNode::Var),
+            })
+            .collect();
+        let sigs = program
+            .defs
+            .iter()
+            .map(|def| {
+                let mut args = vec![vars[def.ret].clone()];
+                args.extend(def.args.iter().map(|&arg| vars[arg].clone()));
+                (
+                    Ty::new(TyNode::Const {
+                        kind: Kind::Function,
+                        args,
+                    }),
+                    Vec::new(),
+                )
+            })
+            .collect();
+        let mut checker = Checker {
+            vars,
+            sigs,
+            overloads: Vec::new(),
+            calls: Vec::new(),
+        };
+        for def in &program.defs {
+            for stmt in &def.body.stmts {
+                match stmt {
+                    super::Stmt::Expr(expr) => {
+                        checker.get_ty_of_expr(expr, &program.funcs);
+                    }
+                    _ => {}
                 }
-                log.append(log::Operation {
-                    child: self.clone(),
-                    old_child_size: size.get(),
-                    old_parent_size: None,
-                });
-                drop(self_binding);
-                *self.node.borrow_mut() = Node::SameAs(other.clone());
-                true
-            }
-            (Node::Undetermined { size: self_size }, Node::Undetermined { size: other_size })
-                if self_size <= other_size =>
-            {
-                if Rc::ptr_eq(&self.node, &other.node) {
-                    return true;
-                }
-                let new_size = self_size.get() + other_size.get();
-                log.append(log::Operation {
-                    child: self.clone(),
-                    old_child_size: other_size.get(),
-                    old_parent_size: Some(self_size.get()),
-                });
-                other_size.set(new_size);
-                drop(self_binding);
-                *self.node.borrow_mut() = Node::SameAs(other.clone());
-                true
-            }
-            _ => {
-                drop(self_binding);
-                drop(other_binding);
-                other.unify(self, log)
             }
         }
+        checker
+    }
+    fn get_ty_of_expr(&mut self, expr: &'program super::Expr, funcs: &[Vec<super::Func>]) -> Ty {
+        match *expr {
+            super::Expr::Variable(id) => ty!(Reference, self.vars[id].clone()),
+            super::Expr::Func(id, ref cell) => {
+                let ret = Ty::new(TyNode::Var);
+                let candidates = funcs[id]
+                    .iter()
+                    .map(|func| match *func {
+                        super::Func::Builtin(ref func) => get_type_of_builtin_func(func),
+                        super::Func::Defined(id) => {
+                            let (sig, used) = &mut self.sigs[id];
+                            let ret = Candidate::new(sig.generate_candidate());
+                            used.push(ret.clone());
+                            ret
+                        }
+                    })
+                    .collect();
+                self.overloads.push((ret.clone(), candidates, cell));
+                ret
+            }
+            super::Expr::Integer(_) => ty!(Integer),
+            super::Expr::Float(_) => ty!(Float),
+            super::Expr::String(_) => ty!(String),
+            super::Expr::Call(ref func, ref args) => {
+                let func_ty = self.get_ty_of_expr(func, funcs);
+                let args_ty: Vec<_> = args
+                    .iter()
+                    .map(|arg| self.get_ty_of_expr(arg, funcs))
+                    .collect();
+                let ret = Ty::new(TyNode::Var);
+                self.calls.push((func_ty, ret.clone(), args_ty));
+                ret
+            }
+        }
+    }
+
+    pub fn run(&mut self) {
+        // 応急処置
+        for (func, ret, args) in &self.calls {
+            let mut tmp = vec![ret.clone()];
+            tmp.extend(args.iter().map(Ty::clone));
+            *func.0.borrow_mut() = TyNode::Const {
+                kind: Kind::Function,
+                args: tmp,
+            };
+        }
+        while !self.overloads.is_empty() {
+            for (sig, used) in &self.sigs {
+                for candidate in used {
+                    propagate(sig, candidate);
+                }
+            }
+            let mut resolved = false;
+            self.overloads = std::mem::take(&mut self.overloads)
+                .into_iter()
+                .filter(|(func, candidates, ans)| {
+                    let mut acceptable_candidates_idx = Vec::new();
+                    for (candidate_idx, candidate) in candidates.iter().enumerate() {
+                        if propagate(func, candidate) {
+                            acceptable_candidates_idx.push(candidate_idx);
+                        }
+                    }
+                    match acceptable_candidates_idx[..] {
+                        [idx] => {
+                            ans.set(idx).unwrap();
+                            reverse_propagate(&candidates[idx], func);
+                            resolved = true;
+                            false
+                        }
+                        _ => true,
+                    }
+                })
+                .collect();
+            if !resolved {
+                break;
+            }
+        }
+
+        for (i, ty) in self.vars.iter().enumerate() {
+            println!("v{i}: {ty:?}");
+        }
+        for (i, (sig, used)) in self.sigs.iter().enumerate() {
+            println!(
+                "def {i}: {sig:?} (candidate of {})",
+                used.iter()
+                    .map(|cand| format!("{:p}", Rc::as_ptr(&cand.0)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        for (func, candidates, _) in &self.overloads {
+            println!(
+                "Candidates of {func:?} ... {}",
+                candidates
+                    .iter()
+                    .map(|candidate| format!("{candidate:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+}
+
+fn propagate(source: &Ty, target: &Candidate) -> bool {
+    let source_binding = source.0.borrow();
+    let target_binding = target.0.borrow();
+    match (&*source_binding, &*target_binding) {
+        (
+            TyNode::Const {
+                kind: source_kind,
+                args: source_args,
+            },
+            CandidateNode::Const {
+                kind: target_kind,
+                args: target_args,
+            },
+        ) => {
+            source_kind == target_kind
+                && source_args.len() == target_args.len()
+                && source_args
+                    .iter()
+                    .zip(target_args)
+                    .all(|(source_arg, target_arg)| propagate(source_arg, target_arg))
+        }
+        (TyNode::Const { .. }, CandidateNode::Var) => {
+            drop(source_binding);
+            drop(target_binding);
+            *target.0.borrow_mut() = source.generate_candidate();
+            true
+        }
+        (TyNode::Var, _) => true,
+    }
+}
+fn reverse_propagate(source: &Candidate, target: &Ty) {
+    let source_binding = source.0.borrow();
+    let target_binding = target.0.borrow();
+    match (&*source_binding, &*target_binding) {
+        (
+            CandidateNode::Const {
+                kind: _,
+                args: source_args,
+            },
+            TyNode::Const {
+                kind: _,
+                args: target_args,
+            },
+        ) => {
+            for (source_arg, target_arg) in source_args.iter().zip(target_args) {
+                reverse_propagate(source_arg, target_arg);
+            }
+        }
+        (CandidateNode::Const { .. }, TyNode::Var) => {
+            drop(source_binding);
+            drop(target_binding);
+            *target.0.borrow_mut() = source.generate_ty();
+        }
+        (CandidateNode::Var, _) => {}
+    }
+}
+
+fn translate_ty(ty: &super::Ty) -> Ty {
+    Ty::new(TyNode::Const {
+        kind: ty.kind,
+        args: ty.args.iter().map(|arg| translate_ty(arg)).collect(),
+    })
+}
+
+fn get_type_of_builtin_func(func: &super::BuiltinFunc) -> Candidate {
+    match func {
+        super::BuiltinFunc::New => {
+            let t = Candidate::new(CandidateNode::Var);
+            cand!(Function, cand!(Reference, t.clone()), cand!(Reference, t))
+        }
+        super::BuiltinFunc::Delete => {
+            let t = Candidate::new(CandidateNode::Var);
+            cand!(Function, cand!(Tuple), t)
+        }
+        super::BuiltinFunc::Assign => {
+            let t = Candidate::new(CandidateNode::Var);
+            cand!(
+                Function,
+                cand!(Reference, t.clone()),
+                cand!(Reference, t.clone()),
+                t
+            )
+        }
+        super::BuiltinFunc::Deref => {
+            let t = Candidate::new(CandidateNode::Var);
+            cand!(Function, t.clone(), cand!(Reference, t))
+        }
+        super::BuiltinFunc::AddInt => {
+            cand!(Function, cand!(Integer), cand!(Integer), cand!(Integer))
+        }
+        super::BuiltinFunc::AddFloat => {
+            cand!(Function, cand!(Float), cand!(Float), cand!(Float))
+        }
+        _ => todo!(),
     }
 }

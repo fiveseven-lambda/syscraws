@@ -25,22 +25,27 @@ pub mod translate;
 pub mod ty;
 
 pub struct Program {
-    pub funcs: Vec<Vec<(FuncTy, Func)>>,
-    pub defs: Vec<Block>,
+    pub funcs: Vec<Vec<Func>>,
+    pub defs: Vec<Def>,
     pub vars: Vec<Option<Ty>>,
+}
+
+pub struct Def {
+    pub ret: usize,
+    pub args: Vec<usize>,
+    pub body: Block,
+}
+
+#[derive(Clone)]
+pub struct Ty {
+    pub kind: ty::Kind,
+    pub args: Vec<Ty>,
 }
 
 #[derive(Clone)]
 pub enum Func {
     Builtin(BuiltinFunc),
     Defined(usize),
-}
-
-#[derive(Clone)]
-pub struct FuncTy {
-    pub num_vars: usize,
-    pub args: Vec<Ty>,
-    pub ret: Ty,
 }
 
 #[derive(Clone)]
@@ -51,12 +56,6 @@ pub enum Expr {
     Float(f64),
     String(String),
     Call(Box<Expr>, Vec<Expr>),
-}
-
-#[derive(Clone)]
-pub enum Ty {
-    Var(usize),
-    Const { kind: ty::Kind, args: Vec<Ty> },
 }
 
 #[derive(Clone)]
