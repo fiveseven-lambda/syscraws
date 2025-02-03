@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Atsushi Komaba
+ * Copyright (c) 2023-2025 Atsushi Komaba
  *
  * This file is part of Syscraws.
  * Syscraws is free software: you can redistribute it and/or
@@ -16,27 +16,6 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-//! pre AST から AST への変換を行う．
+#![cfg(test)]
 
-mod error;
-use error::Error;
-mod context;
-use crate::{ast, pre_ast};
-use context::Context;
-pub use error::eprint_errors;
-
-pub fn into_ast(stmts: Vec<pre_ast::PStmt>) -> Result<ast::Program, Vec<Error>> {
-    let mut ctx = Context::new();
-    let mut main = ast::Block::new();
-    let mut scope = Vec::new();
-    for stmt in stmts {
-        ctx.add_toplevel_stmt(&mut main, stmt, &mut scope);
-    }
-    ctx.drop_scope(scope, &mut main);
-    ctx.program.defs.push(main);
-    if ctx.errors.is_empty() {
-        Ok(ctx.program)
-    } else {
-        Err(ctx.errors)
-    }
-}
+use super::*;

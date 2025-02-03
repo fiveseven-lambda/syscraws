@@ -16,18 +16,24 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-mod backend;
-mod frontend;
-mod log;
-
-use clap::Parser;
-
-#[derive(Parser)]
-struct CommandLineArguments {
-    filename: String,
+pub struct Definitions {
+    pub functions: Vec<FunctionDefinition>,
+    pub num_global_variables: usize,
 }
 
-fn main() {
-    let command_line_arguments = CommandLineArguments::parse();
-    frontend::read_input(std::path::Path::new(&command_line_arguments.filename));
+pub struct FunctionDefinition {
+    pub body: Vec<Stmt>,
+    pub num_local_variables: usize,
+}
+
+pub enum Stmt {
+    Expr(Expr),
+    While(Expr, Vec<Stmt>),
+}
+
+pub enum Expr {
+    GlobalVariable(usize),
+    LocalVariable(usize),
+    Function(Vec<usize>),
+    Module(usize),
 }
