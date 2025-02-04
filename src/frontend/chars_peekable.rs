@@ -17,12 +17,8 @@
  */
 
 /*!
- * Defines [`CharsPeekable`], which is used to scan and peek through a
- * string one character at a time.
- *
- * It is used within [`Lexer`](super::token::Lexer) for tokenizing input,
- * and the line ranges it tracks are used to print source code locations in
- * error messages.
+ * Defines [`CharsPeekable`], used in the parser to iterate over the
+ * characters of an input string.
  */
 
 use crate::log::Index;
@@ -30,12 +26,12 @@ use std::ops::Range;
 use std::str::CharIndices;
 
 /**
- * A structure that scans through a string with support for peeking at the
- * next character. The [`peek_char`](Self::peek_char) method allows for
- * lookahead, and the [`peek_index`](Self::peek_index) method retrieves the
- * current position (line and column numbers). Additionally, it tracks the
- * byte ranges of each line, which can be retrieved using the
- * [`lines`](Self::lines) method.
+ * A structure used in the parser to iterate over the characters of an input
+ * string.
+ *
+ * The next character can be peeked using the [`peek_char`](Self::peek_char)
+ * method. It also tracks the byte ranges of each line, which can be
+ * retrieved using the [`lines`](Self::lines) method.
  *
  * # TODO
  * Handle `\r\n` on Windows.
@@ -43,7 +39,7 @@ use std::str::CharIndices;
 pub struct CharsPeekable<'input> {
     /**
      * An iterator over the input string, providing both characters and
-     * their byte positions.
+     * their byte positions from the start.
      */
     iter: CharIndices<'input>,
     /**
@@ -61,8 +57,7 @@ pub struct CharsPeekable<'input> {
      */
     peeked_line_start: usize,
     /**
-     * A vector of the byte ranges of each line in the input string. See the
-     * [`lines`](Self::lines) method for details.
+     * The byte ranges of each line in the input string.
      */
     lines: Vec<Range<usize>>,
 }
@@ -89,10 +84,9 @@ impl<'input> CharsPeekable<'input> {
         self.peeked_char
     }
     /**
-     * Returns the line and column numbers of the next character (same as
-     * [`peek_char`](Self::peek_char)). If at EOF, it returns the index of
-     * where the next character would be, assuming the file ends with or
-     * without a newline.
+     * Returns the line and column numbers of the next character. If at EOF,
+     * it returns the index of where the next character would be,
+     * assuming the file ends with or without a newline.
      */
     pub fn peek_index(&self) -> Index {
         Index {
@@ -127,8 +121,8 @@ impl<'input> CharsPeekable<'input> {
         ret
     }
     /**
-     * Returns a vector of byte ranges representing each line in the input
-     * string. For each line, the range is represented by the byte positions
+     * Returns the byte ranges of each line in the input string.
+     * For each line, the range is represented by the byte positions
      * of the first character of the line and the newline character (`\n`)
      * at the end. If the file ends without a newline, the end of the last
      * range will be the EOF byte position (i.e., the total byte length of

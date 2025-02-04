@@ -20,16 +20,50 @@ use std::fmt::{self, Display, Formatter};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+/**
+ * Called by [`frontend::read_input`](crate::frontend::read_input).
+ */
 pub fn root_file_not_found(path: &Path, err: std::io::Error) {
     eprintln!("ERROR: File `{}` not found. {}", path.display(), err);
 }
 
+/**
+ * Called by [`frontend::read_input`](crate::frontend::read_input).
+ */
 pub fn cannot_read_root_file(path: &Path, err: std::io::Error) {
     eprintln!("ERROR: Cannot read file `{}`. {}", path.display(), err);
 }
 
-pub fn abort(num_errors: u32) {
+/**
+ * Prints a final message before exiting.
+ */
+pub fn aborting(num_errors: u32) {
     eprintln!("Aborting due to {num_errors} previous errors.");
+}
+
+pub fn circular_imports(pos: Pos, file: &File) {
+    eprintln!("ERROR: Circular imports at {pos}.");
+}
+
+pub fn cannot_read_file(path: &Path, file: &File, err: std::io::Error) {
+    eprintln!("ERROR: Cannot read file `{}`. {}", path.display(), err);
+}
+
+pub fn undefined_variable(pos: Pos, file: &File) {
+    eprintln!("ERROR: Undefined variable at {pos}.");
+    file.quote(&pos);
+}
+
+pub struct File {
+    pub path: PathBuf,
+    pub content: String,
+    pub lines: Vec<Range<usize>>,
+}
+
+impl File {
+    fn quote(&self, pos: &Pos) {
+        eprintln!("{}", self.path.display());
+    }
 }
 
 #[derive(Debug)]
@@ -54,6 +88,9 @@ pub enum ParseError {
     },
     MissingMethodName {
         dot_pos: Pos,
+    },
+    MissingItemAfterKeywordExport {
+        keyword_export_pos: Pos,
     },
     MissingFieldName {
         dot_pos: Pos,
@@ -94,7 +131,7 @@ pub enum ParseError {
     },
     UnexpectedTokenAfterImportName {
         unexpected_token_pos: Pos,
-        import_name_pos: Pos,
+        name_pos: Pos,
     },
     UnexpectedTokenAfterKeywordFunc {
         unexpected_token_pos: Pos,
@@ -146,7 +183,7 @@ pub enum ParseError {
 }
 
 impl ParseError {
-    pub fn eprint(&self, path: &Path, text: &str, lines: &[Range<usize>]) {
+    pub fn eprint(&self, file: &File) {
         match self {
             ParseError::UnexpectedToken(unexpected_token_pos) => {
                 eprintln!("Unexpected token at {}", unexpected_token_pos);

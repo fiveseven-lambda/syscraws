@@ -22,16 +22,16 @@ pub struct Definitions {
 }
 
 pub struct FunctionDefinition {
-    pub body: Vec<Stmt>,
+    pub body: Vec<Statement>,
     pub num_local_variables: usize,
 }
 
-pub enum Stmt {
-    Expr(Expr),
-    While(Expr, Vec<Stmt>),
+pub enum Statement {
+    Expr(Expression),
+    While(Expression, Vec<Statement>),
 }
 
-pub enum Expr {
+pub enum Expression {
     GlobalVariable(usize),
     LocalVariable(usize),
     Function(Vec<usize>),
