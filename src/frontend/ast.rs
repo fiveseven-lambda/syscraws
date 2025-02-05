@@ -17,15 +17,17 @@
  */
 
 /*!
- * Defines [`parse_file()`].
+ * Defines the abstract syntax tree and its parser.
  */
 
+mod tests;
 use super::CharsPeekable;
 use crate::log::{Index, ParseError, Pos};
 use enum_iterator::Sequence;
 
 pub struct File {
     pub imports: Vec<Import>,
+    pub struct_definitions: Vec<StructDefinition>,
     pub function_names: Vec<String>,
     pub top_level_statements: Vec<TopLevelStatement>,
 }
@@ -35,6 +37,8 @@ pub struct Import {
     pub name_pos: Pos,
     pub path: String,
 }
+
+pub struct StructDefinition {}
 
 pub enum TopLevelStatement {
     FunctionDefinition {
@@ -147,6 +151,7 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
     let mut parser = Parser::new(chars_peekable)?;
     let mut file = File {
         imports: Vec::new(),
+        struct_definitions: Vec::new(),
         function_names: Vec::new(),
         top_level_statements: Vec::new(),
     };
@@ -169,8 +174,7 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
 
 pub struct Parser<'str, 'iter> {
     iter: &'iter mut CharsPeekable<'str>,
-    next_token_info: Option<TokenInfo>,
-    next_token_start: Index,
+    current_token: TokenInfo,
     prev_token_end: Index,
 }
 
@@ -536,30 +540,30 @@ impl Parser<'_, '_> {
         let start = self.next_token_start();
         let mut left_operand =
             self.parse_binary_operator_rec(allow_line_break, precedence.next())?;
-        /*
-        while let Some((preceding_whitespace, ref token)) = lexer.next_token {
-            if !delimited && preceding_whitespace == PrecedingWhitespace::Vertical {
+        while allow_line_break || !self.current_token.has_line_break {
+            let Some(ref token) = self.current_token.token else {
                 break;
-            } else if let Some(operator) = infix_operator(token, precedence) {
-                let operator_pos = lexer.next_token_pos();
-                lexer.consume_token()?;
-                let right_operand = parse_binary_operator_rec(lexer, delimited, precedence.next())?;
-                left_operand = Some(TermPos {
+            };
+            if let Some(operator) = infix_operator(token, precedence) {
+                let operator_pos = self.next_token_pos();
+                self.consume_token()?;
+                let right_operand =
+                    self.parse_binary_operator_rec(allow_line_break, precedence.next())?;
+                left_operand = Some(TermWithPos {
                     term: Term::BinaryOperation {
                         opt_left_operand: left_operand.map(Box::new),
-                        operator: Box::new(TermPos {
+                        operator: Box::new(TermWithPos {
                             term: Term::MethodName(operator.to_string()),
                             pos: operator_pos,
                         }),
                         opt_right_operand: right_operand.map(Box::new),
                     },
-                    pos: lexer.range_from(start),
+                    pos: self.range_from(start),
                 });
             } else {
                 break;
             }
         }
-        */
         Ok(left_operand)
     }
 
@@ -681,157 +685,155 @@ impl Parser<'_, '_> {
             return Ok(None);
         };
         let mut factor_pos = self.range_from(factor_start);
-        /*
-            while let Some((preceding_whitespace, ref token)) = lexer.next_token {
-                if let Token::Dot = token {
-                    let dot_pos = lexer.next_token_pos();
-                    lexer.consume_token()?;
-                    if let Some(Token::Identifier(ref mut name)) = lexer.next_token_mut() {
-                        let name = std::mem::take(name);
-                        lexer.consume_token()?;
-                        factor = Term::FieldByName {
-                            term_left: Box::new(TermWithPos {
-                                term: factor,
-                                pos: factor_pos,
-                            }),
-                            name,
-                        };
-                        factor_pos = lexer.range_from(factor_start);
-                    } else if let Some((_, Token::Digits(ref mut number))) = lexer.next_token {
-                        let number = std::mem::take(number);
-                        lexer.consume_token()?;
-                        factor = Term::FieldByNumber {
-                            term_left: Box::new(TermWithPos {
-                                term: factor,
-                                pos: factor_pos,
-                            }),
-                            number,
-                        };
-                        factor_pos = lexer.range_from(factor_start);
-                    } else {
-                        panic!();
-                    }
-                } else if let Token::Colon = token {
-                    let colon_pos = lexer.next_token_pos();
-                    lexer.consume_token()?;
-                    let opt_term_right = parse_factor(lexer, delimited)?;
-                    factor = Term::TypeAnnotation {
-                        term_left: Box::new(TermPos {
+        while let Some(ref token) = self.current_token.token {
+            if let Token::Dot = token {
+                let dot_pos = self.next_token_pos();
+                self.consume_token()?;
+                if let Some(Token::Identifier(ref mut name)) = self.next_token_mut() {
+                    let name = std::mem::take(name);
+                    self.consume_token()?;
+                    factor = Term::FieldByName {
+                        term_left: Box::new(TermWithPos {
                             term: factor,
                             pos: factor_pos,
                         }),
-                        colon_pos,
-                        opt_term_right: opt_term_right.map(Box::new),
+                        name,
                     };
-                    factor_pos = lexer.range_from(factor_start);
-                } else if !delimited && preceding_whitespace == PrecedingWhitespace::Vertical {
-                    break;
-                } else if let Token::HyphenGreater = token {
-                    let arrow_pos = lexer.next_token_pos();
-                    lexer.consume_token()?;
-                    let opt_ret = parse_factor(lexer, delimited)?;
-                    factor = Term::ReturnType {
-                        arrow_pos,
-                        args: Box::new(TermPos {
+                    factor_pos = self.range_from(factor_start);
+                } else if let Some(Token::Digits(ref mut number)) = self.current_token.token {
+                    let number = std::mem::take(number);
+                    self.consume_token()?;
+                    factor = Term::FieldByNumber {
+                        term_left: Box::new(TermWithPos {
                             term: factor,
                             pos: factor_pos,
                         }),
-                        opt_ret: opt_ret.map(Box::new),
+                        number,
                     };
-                    factor_pos = lexer.range_from(factor_start);
-                } else if let Token::OpeningParenthesis = token {
-                    let opening_parenthesis_pos = lexer.next_token_pos();
-                    lexer.consume_token()?;
-                    let mut elements = Vec::new();
-                    loop {
-                        let element = parse_assign(lexer, true)?;
-                        match lexer.next_token {
-                            Some((_, Token::ClosingParenthesis)) => {
-                                lexer.consume_token()?;
-                                if let Some(element) = element {
-                                    elements.push(ListElement::NonEmpty(element));
-                                }
-                                break;
-                            }
-                            Some((_, Token::Comma)) => {
-                                let comma_pos = lexer.next_token_pos();
-                                lexer.consume_token()?;
-                                if let Some(element) = element {
-                                    elements.push(ListElement::NonEmpty(element));
-                                } else {
-                                    elements.push(ListElement::Empty { comma_pos })
-                                }
-                            }
-                            Some(_) => {
-                                return Err(ParseError::UnexpectedTokenInParentheses {
-                                    unexpected_token_pos: lexer.next_token_pos(),
-                                    opening_parenthesis_pos,
-                                });
-                            }
-                            None => {
-                                return Err(ParseError::UnclosedParenthesis {
-                                    opening_parenthesis_pos,
-                                });
-                            }
-                        }
-                    }
-                    factor = Term::FunctionCall {
-                        function: Box::new(TermPos {
-                            term: factor,
-                            pos: factor_pos,
-                        }),
-                        arguments: elements,
-                    };
-                    factor_pos = lexer.range_from(factor_start);
-                } else if let Token::OpeningBracket = token {
-                    let opening_bracket_pos = lexer.next_token_pos();
-                    lexer.consume_token()?;
-                    let mut elements = Vec::new();
-                    loop {
-                        let element = parse_assign(lexer, true)?;
-                        match lexer.next_token {
-                            Some((_, Token::ClosingBracket)) => {
-                                lexer.consume_token()?;
-                                if let Some(element) = element {
-                                    elements.push(ListElement::NonEmpty(element));
-                                }
-                                break;
-                            }
-                            Some((_, Token::Comma)) => {
-                                let comma_pos = lexer.next_token_pos();
-                                lexer.consume_token()?;
-                                if let Some(element) = element {
-                                    elements.push(ListElement::NonEmpty(element));
-                                } else {
-                                    elements.push(ListElement::Empty { comma_pos })
-                                }
-                            }
-                            Some(_) => {
-                                return Err(ParseError::UnexpectedTokenInBrackets {
-                                    unexpected_token_pos: lexer.next_token_pos(),
-                                    opening_bracket_pos,
-                                });
-                            }
-                            None => {
-                                return Err(ParseError::UnclosedBracket {
-                                    opening_bracket_pos,
-                                });
-                            }
-                        }
-                    }
-                    factor = Term::TypeParameters {
-                        term_left: Box::new(TermPos {
-                            term: factor,
-                            pos: factor_pos,
-                        }),
-                        parameters: elements,
-                    };
-                    factor_pos = lexer.range_from(factor_start);
+                    factor_pos = self.range_from(factor_start);
                 } else {
-                    break;
+                    panic!();
                 }
+            } else if let Token::Colon = token {
+                let colon_pos = self.next_token_pos();
+                self.consume_token()?;
+                let opt_term_right = self.parse_factor(allow_line_break)?;
+                factor = Term::TypeAnnotation {
+                    term_left: Box::new(TermWithPos {
+                        term: factor,
+                        pos: factor_pos,
+                    }),
+                    colon_pos,
+                    opt_term_right: opt_term_right.map(Box::new),
+                };
+                factor_pos = self.range_from(factor_start);
+            } else if !allow_line_break && self.current_token.has_line_break {
+                break;
+            } else if let Token::HyphenGreater = token {
+                let arrow_pos = self.next_token_pos();
+                self.consume_token()?;
+                let opt_ret = self.parse_factor(allow_line_break)?;
+                factor = Term::ReturnType {
+                    arrow_pos,
+                    args: Box::new(TermWithPos {
+                        term: factor,
+                        pos: factor_pos,
+                    }),
+                    opt_ret: opt_ret.map(Box::new),
+                };
+                factor_pos = self.range_from(factor_start);
+            } else if let Token::OpeningParenthesis = token {
+                let opening_parenthesis_pos = self.next_token_pos();
+                self.consume_token()?;
+                let mut elements = Vec::new();
+                loop {
+                    let element = self.parse_assign(true)?;
+                    match self.current_token.token {
+                        Some(Token::ClosingParenthesis) => {
+                            self.consume_token()?;
+                            if let Some(element) = element {
+                                elements.push(ListElement::NonEmpty(element));
+                            }
+                            break;
+                        }
+                        Some(Token::Comma) => {
+                            let comma_pos = self.next_token_pos();
+                            self.consume_token()?;
+                            if let Some(element) = element {
+                                elements.push(ListElement::NonEmpty(element));
+                            } else {
+                                elements.push(ListElement::Empty { comma_pos })
+                            }
+                        }
+                        Some(_) => {
+                            return Err(ParseError::UnexpectedTokenInParentheses {
+                                unexpected_token_pos: self.next_token_pos(),
+                                opening_parenthesis_pos,
+                            });
+                        }
+                        None => {
+                            return Err(ParseError::UnclosedParenthesis {
+                                opening_parenthesis_pos,
+                            });
+                        }
+                    }
+                }
+                factor = Term::FunctionCall {
+                    function: Box::new(TermWithPos {
+                        term: factor,
+                        pos: factor_pos,
+                    }),
+                    arguments: elements,
+                };
+                factor_pos = self.range_from(factor_start);
+            } else if let Token::OpeningBracket = token {
+                let opening_bracket_pos = self.next_token_pos();
+                self.consume_token()?;
+                let mut elements = Vec::new();
+                loop {
+                    let element = self.parse_assign(true)?;
+                    match self.current_token.token {
+                        Some(Token::ClosingBracket) => {
+                            self.consume_token()?;
+                            if let Some(element) = element {
+                                elements.push(ListElement::NonEmpty(element));
+                            }
+                            break;
+                        }
+                        Some(Token::Comma) => {
+                            let comma_pos = self.next_token_pos();
+                            self.consume_token()?;
+                            if let Some(element) = element {
+                                elements.push(ListElement::NonEmpty(element));
+                            } else {
+                                elements.push(ListElement::Empty { comma_pos })
+                            }
+                        }
+                        Some(_) => {
+                            return Err(ParseError::UnexpectedTokenInBrackets {
+                                unexpected_token_pos: self.next_token_pos(),
+                                opening_bracket_pos,
+                            });
+                        }
+                        None => {
+                            return Err(ParseError::UnclosedBracket {
+                                opening_bracket_pos,
+                            });
+                        }
+                    }
+                }
+                factor = Term::TypeParameters {
+                    term_left: Box::new(TermWithPos {
+                        term: factor,
+                        pos: factor_pos,
+                    }),
+                    parameters: elements,
+                };
+                factor_pos = self.range_from(factor_start);
+            } else {
+                break;
             }
-        */
+        }
         Ok(Some(TermWithPos {
             term: factor,
             pos: factor_pos,
@@ -909,18 +911,7 @@ fn assignment_operator(token: &Token) -> Option<&'static str> {
  */
 #[derive(Debug, PartialEq, Eq)]
 pub enum Token {
-    /**
-     * /\[`0`-`9`\](\[`Ee`\]\[`+-`\]|\p{XIDC})*\/u.
-     * Consists numeric literals.
-     */
     Digits(String),
-    /**
-     * /`"`(\[^`{}"\\`\]|`\\`\[`0nrt"'\\`\]|`{{`|`}}`|`\
-     * ${`[Term](super::Term)`}`)*`"`/.
-     *
-     * Since it can contain a [Term](super::Term), we need to call a parser
-     * function in [`parser`].
-     */
     StringLiteral(Vec<StringLiteralComponent>),
     KeywordImport,
     KeywordExport,
@@ -987,47 +978,49 @@ pub enum Token {
 }
 
 struct TokenInfo {
-    token: Token,
-    is_adjacent: bool,
-    is_on_new_line: bool,
+    token: Option<Token>,
+    start_index: Index,
+    has_line_break: bool,
 }
 
 impl<'str, 'iter> Parser<'str, 'iter> {
-    pub fn new(iter: &'iter mut CharsPeekable<'str>) -> Result<Self, ParseError> {
-        let (first_token_start, first_token_info) = read_token(iter, true, true)?;
-        Ok(Self {
+    fn new(iter: &'iter mut CharsPeekable<'str>) -> Result<Parser<'str, 'iter>, ParseError> {
+        let first_token = read_token(iter, false)?;
+        Ok(Parser {
             iter,
-            next_token_info: first_token_info,
-            next_token_start: first_token_start,
+            current_token: first_token,
             prev_token_end: Index { line: 0, column: 0 },
         })
     }
 }
+
 impl Parser<'_, '_> {
     pub fn next_token_ref(&self) -> Option<&Token> {
-        Some(&self.next_token_info.as_ref()?.token)
+        self.current_token.token.as_ref()
     }
     pub fn next_token_mut(&mut self) -> Option<&mut Token> {
-        Some(&mut self.next_token_info.as_mut()?.token)
+        self.current_token.token.as_mut()
     }
     pub fn adjacent_token_ref(&self) -> Option<&Token> {
-        let TokenInfo {
-            token, is_adjacent, ..
-        } = self.next_token_info.as_ref()?;
-        is_adjacent.then_some(token)
+        if self.current_token.start_index == self.prev_token_end {
+            self.current_token.token.as_ref()
+        } else {
+            None
+        }
     }
     pub fn adjacent_token_mut(&mut self) -> Option<&mut Token> {
-        let TokenInfo {
-            token, is_adjacent, ..
-        } = self.next_token_info.as_mut()?;
-        is_adjacent.then_some(token)
+        if self.current_token.start_index == self.prev_token_end {
+            self.current_token.token.as_mut()
+        } else {
+            None
+        }
     }
     pub fn next_token_start(&self) -> Index {
-        self.next_token_start
+        self.current_token.start_index
     }
     pub fn next_token_pos(&self) -> Pos {
         Pos {
-            start: self.next_token_start,
+            start: self.current_token.start_index,
             end: self.iter.peek_index(),
         }
     }
@@ -1038,51 +1031,44 @@ impl Parser<'_, '_> {
         }
     }
     pub fn next_token_on_current_line_ref(&self) -> Option<&Token> {
-        let TokenInfo {
-            token,
-            is_on_new_line,
-            ..
-        } = self.next_token_info.as_ref()?;
-        (!is_on_new_line).then_some(token)
+        if self.current_token.has_line_break {
+            None
+        } else {
+            self.current_token.token.as_ref()
+        }
     }
     pub fn next_token_on_current_line_mut(&mut self) -> Option<&mut Token> {
-        let TokenInfo {
-            token,
-            is_on_new_line,
-            ..
-        } = self.next_token_info.as_mut()?;
-        (!*is_on_new_line).then_some(token)
+        if self.current_token.has_line_break {
+            None
+        } else {
+            self.current_token.token.as_mut()
+        }
     }
     pub fn has_remaining_token(&self) -> bool {
-        self.next_token_info.is_some()
+        self.current_token.token.is_some()
     }
     pub fn has_remaining_token_on_current_line(&self) -> bool {
-        self.next_token_info
-            .as_ref()
-            .is_some_and(|token_info| !token_info.is_on_new_line)
+        self.current_token.token.is_some() && !self.current_token.has_line_break
     }
     pub fn consume_token(&mut self) -> Result<(), ParseError> {
         self.prev_token_end = self.iter.peek_index();
-        let (token_start, token_info) = read_token(&mut self.iter, true, false)?;
-        self.next_token_start = token_start;
-        self.next_token_info = token_info;
+        self.current_token = read_token(&mut self.iter, false)?;
         Ok(())
     }
 }
 
-fn read_token(
-    iter: &mut CharsPeekable,
-    mut is_adjacent: bool,
-    mut is_on_new_line: bool,
-) -> Result<(Index, Option<TokenInfo>), ParseError> {
+fn read_token(iter: &mut CharsPeekable, mut has_line_break: bool) -> Result<TokenInfo, ParseError> {
     let (start_index, first_ch) = loop {
         let Some(ch) = iter.peek_char() else {
-            return Ok((iter.peek_index(), None));
+            return Ok(TokenInfo {
+                token: None,
+                start_index: iter.peek_index(),
+                has_line_break,
+            });
         };
         if ch.is_ascii_whitespace() {
-            is_adjacent = false;
             if ch == '\n' {
-                is_on_new_line = true
+                has_line_break = true
             }
             iter.consume();
         } else {
@@ -1172,13 +1158,7 @@ fn read_token(
                     components.push(StringLiteralComponent::String(std::mem::take(&mut buf)))
                 }
                 if action == Action::Expr {
-                    let (first_token_start, first_token_info) = read_token(iter, true, false)?;
-                    let mut parser = Parser {
-                        iter,
-                        next_token_info: first_token_info,
-                        next_token_start: first_token_start,
-                        prev_token_end: Index { line: 0, column: 0 },
-                    };
+                    let mut parser = Parser::new(iter)?;
                     let expr = parser.parse_disjunction(true)?;
                     components.push(StringLiteralComponent::Term(expr));
                 } else if action == Action::Border {
@@ -1228,7 +1208,7 @@ fn read_token(
         '-' => {
             if iter.consume_if('-') {
                 skip_line_comment(iter);
-                return read_token(iter, false, true);
+                return read_token(iter, true);
             } else if iter.consume_if('=') {
                 Token::HyphenEqual
             } else if iter.consume_if('>') {
@@ -1247,14 +1227,14 @@ fn read_token(
         '/' => {
             if iter.consume_if('-') {
                 skip_block_comment(iter, start_index, '/', '-', '-', '/')?;
-                return read_token(iter, false, is_on_new_line);
+                return read_token(iter, has_line_break);
             } else if iter.consume_if('/') {
-                if !is_on_new_line {
+                if !has_line_break {
                     return Err(ParseError::InvalidBlockComment { start_index });
                 }
                 skip_block_comment(iter, start_index, '/', '/', '\\', '\\')?;
                 skip_line_comment(iter);
-                return read_token(iter, false, true);
+                return read_token(iter, true);
             } else if iter.consume_if('=') {
                 Token::SlashEqual
             } else {
@@ -1350,14 +1330,11 @@ fn read_token(
         '$' => Token::Dollar,
         _ => return Err(ParseError::UnexpectedCharacter(start_index)),
     };
-    Ok((
+    Ok(TokenInfo {
+        token: Some(token),
         start_index,
-        Some(TokenInfo {
-            token,
-            is_on_new_line,
-            is_adjacent,
-        }),
-    ))
+        has_line_break,
+    })
 }
 
 fn skip_line_comment(iter: &mut CharsPeekable) {

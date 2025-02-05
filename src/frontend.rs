@@ -24,7 +24,6 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use crate::backend;
 use crate::log;
 use chars_peekable::CharsPeekable;
 
@@ -98,8 +97,9 @@ impl Reader {
         };
         match result {
             Ok(File {
-                function_names,
                 imports,
+                struct_definitions,
+                function_names,
                 top_level_statements,
             }) => {
                 let mut named_items = HashMap::new();
@@ -167,11 +167,23 @@ impl Reader {
                             };
                             let mut local_scope = Vec::new();
                             for statement in body {
-                                local.translate_statement(statement, &mut local_scope);
+                                local.translate_statement(
+                                    statement,
+                                    &mut local_scope,
+                                    Some(&global.variables),
+                                    &named_items,
+                                    &self.exported_items,
+                                );
                             }
                         }
                         TopLevelStatement::Statement(statement) => {
-                            global.translate_statement(statement, &mut global_scope);
+                            global.translate_statement(
+                                statement,
+                                &mut global_scope,
+                                None,
+                                &named_items,
+                                &self.exported_items,
+                            );
                         }
                     }
                 }
@@ -202,9 +214,29 @@ impl Context {
         &mut self,
         statement: Statement,
         scope: &mut Vec<(String, Option<usize>)>,
+        global_variables: Option<&HashMap<String, usize>>,
+        named_items: &HashMap<String, Item>,
+        exported_items: &Vec<HashMap<String, Item>>,
     ) {
         match statement {
-            Statement::Term(term) => {}
+            Statement::Term(term) => {
+                let expr = match global_variables {
+                    Some(global_variables) => translate_expression(
+                        term,
+                        Some(&self.variables),
+                        global_variables,
+                        named_items,
+                        exported_items,
+                    ),
+                    None => translate_expression(
+                        term,
+                        None,
+                        &self.variables,
+                        named_items,
+                        exported_items,
+                    ),
+                };
+            }
             Statement::VariableDeclaration(name) => {
                 let Term::Identifier(name) = name.term else {
                     todo!();
@@ -217,7 +249,13 @@ impl Context {
             Statement::While(condition, body) => {
                 let mut body_scope = Vec::new();
                 for stmt in body {
-                    self.translate_statement(stmt, &mut body_scope);
+                    self.translate_statement(
+                        stmt,
+                        &mut body_scope,
+                        global_variables,
+                        named_items,
+                        exported_items,
+                    );
                 }
                 for (name, prev_index) in body_scope.into_iter().rev() {
                     match prev_index {
@@ -227,6 +265,19 @@ impl Context {
                 }
             }
         }
+    }
+}
+
+fn translate_expression(
+    term: TermWithPos,
+    local_variables: Option<&HashMap<String, usize>>,
+    global_variables: &HashMap<String, usize>,
+    named_items: &HashMap<String, Item>,
+    exported_items: &Vec<HashMap<String, Item>>,
+) {
+    match term.term {
+        Term::Identifier(name) => {}
+        _ => todo!(),
     }
 }
 
