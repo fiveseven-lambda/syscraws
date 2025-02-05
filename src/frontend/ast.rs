@@ -27,37 +27,36 @@ use enum_iterator::Sequence;
 
 pub struct File {
     pub imports: Vec<Import>,
-    pub struct_definitions: Vec<StructDefinition>,
+    pub structure_definitions: Vec<StructDefinition>,
     pub function_names: Vec<String>,
     pub top_level_statements: Vec<TopLevelStatement>,
 }
 
 pub struct Import {
-    pub name: String,
-    pub name_pos: Pos,
-    pub path: String,
+    pub keyword_import_pos: Pos,
+    pub target: Option<TermWithPos>,
 }
 
 pub struct StructDefinition {}
 
 pub enum TopLevelStatement {
     FunctionDefinition {
-        opt_type_parameters: Option<Vec<ListElement>>,
-        opt_parameters: Option<Vec<ListElement>>,
-        opt_ret_ty: Option<RetTy>,
+        type_parameters: Option<Vec<ListElement>>,
+        parameters: Option<Vec<ListElement>>,
+        return_ty: Option<ReturnType>,
         body: Vec<Statement>,
     },
     Statement(Statement),
 }
 
-pub struct RetTy {
+pub struct ReturnType {
     pub arrow_pos: Pos,
-    pub opt_ret_ty: Option<TermWithPos>,
+    pub ty: Option<TermWithPos>,
 }
 
 pub enum Statement {
     VariableDeclaration(TermWithPos),
-    Term(TermWithPos),
+    Expression(TermWithPos),
     While(TermWithPos, Vec<Statement>),
 }
 
@@ -87,28 +86,28 @@ pub enum Term {
     TypeAnnotation {
         term_left: Box<TermWithPos>,
         colon_pos: Pos,
-        opt_term_right: Option<Box<TermWithPos>>,
+        term_right: Option<Box<TermWithPos>>,
     },
     UnaryOperation {
         operator: Box<TermWithPos>,
-        opt_operand: Option<Box<TermWithPos>>,
+        operand: Option<Box<TermWithPos>>,
     },
     BinaryOperation {
-        opt_left_operand: Option<Box<TermWithPos>>,
+        left_operand: Option<Box<TermWithPos>>,
         operator: Box<TermWithPos>,
-        opt_right_operand: Option<Box<TermWithPos>>,
+        right_operand: Option<Box<TermWithPos>>,
     },
     Assignment {
-        opt_left_hand_side: Option<Box<TermWithPos>>,
+        left_hand_side: Option<Box<TermWithPos>>,
         operator: Box<TermWithPos>,
-        opt_right_hand_side: Option<Box<TermWithPos>>,
+        right_hand_side: Option<Box<TermWithPos>>,
     },
     Conjunction {
-        opt_conditions: Vec<Option<TermWithPos>>,
+        conditions: Vec<Option<TermWithPos>>,
         operators_pos: Vec<Pos>,
     },
     Disjunction {
-        opt_conditions: Vec<Option<TermWithPos>>,
+        conditions: Vec<Option<TermWithPos>>,
         operators_pos: Vec<Pos>,
     },
     Parenthesized {
@@ -127,15 +126,18 @@ pub enum Term {
     },
     ReturnType {
         arrow_pos: Pos,
-        args: Box<TermWithPos>,
-        opt_ret: Option<Box<TermWithPos>>,
+        parameters: Box<TermWithPos>,
+        return_ty: Option<Box<TermWithPos>>,
     },
 }
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum StringLiteralComponent {
     String(String),
-    Term(Option<TermWithPos>),
+    PlaceHolder {
+        format: String,
+        value: Option<TermWithPos>,
+    },
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -151,13 +153,16 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
     let mut parser = Parser::new(chars_peekable)?;
     let mut file = File {
         imports: Vec::new(),
-        struct_definitions: Vec::new(),
+        structure_definitions: Vec::new(),
         function_names: Vec::new(),
         top_level_statements: Vec::new(),
     };
-    while let Some(item_start_token) = parser.next_token_mut() {
+    while let Some(item_start_token) = &mut parser.current.token {
         if let Token::KeywordImport = item_start_token {
             file.imports.push(parser.parse_import()?);
+        } else if let Token::KeywordStruct = item_start_token {
+            file.structure_definitions
+                .push(parser.parse_structure_definition()?);
         } else if let Token::KeywordFunc = item_start_token {
             let (name, definition) = parser.parse_function_definition()?;
             file.function_names.push(name);
@@ -166,16 +171,105 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
             file.top_level_statements
                 .push(TopLevelStatement::Statement(statement));
         } else {
-            return Err(ParseError::UnexpectedToken(parser.next_token_pos()));
+            return Err(ParseError::UnexpectedToken(parser.current_pos()));
         }
     }
     Ok(file)
 }
 
-pub struct Parser<'str, 'iter> {
+struct Parser<'str, 'iter> {
     iter: &'iter mut CharsPeekable<'str>,
-    current_token: TokenInfo,
-    prev_token_end: Index,
+    current: TokenInfo,
+    prev_end: Index,
+}
+
+impl<'str, 'iter> Parser<'str, 'iter> {
+    fn new(iter: &'iter mut CharsPeekable<'str>) -> Result<Parser<'str, 'iter>, ParseError> {
+        let start = iter.index();
+        let first_token = read_token(iter, false)?;
+        Ok(Parser {
+            iter,
+            current: first_token,
+            prev_end: start,
+        })
+    }
+}
+
+struct TokenInfo {
+    token: Option<Token>,
+    start: Index,
+    is_on_new_line: bool,
+}
+
+/**
+ * Tokens.
+ */
+#[derive(Debug, PartialEq, Eq)]
+enum Token {
+    Digits(String),
+    StringLiteral(Vec<StringLiteralComponent>),
+    KeywordImport,
+    KeywordExport,
+    KeywordStruct,
+    KeywordFunc,
+    KeywordMethod,
+    KeywordIf,
+    KeywordElse,
+    KeywordWhile,
+    KeywordBreak,
+    KeywordContinue,
+    KeywordReturn,
+    KeywordEnd,
+    KeywordVar,
+    KeywordInt,
+    KeywordFloat,
+    Underscore,
+    Identifier(String),
+    Plus,
+    PlusEqual,
+    Hyphen,
+    HyphenEqual,
+    HyphenGreater,
+    Asterisk,
+    AsteriskEqual,
+    Slash,
+    SlashEqual,
+    Percent,
+    PercentEqual,
+    Equal,
+    DoubleEqual,
+    EqualGreater,
+    Exclamation,
+    ExclamationEqual,
+    Greater,
+    GreaterEqual,
+    DoubleGreater,
+    DoubleGreaterEqual,
+    Less,
+    LessEqual,
+    DoubleLess,
+    DoubleLessEqual,
+    Ampersand,
+    AmpersandEqual,
+    DoubleAmpersand,
+    Bar,
+    BarEqual,
+    DoubleBar,
+    Circumflex,
+    CircumflexEqual,
+    Dot,
+    Colon,
+    Semicolon,
+    Comma,
+    Question,
+    Tilde,
+    Dollar,
+    OpeningParenthesis,
+    ClosingParenthesis,
+    OpeningBracket,
+    ClosingBracket,
+    OpeningBrace,
+    ClosingBrace,
 }
 
 impl Parser<'_, '_> {
@@ -183,165 +277,120 @@ impl Parser<'_, '_> {
      * Parses an import statement.
      */
     fn parse_import(&mut self) -> Result<Import, ParseError> {
-        let keyword_import_pos = self.next_token_pos();
+        let keyword_import_pos = self.current_pos();
         self.consume_token()?;
 
-        // An identifier should immediately follow `import`, without a line break.
-        let name = match self.next_token_on_current_line_mut() {
-            Some(Token::Identifier(name)) => std::mem::take(name),
-            Some(_) => {
-                let unexpected_token_pos = self.next_token_pos();
-                return Err(ParseError::UnexpectedTokenAfterKeywordImport {
-                    unexpected_token_pos,
-                    keyword_import_pos,
-                });
-            }
-            None => return Err(ParseError::MissingImportName { keyword_import_pos }),
+        // The target to import should immediately follow the keyword `import`, without
+        // a line break.
+        let target = if self.current.is_on_new_line {
+            None
+        } else {
+            self.parse_factor(false)?
         };
-        let name_pos = self.next_token_pos();
-        self.consume_token()?;
 
-        // The path can be specified by the following string literal in parentheses.
-        // Inferred from import_name if omitted.
-        let path = match self.next_token_on_current_line_ref() {
-            Some(Token::OpeningParenthesis) => {
-                let opening_parenthesis_pos = self.next_token_pos();
-                self.consume_token()?;
-
-                let path = self.parse_assign(true)?;
-                match self.next_token_ref() {
-                    Some(Token::ClosingParenthesis) => {}
-                    Some(_) => {
-                        let unexpected_token_pos = self.next_token_pos();
-                        return Err(ParseError::UnexpectedTokenInParentheses {
-                            unexpected_token_pos,
-                            opening_parenthesis_pos,
-                        });
-                    }
-                    None => {
-                        return Err(ParseError::UnclosedParenthesis {
-                            opening_parenthesis_pos,
-                        })
-                    }
-                }
-                let closing_parenthesis_pos = self.next_token_pos();
-                self.consume_token()?;
-
-                let Some(path) = path else {
-                    return Err(ParseError::MissingImportPath {
-                        opening_parenthesis_pos,
-                        closing_parenthesis_pos,
-                    });
-                };
-
-                let Term::StringLiteral(mut components) = path.term else {
-                    return Err(ParseError::InvalidImportPath { term_pos: path.pos });
-                };
-                if components.len() != 1 {
-                    return Err(ParseError::InvalidImportPath { term_pos: path.pos });
-                }
-                let Some(StringLiteralComponent::String(path)) = components.pop() else {
-                    return Err(ParseError::InvalidImportPath { term_pos: path.pos });
-                };
-                path
-            }
-            Some(_) => {
-                let unexpected_token_pos = self.next_token_pos();
-                return Err(ParseError::UnexpectedTokenAfterImportName {
-                    name_pos,
-                    unexpected_token_pos,
-                });
-            }
-            None => name.clone(),
-        };
+        if !self.current.is_on_new_line && self.current.token.is_some() {
+            todo!();
+        }
 
         Ok(Import {
-            name,
-            name_pos,
-            path,
+            keyword_import_pos,
+            target,
         })
     }
 
+    fn parse_structure_definition(&mut self) -> Result<StructDefinition, ParseError> {
+        todo!();
+    }
+
     fn parse_function_definition(&mut self) -> Result<(String, TopLevelStatement), ParseError> {
-        let keyword_func_pos = self.next_token_pos();
+        let keyword_func_pos = self.current_pos();
         self.consume_token()?;
 
-        // An identifier should immediately follow `import`, without a line break.
-        let function_name = match self.next_token_on_current_line_mut() {
+        // An identifier should immediately follow `func`, without a line break.
+        if self.current.is_on_new_line {
+            return Err(ParseError::MissingFunctionName { keyword_func_pos });
+        }
+        let function_name = match &mut self.current.token {
             Some(Token::Identifier(name)) => std::mem::take(name),
             Some(_) => {
                 return Err(ParseError::UnexpectedTokenAfterKeywordFunc {
-                    unexpected_token_pos: self.next_token_pos(),
+                    unexpected_token_pos: self.current_pos(),
                     keyword_func_pos,
-                });
+                })
             }
             None => return Err(ParseError::MissingFunctionName { keyword_func_pos }),
         };
         self.consume_token()?;
 
         // Generic parameters list can follow.
-        let opt_type_parameters =
-            if let Some(Token::OpeningBracket) = self.next_token_on_current_line_ref() {
-                todo!("Parse generic parameters");
-            } else {
-                None
-            };
+        let type_parameters = if self.current.is_on_new_line {
+            None
+        } else if let Some(Token::OpeningBracket) = self.current.token {
+            todo!("Parse generic parameters");
+        } else {
+            None
+        };
 
         // parameters list follows.
-        let opt_parameters =
-            if let Some(Token::OpeningParenthesis) = self.next_token_on_current_line_ref() {
-                let opening_parenthesis_pos = self.next_token_pos();
-                self.consume_token()?;
+        let parameters = if self.current.is_on_new_line {
+            None
+        } else if let Some(Token::OpeningParenthesis) = self.current.token {
+            let opening_parenthesis_pos = self.current_pos();
+            self.consume_token()?;
 
-                let mut parameters = Vec::new();
-                loop {
-                    let parameter = self.parse_assign(true)?;
-                    match self.next_token_ref() {
-                        Some(Token::ClosingParenthesis) => {
-                            self.consume_token()?;
-                            if let Some(element) = parameter {
-                                parameters.push(ListElement::NonEmpty(element));
-                            }
-                            break;
+            let mut parameters = Vec::new();
+            loop {
+                let parameter = self.parse_assign(true)?;
+                match self.current.token {
+                    Some(Token::ClosingParenthesis) => {
+                        self.consume_token()?;
+                        if let Some(element) = parameter {
+                            parameters.push(ListElement::NonEmpty(element));
                         }
-                        Some(Token::Comma) => {
-                            let comma_pos = self.next_token_pos();
-                            self.consume_token()?;
-                            if let Some(element) = parameter {
-                                parameters.push(ListElement::NonEmpty(element));
-                            } else {
-                                parameters.push(ListElement::Empty { comma_pos })
-                            }
-                        }
-                        Some(_) => {
-                            return Err(ParseError::UnexpectedTokenInParentheses {
-                                unexpected_token_pos: self.next_token_pos(),
-                                opening_parenthesis_pos,
-                            });
-                        }
-                        None => {
-                            return Err(ParseError::UnclosedParenthesis {
-                                opening_parenthesis_pos,
-                            });
+                        break;
+                    }
+                    Some(Token::Comma) => {
+                        let comma_pos = self.current_pos();
+                        self.consume_token()?;
+                        if let Some(element) = parameter {
+                            parameters.push(ListElement::NonEmpty(element));
+                        } else {
+                            parameters.push(ListElement::Empty { comma_pos })
                         }
                     }
+                    Some(_) => {
+                        return Err(ParseError::UnexpectedTokenInParentheses {
+                            unexpected_token_pos: self.current_pos(),
+                            opening_parenthesis_pos,
+                        });
+                    }
+                    None => {
+                        return Err(ParseError::UnclosedParenthesis {
+                            opening_parenthesis_pos,
+                        });
+                    }
                 }
-                Some(parameters)
-            } else {
-                None
-            };
+            }
+            Some(parameters)
+        } else {
+            None
+        };
 
         // The return type can be written after `->` or `:` (undecided).
-        let opt_ret_ty = if let Some(Token::HyphenGreater) = self.next_token_ref() {
-            let arrow_pos = self.next_token_pos();
+        let ret_ty = if let Some(Token::HyphenGreater) = self.current.token {
+            let arrow_pos = self.current_pos();
             self.consume_token()?;
-            Some(RetTy {
+            Some(ReturnType {
                 arrow_pos,
-                opt_ret_ty: self.parse_disjunction(false)?,
+                ty: self.parse_disjunction(false)?,
             })
         } else {
             None
         };
+
+        if !self.current.is_on_new_line && self.current.token.is_some() {
+            todo!();
+        }
 
         // The function body follows.
         let body = self.parse_block(&mut vec![keyword_func_pos.line()])?;
@@ -349,9 +398,9 @@ impl Parser<'_, '_> {
         Ok((
             function_name,
             TopLevelStatement::FunctionDefinition {
-                opt_parameters,
-                opt_type_parameters,
-                opt_ret_ty,
+                parameters,
+                type_parameters,
+                return_ty: ret_ty,
                 body,
             },
         ))
@@ -366,14 +415,14 @@ impl Parser<'_, '_> {
     ) -> Result<Vec<Statement>, ParseError> {
         let mut body = Vec::new();
         loop {
-            if let Some(Token::KeywordEnd) = self.next_token_ref() {
+            if let Some(Token::KeywordEnd) = self.current.token {
                 self.consume_token()?;
                 return Ok(body);
             } else if let Some(statement) = self.parse_statement(start_line_indices)? {
                 body.push(statement);
-            } else if self.has_remaining_token() {
+            } else if self.current.token.is_some() {
                 return Err(ParseError::UnexpectedTokenInBlock {
-                    unexpected_token_pos: self.next_token_pos(),
+                    unexpected_token_pos: self.current_pos(),
                     start_line_indices: std::mem::take(start_line_indices),
                 });
             } else {
@@ -388,27 +437,27 @@ impl Parser<'_, '_> {
         &mut self,
         start_line_indices: &mut Vec<usize>,
     ) -> Result<Option<Statement>, ParseError> {
-        if let Some(Token::KeywordVar) = self.next_token_ref() {
+        if let Some(Token::KeywordVar) = self.current.token {
             self.parse_variable_declaration().map(Option::Some)
-        } else if let Some(Token::KeywordWhile) = self.next_token_ref() {
+        } else if let Some(Token::KeywordWhile) = self.current.token {
             self.parse_while_statement(start_line_indices)
                 .map(Option::Some)
         } else if let Some(term) = self.parse_assign(false)? {
             // A term immediately followed by a line break can be a statement.
-            if self.has_remaining_token_on_current_line() {
+            if !self.current.is_on_new_line && self.current.token.is_some() {
                 return Err(ParseError::UnexpectedTokenAfterStatement {
-                    unexpected_token_pos: self.next_token_pos(),
+                    unexpected_token_pos: self.current_pos(),
                     stmt_pos: term.pos,
                 });
             }
-            Ok(Some(Statement::Term(term)))
+            Ok(Some(Statement::Expression(term)))
         } else {
             Ok(None)
         }
     }
 
     fn parse_variable_declaration(&mut self) -> Result<Statement, ParseError> {
-        let keyword_var_pos = self.next_token_pos();
+        let keyword_var_pos = self.current_pos();
         self.consume_token()?;
         let Some(term) = self.parse_assign(false)? else {
             panic!("No variable name after keyword `var` at {keyword_var_pos}");
@@ -420,23 +469,23 @@ impl Parser<'_, '_> {
         &mut self,
         start_line_indices: &mut Vec<usize>,
     ) -> Result<Statement, ParseError> {
-        let keyword_while_pos = self.next_token_pos();
+        let keyword_while_pos = self.current_pos();
         self.consume_token()?;
 
         // The condition should immediately follow `while`, without line break.
-        if !self.has_remaining_token_on_current_line() {
+        if self.current.is_on_new_line {
             return Err(ParseError::MissingConditionAfterKeywordWhile { keyword_while_pos });
         }
         let Some(condition) = self.parse_disjunction(false)? else {
             return Err(ParseError::UnexpectedTokenAfterKeywordWhile {
-                unexpected_token_pos: self.next_token_pos(),
+                unexpected_token_pos: self.current_pos(),
                 keyword_while_pos,
             });
         };
         // A line break is required right after the condition.
-        if self.has_remaining_token_on_current_line() {
+        if !self.current.is_on_new_line && self.current.token.is_some() {
             return Err(ParseError::UnexpectedTokenAfterWhileCondition {
-                unexpected_token_pos: self.next_token_pos(),
+                unexpected_token_pos: self.current_pos(),
                 condition_pos: condition.pos,
             });
         }
@@ -448,10 +497,10 @@ impl Parser<'_, '_> {
     }
 
     fn parse_assign(&mut self, allow_line_break: bool) -> Result<Option<TermWithPos>, ParseError> {
-        let start = self.next_token_start();
+        let start = self.current.start;
         let left_hand_side = self.parse_disjunction(allow_line_break)?;
-        if let Some(operator) = self.next_token_ref().and_then(assignment_operator) {
-            let operator_pos = self.next_token_pos();
+        if let Some(operator) = self.current.token.as_ref().and_then(assignment_operator) {
+            let operator_pos = self.current_pos();
             self.consume_token()?;
             let right_hand_side = self.parse_assign(allow_line_break)?;
             Ok(Some(TermWithPos {
@@ -461,8 +510,8 @@ impl Parser<'_, '_> {
                         term: Term::MethodName(operator.to_string()),
                         pos: operator_pos,
                     }),
-                    opt_left_hand_side: left_hand_side.map(Box::new),
-                    opt_right_hand_side: right_hand_side.map(Box::new),
+                    left_hand_side: left_hand_side.map(Box::new),
+                    right_hand_side: right_hand_side.map(Box::new),
                 },
             }))
         } else {
@@ -474,19 +523,19 @@ impl Parser<'_, '_> {
         &mut self,
         allow_line_break: bool,
     ) -> Result<Option<TermWithPos>, ParseError> {
-        let start = self.next_token_start();
+        let start = self.current.start;
         let term = self.parse_conjunction(allow_line_break)?;
-        if let Some(Token::DoubleBar) = self.next_token_ref() {
+        if let Some(Token::DoubleBar) = self.current.token {
             let mut conditions = vec![term];
             let mut operators_pos = Vec::new();
-            while let Some(Token::DoubleBar) = self.next_token_ref() {
-                operators_pos.push(self.next_token_pos());
+            while let Some(Token::DoubleBar) = self.current.token {
+                operators_pos.push(self.current_pos());
                 self.consume_token()?;
                 conditions.push(self.parse_conjunction(allow_line_break)?);
             }
             Ok(Some(TermWithPos {
                 term: Term::Disjunction {
-                    opt_conditions: conditions,
+                    conditions,
                     operators_pos,
                 },
                 pos: self.range_from(start),
@@ -500,19 +549,19 @@ impl Parser<'_, '_> {
         &mut self,
         allow_line_break: bool,
     ) -> Result<Option<TermWithPos>, ParseError> {
-        let start = self.next_token_start();
+        let start = self.current.start;
         let term = self.parse_binary_operator(allow_line_break)?;
-        if let Some(Token::DoubleAmpersand) = self.next_token_ref() {
+        if let Some(Token::DoubleAmpersand) = self.current.token {
             let mut conditions = vec![term];
             let mut operators_pos = Vec::new();
-            while let Some(Token::DoubleAmpersand) = self.next_token_ref() {
-                operators_pos.push(self.next_token_pos());
+            while let Some(Token::DoubleAmpersand) = self.current.token {
+                operators_pos.push(self.current_pos());
                 self.consume_token()?;
                 conditions.push(self.parse_binary_operator(allow_line_break)?);
             }
             Ok(Some(TermWithPos {
                 term: Term::Conjunction {
-                    opt_conditions: conditions,
+                    conditions,
                     operators_pos,
                 },
                 pos: self.range_from(start),
@@ -537,26 +586,26 @@ impl Parser<'_, '_> {
         let Some(precedence) = precedence else {
             return self.parse_factor(allow_line_break);
         };
-        let start = self.next_token_start();
+        let start = self.current.start;
         let mut left_operand =
             self.parse_binary_operator_rec(allow_line_break, precedence.next())?;
-        while allow_line_break || !self.current_token.has_line_break {
-            let Some(ref token) = self.current_token.token else {
+        while allow_line_break || !self.current.is_on_new_line {
+            let Some(ref token) = self.current.token else {
                 break;
             };
             if let Some(operator) = infix_operator(token, precedence) {
-                let operator_pos = self.next_token_pos();
+                let operator_pos = self.current_pos();
                 self.consume_token()?;
                 let right_operand =
                     self.parse_binary_operator_rec(allow_line_break, precedence.next())?;
                 left_operand = Some(TermWithPos {
                     term: Term::BinaryOperation {
-                        opt_left_operand: left_operand.map(Box::new),
+                        left_operand: left_operand.map(Box::new),
                         operator: Box::new(TermWithPos {
                             term: Term::MethodName(operator.to_string()),
                             pos: operator_pos,
                         }),
-                        opt_right_operand: right_operand.map(Box::new),
+                        right_operand: right_operand.map(Box::new),
                     },
                     pos: self.range_from(start),
                 });
@@ -568,8 +617,8 @@ impl Parser<'_, '_> {
     }
 
     fn parse_factor(&mut self, allow_line_break: bool) -> Result<Option<TermWithPos>, ParseError> {
-        let factor_start = self.next_token_start();
-        let Some(first_token) = self.next_token_mut() else {
+        let factor_start = self.current.start;
+        let Some(first_token) = &mut self.current.token else {
             return Ok(None);
         };
         let mut factor = if let Token::Underscore = first_token {
@@ -585,49 +634,59 @@ impl Parser<'_, '_> {
         } else if let Token::Digits(ref mut value) = first_token {
             let mut value = std::mem::take(value);
             self.consume_token()?;
-            if let Some(Token::Dot) = self.adjacent_token_ref() {
-                let number_pos = self.range_from(factor_start);
-                self.consume_token()?;
-                if let Some(Token::Identifier(ref mut name)) = self.next_token_mut() {
-                    let number = TermWithPos {
-                        term: Term::NumericLiteral(value),
-                        pos: number_pos,
-                    };
-                    let name = std::mem::take(name);
+            if self.current.start == self.prev_end {
+                if let Some(Token::Dot) = self.current.token {
+                    let number_pos = self.range_from(factor_start);
                     self.consume_token()?;
-                    Term::FieldByName {
-                        term_left: Box::new(number),
-                        name,
+                    if let Some(Token::Identifier(ref mut name)) = self.current.token {
+                        let number = TermWithPos {
+                            term: Term::NumericLiteral(value),
+                            pos: number_pos,
+                        };
+                        let name = std::mem::take(name);
+                        self.consume_token()?;
+                        Term::FieldByName {
+                            term_left: Box::new(number),
+                            name,
+                        }
+                    } else {
+                        value.push('.');
+                        if self.current.start == self.prev_end {
+                            if let Some(Token::Digits(ref decimal_part)) = self.current.token {
+                                value.push_str(decimal_part);
+                                self.consume_token()?;
+                            }
+                        }
+                        Term::NumericLiteral(value)
                     }
                 } else {
-                    value.push('.');
-                    if let Some(Token::Digits(ref decimal_part)) = self.adjacent_token_ref() {
-                        value.push_str(decimal_part);
-                        self.consume_token()?;
-                    }
                     Term::NumericLiteral(value)
                 }
             } else {
                 Term::NumericLiteral(value)
             }
         } else if let Token::Dot = first_token {
-            let dot_pos = self.next_token_pos();
+            let dot_pos = self.current_pos();
             self.consume_token()?;
-            if let Some(Token::Digits(ref value)) = self.adjacent_token_ref() {
-                let value = format!(".{value}");
-                self.consume_token()?;
-                Term::NumericLiteral(value)
+            if self.current.start == self.prev_end {
+                if let Some(Token::Digits(ref value)) = self.current.token {
+                    let value = format!(".{value}");
+                    self.consume_token()?;
+                    Term::NumericLiteral(value)
+                } else {
+                    return Err(ParseError::UnexpectedToken(dot_pos));
+                }
             } else {
                 return Err(ParseError::UnexpectedToken(dot_pos));
             }
         } else if let Token::OpeningParenthesis = first_token {
-            let opening_parenthesis_pos = self.next_token_pos();
+            let opening_parenthesis_pos = self.current_pos();
             self.consume_token()?;
             let mut elements = Vec::new();
             let has_trailing_comma;
             loop {
                 let element = self.parse_assign(true)?;
-                match self.next_token_ref() {
+                match self.current.token {
                     Some(Token::ClosingParenthesis) => {
                         self.consume_token()?;
                         if let Some(element) = element {
@@ -639,7 +698,7 @@ impl Parser<'_, '_> {
                         break;
                     }
                     Some(Token::Comma) => {
-                        let comma_pos = self.next_token_pos();
+                        let comma_pos = self.current_pos();
                         self.consume_token()?;
                         if let Some(element) = element {
                             elements.push(ListElement::NonEmpty(element));
@@ -649,7 +708,7 @@ impl Parser<'_, '_> {
                     }
                     Some(_) => {
                         return Err(ParseError::UnexpectedTokenInParentheses {
-                            unexpected_token_pos: self.next_token_pos(),
+                            unexpected_token_pos: self.current_pos(),
                             opening_parenthesis_pos,
                         });
                     }
@@ -671,11 +730,11 @@ impl Parser<'_, '_> {
                 Term::Tuple { elements }
             }
         } else if let Some(operator) = prefix_operator(&first_token) {
-            let operator_pos = self.next_token_pos();
+            let operator_pos = self.current_pos();
             self.consume_token()?;
             let opt_operand = self.parse_factor(allow_line_break)?;
             Term::UnaryOperation {
-                opt_operand: opt_operand.map(Box::new),
+                operand: opt_operand.map(Box::new),
                 operator: Box::new(TermWithPos {
                     term: Term::MethodName(operator.to_string()),
                     pos: operator_pos,
@@ -685,11 +744,11 @@ impl Parser<'_, '_> {
             return Ok(None);
         };
         let mut factor_pos = self.range_from(factor_start);
-        while let Some(ref token) = self.current_token.token {
+        while let Some(ref token) = self.current.token {
             if let Token::Dot = token {
-                let dot_pos = self.next_token_pos();
+                let dot_pos = self.current_pos();
                 self.consume_token()?;
-                if let Some(Token::Identifier(ref mut name)) = self.next_token_mut() {
+                if let Some(Token::Identifier(ref mut name)) = self.current.token {
                     let name = std::mem::take(name);
                     self.consume_token()?;
                     factor = Term::FieldByName {
@@ -700,7 +759,7 @@ impl Parser<'_, '_> {
                         name,
                     };
                     factor_pos = self.range_from(factor_start);
-                } else if let Some(Token::Digits(ref mut number)) = self.current_token.token {
+                } else if let Some(Token::Digits(ref mut number)) = self.current.token {
                     let number = std::mem::take(number);
                     self.consume_token()?;
                     factor = Term::FieldByNumber {
@@ -715,7 +774,7 @@ impl Parser<'_, '_> {
                     panic!();
                 }
             } else if let Token::Colon = token {
-                let colon_pos = self.next_token_pos();
+                let colon_pos = self.current_pos();
                 self.consume_token()?;
                 let opt_term_right = self.parse_factor(allow_line_break)?;
                 factor = Term::TypeAnnotation {
@@ -724,31 +783,31 @@ impl Parser<'_, '_> {
                         pos: factor_pos,
                     }),
                     colon_pos,
-                    opt_term_right: opt_term_right.map(Box::new),
+                    term_right: opt_term_right.map(Box::new),
                 };
                 factor_pos = self.range_from(factor_start);
-            } else if !allow_line_break && self.current_token.has_line_break {
+            } else if !allow_line_break && self.current.is_on_new_line {
                 break;
             } else if let Token::HyphenGreater = token {
-                let arrow_pos = self.next_token_pos();
+                let arrow_pos = self.current_pos();
                 self.consume_token()?;
                 let opt_ret = self.parse_factor(allow_line_break)?;
                 factor = Term::ReturnType {
                     arrow_pos,
-                    args: Box::new(TermWithPos {
+                    parameters: Box::new(TermWithPos {
                         term: factor,
                         pos: factor_pos,
                     }),
-                    opt_ret: opt_ret.map(Box::new),
+                    return_ty: opt_ret.map(Box::new),
                 };
                 factor_pos = self.range_from(factor_start);
             } else if let Token::OpeningParenthesis = token {
-                let opening_parenthesis_pos = self.next_token_pos();
+                let opening_parenthesis_pos = self.current_pos();
                 self.consume_token()?;
                 let mut elements = Vec::new();
                 loop {
                     let element = self.parse_assign(true)?;
-                    match self.current_token.token {
+                    match self.current.token {
                         Some(Token::ClosingParenthesis) => {
                             self.consume_token()?;
                             if let Some(element) = element {
@@ -757,7 +816,7 @@ impl Parser<'_, '_> {
                             break;
                         }
                         Some(Token::Comma) => {
-                            let comma_pos = self.next_token_pos();
+                            let comma_pos = self.current_pos();
                             self.consume_token()?;
                             if let Some(element) = element {
                                 elements.push(ListElement::NonEmpty(element));
@@ -767,7 +826,7 @@ impl Parser<'_, '_> {
                         }
                         Some(_) => {
                             return Err(ParseError::UnexpectedTokenInParentheses {
-                                unexpected_token_pos: self.next_token_pos(),
+                                unexpected_token_pos: self.current_pos(),
                                 opening_parenthesis_pos,
                             });
                         }
@@ -787,12 +846,12 @@ impl Parser<'_, '_> {
                 };
                 factor_pos = self.range_from(factor_start);
             } else if let Token::OpeningBracket = token {
-                let opening_bracket_pos = self.next_token_pos();
+                let opening_bracket_pos = self.current_pos();
                 self.consume_token()?;
                 let mut elements = Vec::new();
                 loop {
                     let element = self.parse_assign(true)?;
-                    match self.current_token.token {
+                    match self.current.token {
                         Some(Token::ClosingBracket) => {
                             self.consume_token()?;
                             if let Some(element) = element {
@@ -801,7 +860,7 @@ impl Parser<'_, '_> {
                             break;
                         }
                         Some(Token::Comma) => {
-                            let comma_pos = self.next_token_pos();
+                            let comma_pos = self.current_pos();
                             self.consume_token()?;
                             if let Some(element) = element {
                                 elements.push(ListElement::NonEmpty(element));
@@ -811,7 +870,7 @@ impl Parser<'_, '_> {
                         }
                         Some(_) => {
                             return Err(ParseError::UnexpectedTokenInBrackets {
-                                unexpected_token_pos: self.next_token_pos(),
+                                unexpected_token_pos: self.current_pos(),
                                 opening_bracket_pos,
                             });
                         }
@@ -906,173 +965,42 @@ fn assignment_operator(token: &Token) -> Option<&'static str> {
     }
 }
 
-/**
- * Tokens.
- */
-#[derive(Debug, PartialEq, Eq)]
-pub enum Token {
-    Digits(String),
-    StringLiteral(Vec<StringLiteralComponent>),
-    KeywordImport,
-    KeywordExport,
-    KeywordStruct,
-    KeywordFunc,
-    KeywordMethod,
-    KeywordIf,
-    KeywordElse,
-    KeywordWhile,
-    KeywordBreak,
-    KeywordContinue,
-    KeywordReturn,
-    KeywordEnd,
-    KeywordVar,
-    KeywordInt,
-    KeywordFloat,
-    Underscore,
-    Identifier(String),
-    Plus,
-    PlusEqual,
-    Hyphen,
-    HyphenEqual,
-    HyphenGreater,
-    Asterisk,
-    AsteriskEqual,
-    Slash,
-    SlashEqual,
-    Percent,
-    PercentEqual,
-    Equal,
-    DoubleEqual,
-    EqualGreater,
-    Exclamation,
-    ExclamationEqual,
-    Greater,
-    GreaterEqual,
-    DoubleGreater,
-    DoubleGreaterEqual,
-    Less,
-    LessEqual,
-    DoubleLess,
-    DoubleLessEqual,
-    Ampersand,
-    AmpersandEqual,
-    DoubleAmpersand,
-    Bar,
-    BarEqual,
-    DoubleBar,
-    Circumflex,
-    CircumflexEqual,
-    Dot,
-    Colon,
-    Semicolon,
-    Comma,
-    Question,
-    Tilde,
-    Dollar,
-    OpeningParenthesis,
-    ClosingParenthesis,
-    OpeningBracket,
-    ClosingBracket,
-    OpeningBrace,
-    ClosingBrace,
-}
-
-struct TokenInfo {
-    token: Option<Token>,
-    start_index: Index,
-    has_line_break: bool,
-}
-
-impl<'str, 'iter> Parser<'str, 'iter> {
-    fn new(iter: &'iter mut CharsPeekable<'str>) -> Result<Parser<'str, 'iter>, ParseError> {
-        let first_token = read_token(iter, false)?;
-        Ok(Parser {
-            iter,
-            current_token: first_token,
-            prev_token_end: Index { line: 0, column: 0 },
-        })
-    }
-}
-
 impl Parser<'_, '_> {
-    pub fn next_token_ref(&self) -> Option<&Token> {
-        self.current_token.token.as_ref()
-    }
-    pub fn next_token_mut(&mut self) -> Option<&mut Token> {
-        self.current_token.token.as_mut()
-    }
-    pub fn adjacent_token_ref(&self) -> Option<&Token> {
-        if self.current_token.start_index == self.prev_token_end {
-            self.current_token.token.as_ref()
-        } else {
-            None
-        }
-    }
-    pub fn adjacent_token_mut(&mut self) -> Option<&mut Token> {
-        if self.current_token.start_index == self.prev_token_end {
-            self.current_token.token.as_mut()
-        } else {
-            None
-        }
-    }
-    pub fn next_token_start(&self) -> Index {
-        self.current_token.start_index
-    }
-    pub fn next_token_pos(&self) -> Pos {
+    pub fn current_pos(&self) -> Pos {
         Pos {
-            start: self.current_token.start_index,
-            end: self.iter.peek_index(),
+            start: self.current.start,
+            end: self.iter.index(),
         }
     }
     pub fn range_from(&self, start: Index) -> Pos {
         Pos {
             start,
-            end: self.prev_token_end,
+            end: self.prev_end,
         }
-    }
-    pub fn next_token_on_current_line_ref(&self) -> Option<&Token> {
-        if self.current_token.has_line_break {
-            None
-        } else {
-            self.current_token.token.as_ref()
-        }
-    }
-    pub fn next_token_on_current_line_mut(&mut self) -> Option<&mut Token> {
-        if self.current_token.has_line_break {
-            None
-        } else {
-            self.current_token.token.as_mut()
-        }
-    }
-    pub fn has_remaining_token(&self) -> bool {
-        self.current_token.token.is_some()
-    }
-    pub fn has_remaining_token_on_current_line(&self) -> bool {
-        self.current_token.token.is_some() && !self.current_token.has_line_break
     }
     pub fn consume_token(&mut self) -> Result<(), ParseError> {
-        self.prev_token_end = self.iter.peek_index();
-        self.current_token = read_token(&mut self.iter, false)?;
+        self.prev_end = self.iter.index();
+        self.current = read_token(&mut self.iter, false)?;
         Ok(())
     }
 }
 
-fn read_token(iter: &mut CharsPeekable, mut has_line_break: bool) -> Result<TokenInfo, ParseError> {
+fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<TokenInfo, ParseError> {
     let (start_index, first_ch) = loop {
-        let Some(ch) = iter.peek_char() else {
+        let Some(ch) = iter.peek() else {
             return Ok(TokenInfo {
                 token: None,
-                start_index: iter.peek_index(),
-                has_line_break,
+                start: iter.index(),
+                is_on_new_line,
             });
         };
         if ch.is_ascii_whitespace() {
             if ch == '\n' {
-                has_line_break = true
+                is_on_new_line = true
             }
             iter.consume();
         } else {
-            break (iter.peek_index(), ch);
+            break (iter.index(), ch);
         }
     };
     iter.consume();
@@ -1080,7 +1008,7 @@ fn read_token(iter: &mut CharsPeekable, mut has_line_break: bool) -> Result<Toke
         '0'..='9' => {
             let mut value = first_ch.to_string();
             let mut after_e = false;
-            while let Some(ch) = iter.peek_char() {
+            while let Some(ch) = iter.peek() {
                 after_e = match ch {
                     'e' | 'E' => true,
                     '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' => false,
@@ -1096,45 +1024,40 @@ fn read_token(iter: &mut CharsPeekable, mut has_line_break: bool) -> Result<Toke
         }
         '"' => {
             let mut components = Vec::new();
-            let mut buf = String::new();
-            #[derive(PartialEq, Eq)]
-            enum Action {
-                Border,
-                Char,
-                Expr,
-            }
-            let mut prev_action = Action::Border;
+            let mut string = String::new();
             loop {
-                let Some(mut ch) = iter.peek_char() else {
-                    return Err(ParseError::UnterminatedStringLiteral { start_index });
-                };
-                let index = iter.peek_index();
+                let ch = iter.peek();
                 iter.consume();
-                let action = match ch {
-                    '"' => Action::Border,
-                    '{' => {
-                        if iter.consume_if('{') {
-                            Action::Char
+                match ch {
+                    Some('$') => {
+                        if !string.is_empty() {
+                            components
+                                .push(StringLiteralComponent::String(std::mem::take(&mut string)));
+                        }
+                        let mut format = String::new();
+                        loop {
+                            let ch = iter.peek();
+                            iter.consume();
+                            match ch {
+                                Some('{') => break,
+                                Some(ch) => format.push(ch),
+                                None => todo!(),
+                            }
+                        }
+                        let mut parser = Parser::new(iter)?;
+                        let value = parser.parse_disjunction(true)?;
+                        if let Some(Token::ClosingBrace) = parser.current.token {
+                            components.push(StringLiteralComponent::PlaceHolder { format, value });
                         } else {
-                            Action::Expr
+                            todo!();
                         }
                     }
-                    '}' => {
-                        if iter.consume_if('}') {
-                            Action::Char
-                        } else {
-                            return Err(ParseError::UnmatchedClosingBraceInStringLiteral {
-                                closing_brace_index: index,
-                                start_index,
-                            });
-                        }
-                    }
-                    '\\' => {
-                        let Some(next_ch) = iter.peek_char() else {
-                            return Err(ParseError::UnterminatedStringLiteral { start_index });
+                    Some('\\') => {
+                        let Some(ch) = iter.peek() else {
+                            todo!();
                         };
                         iter.consume();
-                        ch = match next_ch {
+                        string.push(match ch {
                             'n' => '\n',
                             'r' => '\r',
                             't' => '\t',
@@ -1142,35 +1065,26 @@ fn read_token(iter: &mut CharsPeekable, mut has_line_break: bool) -> Result<Toke
                             '\\' => '\\',
                             '0' => '\0',
                             '\'' => '\'',
-                            _ => {
-                                return Err(ParseError::InvalidEscapeSequence {
-                                    backslash_index: index,
-                                });
-                            }
-                        };
-                        Action::Char
+                            _ => todo!(),
+                        });
                     }
-                    _ => Action::Char,
-                };
-                if action == Action::Char {
-                    buf.push(ch);
-                } else if prev_action == Action::Char {
-                    components.push(StringLiteralComponent::String(std::mem::take(&mut buf)))
+                    Some('"') => {
+                        if !string.is_empty() {
+                            components
+                                .push(StringLiteralComponent::String(std::mem::take(&mut string)));
+                        }
+                        break Token::StringLiteral(components);
+                    }
+                    Some(ch) => {
+                        string.push(ch);
+                    }
+                    _ => todo!(),
                 }
-                if action == Action::Expr {
-                    let mut parser = Parser::new(iter)?;
-                    let expr = parser.parse_disjunction(true)?;
-                    components.push(StringLiteralComponent::Term(expr));
-                } else if action == Action::Border {
-                    break;
-                }
-                prev_action = action;
             }
-            Token::StringLiteral(components)
         }
         _ if first_ch == '_' || unicode_ident::is_xid_start(first_ch) => {
             let mut name = first_ch.to_string();
-            while let Some(ch) = iter.peek_char() {
+            while let Some(ch) = iter.peek() {
                 if unicode_ident::is_xid_continue(ch) {
                     name.push(ch);
                     iter.consume();
@@ -1227,9 +1141,9 @@ fn read_token(iter: &mut CharsPeekable, mut has_line_break: bool) -> Result<Toke
         '/' => {
             if iter.consume_if('-') {
                 skip_block_comment(iter, start_index, '/', '-', '-', '/')?;
-                return read_token(iter, has_line_break);
+                return read_token(iter, is_on_new_line);
             } else if iter.consume_if('/') {
-                if !has_line_break {
+                if !is_on_new_line {
                     return Err(ParseError::InvalidBlockComment { start_index });
                 }
                 skip_block_comment(iter, start_index, '/', '/', '\\', '\\')?;
@@ -1332,14 +1246,14 @@ fn read_token(iter: &mut CharsPeekable, mut has_line_break: bool) -> Result<Toke
     };
     Ok(TokenInfo {
         token: Some(token),
-        start_index,
-        has_line_break,
+        start: start_index,
+        is_on_new_line,
     })
 }
 
 fn skip_line_comment(iter: &mut CharsPeekable) {
     loop {
-        let ch = iter.peek_char();
+        let ch = iter.peek();
         iter.consume();
         if let None | Some('\n') = ch {
             break;
@@ -1357,10 +1271,10 @@ fn skip_block_comment(
 ) -> Result<(), ParseError> {
     let mut starts_index = vec![start_index];
     loop {
-        let Some(ch) = iter.peek_char() else {
+        let Some(ch) = iter.peek() else {
             return Err(ParseError::UnterminatedComment { starts_index });
         };
-        let index = iter.peek_index();
+        let index = iter.index();
         iter.consume();
         if ch == start0 && iter.consume_if(start1) {
             starts_index.push(index);

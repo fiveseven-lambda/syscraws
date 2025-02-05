@@ -51,7 +51,7 @@ pub fn cannot_read_file(path: &Path, file: &File, err: std::io::Error) {
 
 pub fn undefined_variable(pos: Pos, file: &File) {
     eprintln!("ERROR: Undefined variable at {pos}.");
-    file.quote(&pos);
+    file.quote_pos(pos);
 }
 
 pub struct File {
@@ -61,8 +61,43 @@ pub struct File {
 }
 
 impl File {
-    fn quote(&self, pos: &Pos) {
+    fn quote_index(&self, Index { line, column }: Index) {
         eprintln!("{}", self.path.display());
+        let start_line = &self.content[self.lines[line].clone()];
+        eprintln!(
+            "L{}: {} !-> {}",
+            line + 1,
+            &start_line[..column],
+            &start_line[column..],
+        );
+    }
+    fn quote_pos(&self, Pos { start, end }: Pos) {
+        eprintln!("{}", self.path.display());
+        if start.line == end.line {
+            let line = &self.content[self.lines[start.line].clone()];
+            eprintln!(
+                "L{}: {} !-> {} <-! {}",
+                start.line + 1,
+                &line[..start.column],
+                &line[start.column..end.column],
+                &line[end.column..],
+            );
+        } else {
+            let start_line = &self.content[self.lines[start.line].clone()];
+            eprintln!(
+                "L{}: {} !-> {}",
+                start.line + 1,
+                &start_line[..start.column],
+                &start_line[start.column..],
+            );
+            let end_line = &self.content[self.lines[end.line].clone()];
+            eprintln!(
+                "L{}: {} <-! {}",
+                end.line + 1,
+                &end_line[..end.column],
+                &end_line[end.column..],
+            );
+        }
     }
 }
 
@@ -86,60 +121,12 @@ pub enum ParseError {
     MissingFunctionName {
         keyword_func_pos: Pos,
     },
-    MissingMethodName {
-        dot_pos: Pos,
-    },
-    MissingItemAfterKeywordExport {
-        keyword_export_pos: Pos,
-    },
-    MissingFieldName {
-        dot_pos: Pos,
-    },
-    EmptyFunc {
-        keyword_func_pos: Pos,
-    },
-    MissingImportName {
-        keyword_import_pos: Pos,
-    },
-    InvalidImportPath {
-        term_pos: Pos,
-    },
-    CircularImports {
-        path: PathBuf,
-    },
-    MissingImportPath {
-        opening_parenthesis_pos: Pos,
-        closing_parenthesis_pos: Pos,
-    },
-    CannotReadImportedFile {
-        path: PathBuf,
-        err: std::io::Error,
-    },
-    MissingStructName {
-        keyword_struct_pos: Pos,
-    },
-    MissingFunctionParameters {
-        keyword_func_pos: Pos,
-    },
     InvalidBlockComment {
         start_index: Index,
-    },
-    DuplicateDefinition,
-    UnexpectedTokenAfterKeywordImport {
-        unexpected_token_pos: Pos,
-        keyword_import_pos: Pos,
-    },
-    UnexpectedTokenAfterImportName {
-        unexpected_token_pos: Pos,
-        name_pos: Pos,
     },
     UnexpectedTokenAfterKeywordFunc {
         unexpected_token_pos: Pos,
         keyword_func_pos: Pos,
-    },
-    UnexpectedTokenAfterFunctionName {
-        unexpected_token_pos: Pos,
-        function_name_pos: Pos,
     },
     UnclosedBlock {
         start_line_indices: Vec<usize>,
@@ -177,16 +164,31 @@ pub enum ParseError {
     UnclosedBracket {
         opening_bracket_pos: Pos,
     },
-    MissingVariableName {
-        keyword_var_pos: Pos,
-    },
 }
 
 impl ParseError {
-    pub fn eprint(&self, file: &File) {
+    pub fn eprint(self, file: &File) {
         match self {
+            ParseError::UnexpectedCharacter(index) => {
+                eprintln!("Unexpected character at {}.", index);
+                file.quote_index(index);
+            }
+            ParseError::UnterminatedComment { starts_index } => {
+                eprintln!("Unterminated comment");
+                for start_index in starts_index {
+                    file.quote_index(start_index);
+                }
+            }
+            ParseError::InvalidBlockComment { start_index } => {
+                eprintln!(
+                    "A block comment must start at the beginning of the line, allowing only \
+                     leading whitespaces."
+                );
+                file.quote_index(start_index);
+            }
             ParseError::UnexpectedToken(unexpected_token_pos) => {
-                eprintln!("Unexpected token at {}", unexpected_token_pos);
+                eprintln!("Unexpected token at {}.", unexpected_token_pos);
+                file.quote_pos(unexpected_token_pos);
             }
             _ => eprintln!("{:?}", self),
         }

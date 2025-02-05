@@ -45,17 +45,17 @@ pub struct CharsPeekable<'input> {
     /**
      * The next character to be consumed. `None` if EOF has been reached.
      */
-    peeked_char: Option<char>,
+    current_char: Option<char>,
     /**
-     * The byte position of the [`peeked_char`](Self::peeked_char) from the
-     * start of the input string.
+     * The byte position of the [`current_char`](Self::current_char) from
+     * the start of the input string.
      */
-    peeked_index: usize,
+    current_index: usize,
     /**
      * The byte position of the start of the line containing the
-     * [`peeked_char`](Self::peeked_char).
+     * [`current_char`](Self::current_char).
      */
-    peeked_line_start: usize,
+    current_line_start: usize,
     /**
      * The byte ranges of each line in the input string.
      */
@@ -68,30 +68,30 @@ impl<'input> CharsPeekable<'input> {
      */
     pub fn new(input: &'input str) -> Self {
         let mut iter = input.char_indices();
-        let first_ch = iter.next().map(|(_, ch)| ch);
+        let first_char = iter.next().map(|(_, ch)| ch);
         Self {
             iter,
-            peeked_char: first_ch,
-            peeked_index: 0,
-            peeked_line_start: 0,
+            current_char: first_char,
+            current_index: 0,
+            current_line_start: 0,
             lines: Vec::new(),
         }
     }
     /**
      * Returns the next character without consuming it, or `None` if at EOF.
      */
-    pub fn peek_char(&self) -> Option<char> {
-        self.peeked_char
+    pub fn peek(&self) -> Option<char> {
+        self.current_char
     }
     /**
      * Returns the line and column numbers of the next character. If at EOF,
      * it returns the index of where the next character would be,
      * assuming the file ends with or without a newline.
      */
-    pub fn peek_index(&self) -> Index {
+    pub fn index(&self) -> Index {
         Index {
             line: self.lines.len(),
-            column: self.peeked_index - self.peeked_line_start,
+            column: self.current_index - self.current_line_start,
         }
     }
     /**
@@ -99,13 +99,13 @@ impl<'input> CharsPeekable<'input> {
      */
     pub fn consume(&mut self) {
         let next_index = self.iter.offset();
-        let next_ch = self.iter.next().map(|(_, ch)| ch);
-        if self.peeked_char == Some('\n') {
-            self.lines.push(self.peeked_line_start..self.peeked_index);
-            self.peeked_line_start = next_index;
+        let next_char = self.iter.next().map(|(_, ch)| ch);
+        if self.current_char == Some('\n') {
+            self.lines.push(self.current_line_start..self.current_index);
+            self.current_line_start = next_index;
         }
-        self.peeked_index = next_index;
-        self.peeked_char = next_ch;
+        self.current_index = next_index;
+        self.current_char = next_char;
     }
     /**
      * Consumes the next character only if it matches the expected
@@ -114,7 +114,7 @@ impl<'input> CharsPeekable<'input> {
      * `false` is returned.
      */
     pub fn consume_if(&mut self, expected: char) -> bool {
-        let ret = self.peek_char() == Some(expected);
+        let ret = self.peek() == Some(expected);
         if ret {
             self.consume();
         }
@@ -134,7 +134,7 @@ impl<'input> CharsPeekable<'input> {
      * this method.
      */
     pub fn lines(mut self) -> Vec<Range<usize>> {
-        self.lines.push(self.peeked_line_start..self.peeked_index);
+        self.lines.push(self.current_line_start..self.current_index);
         self.lines
     }
 }

@@ -98,17 +98,17 @@ impl Reader {
         match result {
             Ok(File {
                 imports,
-                struct_definitions,
+                structure_definitions: struct_definitions,
                 function_names,
                 top_level_statements,
             }) => {
                 let mut named_items = HashMap::new();
                 for Import {
-                    name,
-                    name_pos,
-                    path: import_path,
+                    keyword_import_pos,
+                    target,
                 } in imports
                 {
+                    /*
                     let path = path
                         .parent()
                         .unwrap()
@@ -135,6 +135,7 @@ impl Reader {
                         log::circular_imports(name_pos, &file);
                         self.num_errors += 1;
                     }
+                    */
                 }
                 for name in function_names {
                     if let Item::Function(functions) = named_items
@@ -156,9 +157,9 @@ impl Reader {
                 for statement in top_level_statements {
                     match statement {
                         TopLevelStatement::FunctionDefinition {
-                            opt_type_parameters,
-                            opt_parameters,
-                            opt_ret_ty,
+                            type_parameters: opt_type_parameters,
+                            parameters: opt_parameters,
+                            return_ty: opt_ret_ty,
                             body,
                         } => {
                             let mut local = Context {
@@ -219,7 +220,7 @@ impl Context {
         exported_items: &Vec<HashMap<String, Item>>,
     ) {
         match statement {
-            Statement::Term(term) => {
+            Statement::Expression(term) => {
                 let expr = match global_variables {
                     Some(global_variables) => translate_expression(
                         term,
