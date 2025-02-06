@@ -28,7 +28,7 @@ use enum_iterator::Sequence;
 pub struct File {
     pub imports: Vec<Import>,
     pub structure_definitions: Vec<StructDefinition>,
-    pub function_names: Vec<String>,
+    pub function_names: Vec<Option<TermWithPos>>,
     pub top_level_statements: Vec<TopLevelStatement>,
 }
 
@@ -37,7 +37,11 @@ pub struct Import {
     pub target: Option<TermWithPos>,
 }
 
-pub struct StructDefinition {}
+pub struct StructDefinition {
+    pub keyword_struct_pos: Pos,
+    pub name: Option<TermWithPos>,
+    pub fields: Vec<Statement>,
+}
 
 pub enum TopLevelStatement {
     FunctionDefinition {
@@ -57,7 +61,11 @@ pub struct ReturnType {
 pub enum Statement {
     VariableDeclaration(TermWithPos),
     Expression(TermWithPos),
-    While(TermWithPos, Vec<Statement>),
+    While {
+        keyword_while_pos: Pos,
+        condition: Option<TermWithPos>,
+        body: Vec<Statement>,
+    },
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -184,6 +192,12 @@ struct Parser<'str, 'iter> {
 }
 
 impl<'str, 'iter> Parser<'str, 'iter> {
+    /**
+     * Creates a new [`Parser`] from the given [`CharsPeekable`].
+     *
+     * It calls [`read_token`] and sets [`Self::current`] to point to the
+     * first token.
+     */
     fn new(iter: &'iter mut CharsPeekable<'str>) -> Result<Parser<'str, 'iter>, ParseError> {
         let start = iter.index();
         let first_token = read_token(iter, false)?;
@@ -198,6 +212,24 @@ impl<'str, 'iter> Parser<'str, 'iter> {
 struct TokenInfo {
     token: Option<Token>,
     start: Index,
+    /**
+     * Examples:
+     * ```
+     * foo
+     * bar -- is_on_new_line: true
+     * ```
+     * ```
+     * foo bar -- is_on_new_line: false
+     * ```
+     * ```
+     * foo
+     * /- -/ bar -- is_on_new_line: true
+     * ```
+     * ```
+     * foo /-
+     * -/ bar -- is_on_new_line: false
+     * ```
+     */
     is_on_new_line: bool,
 }
 
@@ -299,28 +331,36 @@ impl Parser<'_, '_> {
     }
 
     fn parse_structure_definition(&mut self) -> Result<StructDefinition, ParseError> {
-        todo!();
+        let keyword_struct_pos = self.current_pos();
+        self.consume_token()?;
+
+        let name = if self.current.is_on_new_line {
+            None
+        } else {
+            self.parse_factor(false)?
+        };
+
+        let fields = self.parse_block(&mut vec![keyword_struct_pos.line()])?;
+
+        Ok(StructDefinition {
+            keyword_struct_pos,
+            name,
+            fields,
+        })
     }
 
-    fn parse_function_definition(&mut self) -> Result<(String, TopLevelStatement), ParseError> {
+    fn parse_function_definition(
+        &mut self,
+    ) -> Result<(Option<TermWithPos>, TopLevelStatement), ParseError> {
         let keyword_func_pos = self.current_pos();
         self.consume_token()?;
 
-        // An identifier should immediately follow `func`, without a line break.
-        if self.current.is_on_new_line {
-            return Err(ParseError::MissingFunctionName { keyword_func_pos });
-        }
-        let function_name = match &mut self.current.token {
-            Some(Token::Identifier(name)) => std::mem::take(name),
-            Some(_) => {
-                return Err(ParseError::UnexpectedTokenAfterKeywordFunc {
-                    unexpected_token_pos: self.current_pos(),
-                    keyword_func_pos,
-                })
-            }
-            None => return Err(ParseError::MissingFunctionName { keyword_func_pos }),
+        // The function name should immediately follow `func`, without a line break.
+        let name = if self.current.is_on_new_line {
+            None
+        } else {
+            self.parse_factor(false)?
         };
-        self.consume_token()?;
 
         // Generic parameters list can follow.
         let type_parameters = if self.current.is_on_new_line {
@@ -389,14 +429,17 @@ impl Parser<'_, '_> {
         };
 
         if !self.current.is_on_new_line && self.current.token.is_some() {
-            todo!();
+            return Err(ParseError::ExtraTokenAfterLine {
+                extra_token_pos: self.current_pos(),
+                line_pos: self.range_from(keyword_func_pos.start),
+            });
         }
 
         // The function body follows.
         let body = self.parse_block(&mut vec![keyword_func_pos.line()])?;
 
         Ok((
-            function_name,
+            name,
             TopLevelStatement::FunctionDefinition {
                 parameters,
                 type_parameters,
@@ -416,7 +459,14 @@ impl Parser<'_, '_> {
         let mut body = Vec::new();
         loop {
             if let Some(Token::KeywordEnd) = self.current.token {
+                let keyword_end_pos = self.current_pos();
                 self.consume_token()?;
+                if !self.current.is_on_new_line && self.current.token.is_some() {
+                    return Err(ParseError::ExtraTokenAfterLine {
+                        extra_token_pos: self.current_pos(),
+                        line_pos: keyword_end_pos,
+                    });
+                }
                 return Ok(body);
             } else if let Some(statement) = self.parse_statement(start_line_indices)? {
                 body.push(statement);
@@ -445,9 +495,9 @@ impl Parser<'_, '_> {
         } else if let Some(term) = self.parse_assign(false)? {
             // A term immediately followed by a line break can be a statement.
             if !self.current.is_on_new_line && self.current.token.is_some() {
-                return Err(ParseError::UnexpectedTokenAfterStatement {
-                    unexpected_token_pos: self.current_pos(),
-                    stmt_pos: term.pos,
+                return Err(ParseError::ExtraTokenAfterLine {
+                    extra_token_pos: self.current_pos(),
+                    line_pos: term.pos,
                 });
             }
             Ok(Some(Statement::Expression(term)))
@@ -473,27 +523,28 @@ impl Parser<'_, '_> {
         self.consume_token()?;
 
         // The condition should immediately follow `while`, without line break.
-        if self.current.is_on_new_line {
-            return Err(ParseError::MissingConditionAfterKeywordWhile { keyword_while_pos });
-        }
-        let Some(condition) = self.parse_disjunction(false)? else {
-            return Err(ParseError::UnexpectedTokenAfterKeywordWhile {
-                unexpected_token_pos: self.current_pos(),
-                keyword_while_pos,
-            });
+        let condition = if self.current.is_on_new_line {
+            None
+        } else {
+            self.parse_disjunction(false)?
         };
+
         // A line break is required right after the condition.
         if !self.current.is_on_new_line && self.current.token.is_some() {
-            return Err(ParseError::UnexpectedTokenAfterWhileCondition {
-                unexpected_token_pos: self.current_pos(),
-                condition_pos: condition.pos,
+            return Err(ParseError::ExtraTokenAfterLine {
+                extra_token_pos: self.current_pos(),
+                line_pos: self.range_from(keyword_while_pos.start),
             });
         }
 
         start_line_indices.push(keyword_while_pos.line());
         let body = self.parse_block(start_line_indices)?;
         start_line_indices.pop();
-        Ok(Statement::While(condition, body))
+        Ok(Statement::While {
+            keyword_while_pos,
+            condition,
+            body,
+        })
     }
 
     fn parse_assign(&mut self, allow_line_break: bool) -> Result<Option<TermWithPos>, ParseError> {
@@ -519,7 +570,7 @@ impl Parser<'_, '_> {
         }
     }
 
-    pub fn parse_disjunction(
+    fn parse_disjunction(
         &mut self,
         allow_line_break: bool,
     ) -> Result<Option<TermWithPos>, ParseError> {
@@ -966,25 +1017,51 @@ fn assignment_operator(token: &Token) -> Option<&'static str> {
 }
 
 impl Parser<'_, '_> {
-    pub fn current_pos(&self) -> Pos {
+    /**
+     * A shorthand to get the [`Pos`] of the current token.
+     */
+    fn current_pos(&self) -> Pos {
         Pos {
             start: self.current.start,
             end: self.iter.index(),
         }
     }
-    pub fn range_from(&self, start: Index) -> Pos {
+    /**
+     * A shorthand to get the range from the given `start` to
+     * [`Self::prev_end`].
+     */
+    fn range_from(&self, start: Index) -> Pos {
         Pos {
             start,
             end: self.prev_end,
         }
     }
-    pub fn consume_token(&mut self) -> Result<(), ParseError> {
+    /**
+     * A shorthand to call [`read_token`] and update [`Self::prev_end`] and
+     * [`Self::current`].
+     */
+    fn consume_token(&mut self) -> Result<(), ParseError> {
         self.prev_end = self.iter.index();
         self.current = read_token(&mut self.iter, false)?;
         Ok(())
     }
 }
 
+/**
+ * Reads a token.
+ *
+ * # Errors
+ * - [`ParseError::UnexpectedCharacter`]: The first non-whitespace character
+ *   is invalid as the beginning of a token.
+ * - [`ParseError::UnterminatedStringLiteral`]: EOF is reached while reading
+ *   a string literal.
+ * - [`ParseError::InvalidEscapeSequence`]: Invalid character after a
+ *   backslash `\` in a string literal.
+ * - [`ParseError::UnexpectedTokenInStringLiteral`]: Unexpected token while
+ *   reading a placeholder `${` ... `}` in a string literal.
+ * - [`ParseError::InvalidBlockComment`]: `is_on_new_line` is `false` when a
+ *   block comment starts.
+ */
 fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<TokenInfo, ParseError> {
     let (start_index, first_ch) = loop {
         let Some(ch) = iter.peek() else {
@@ -1026,35 +1103,52 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
             let mut components = Vec::new();
             let mut string = String::new();
             loop {
-                let ch = iter.peek();
+                let Some(ch1) = iter.peek() else {
+                    return Err(ParseError::UnterminatedStringLiteral { start_index });
+                };
+                let index1 = iter.index();
                 iter.consume();
-                match ch {
-                    Some('$') => {
+                match ch1 {
+                    '$' => {
                         if !string.is_empty() {
                             components
                                 .push(StringLiteralComponent::String(std::mem::take(&mut string)));
                         }
+                        // Since the usage of format strings is undecided, the current
+                        // implementation is kept simple for now.
                         let mut format = String::new();
                         loop {
-                            let ch = iter.peek();
+                            let Some(ch2) = iter.peek() else {
+                                return Err(ParseError::UnterminatedStringLiteral { start_index });
+                            };
                             iter.consume();
-                            match ch {
-                                Some('{') => break,
-                                Some(ch) => format.push(ch),
-                                None => todo!(),
+                            match ch2 {
+                                '"' => todo!(),
+                                '{' => break,
+                                ch => format.push(ch),
                             }
                         }
                         let mut parser = Parser::new(iter)?;
                         let value = parser.parse_disjunction(true)?;
-                        if let Some(Token::ClosingBrace) = parser.current.token {
-                            components.push(StringLiteralComponent::PlaceHolder { format, value });
-                        } else {
-                            todo!();
+                        match parser.current.token {
+                            Some(Token::ClosingBrace) => {
+                                components
+                                    .push(StringLiteralComponent::PlaceHolder { format, value });
+                            }
+                            Some(_) => {
+                                return Err(ParseError::UnexpectedTokenInStringLiteral {
+                                    unexpected_token_pos: parser.current_pos(),
+                                    dollar_index: index1,
+                                });
+                            }
+                            None => {
+                                return Err(ParseError::UnterminatedStringLiteral { start_index });
+                            }
                         }
                     }
-                    Some('\\') => {
+                    '\\' => {
                         let Some(ch) = iter.peek() else {
-                            todo!();
+                            return Err(ParseError::UnterminatedStringLiteral { start_index });
                         };
                         iter.consume();
                         string.push(match ch {
@@ -1065,20 +1159,21 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
                             '\\' => '\\',
                             '0' => '\0',
                             '\'' => '\'',
-                            _ => todo!(),
+                            _ => {
+                                return Err(ParseError::InvalidEscapeSequence {
+                                    backslash_index: index1,
+                                })
+                            }
                         });
                     }
-                    Some('"') => {
+                    '"' => {
                         if !string.is_empty() {
                             components
                                 .push(StringLiteralComponent::String(std::mem::take(&mut string)));
                         }
                         break Token::StringLiteral(components);
                     }
-                    Some(ch) => {
-                        string.push(ch);
-                    }
-                    _ => todo!(),
+                    ch => string.push(ch),
                 }
             }
         }
@@ -1251,6 +1346,9 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
     })
 }
 
+/**
+ * Skips until the end of line.
+ */
 fn skip_line_comment(iter: &mut CharsPeekable) {
     loop {
         let ch = iter.peek();
@@ -1261,6 +1359,17 @@ fn skip_line_comment(iter: &mut CharsPeekable) {
     }
 }
 
+/**
+ * Skips over a block comment.
+ *
+ * A block comment starts with two consecutive characters `start0` and
+ * `start1`, and ends with two consecutive characters `end0` and `end1`.
+ * Block comments can be nested.
+ *
+ * # Errors
+ * - [`ParseError::UnterminatedComment`]: EOF is reached before a matching
+ *   end sequence is found.
+ */
 fn skip_block_comment(
     iter: &mut CharsPeekable,
     start_index: Index,
@@ -1269,18 +1378,18 @@ fn skip_block_comment(
     end0: char,
     end1: char,
 ) -> Result<(), ParseError> {
-    let mut starts_index = vec![start_index];
+    let mut start_indices = vec![start_index];
     loop {
         let Some(ch) = iter.peek() else {
-            return Err(ParseError::UnterminatedComment { starts_index });
+            return Err(ParseError::UnterminatedComment { start_indices });
         };
         let index = iter.index();
         iter.consume();
         if ch == start0 && iter.consume_if(start1) {
-            starts_index.push(index);
+            start_indices.push(index);
         } else if ch == end0 && iter.consume_if(end1) {
-            starts_index.pop();
-            if starts_index.is_empty() {
+            start_indices.pop();
+            if start_indices.is_empty() {
                 return Ok(());
             }
         }

@@ -98,56 +98,17 @@ impl Reader {
         match result {
             Ok(File {
                 imports,
-                structure_definitions: struct_definitions,
+                structure_definitions,
                 function_names,
                 top_level_statements,
             }) => {
                 let mut named_items = HashMap::new();
-                for Import {
-                    keyword_import_pos,
-                    target,
-                } in imports
-                {
-                    /*
-                    let path = path
-                        .parent()
-                        .unwrap()
-                        .join(import_path)
-                        .with_extension(".sysc");
-                    let path = match path.canonicalize() {
-                        Ok(path) => path,
-                        Err(err) => {
-                            todo!();
-                        }
-                    };
-                    if self.import_chain.insert(path.clone()) {
-                        match self.read_file(&path) {
-                            Ok(n) => {
-                                named_items.insert(name, Item::Import(n));
-                            }
-                            Err(err) => {
-                                log::cannot_read_file(&path, &file, err);
-                                self.num_errors += 1;
-                            }
-                        }
-                        self.import_chain.remove(&path);
-                    } else {
-                        log::circular_imports(name_pos, &file);
-                        self.num_errors += 1;
-                    }
-                    */
+                for import in imports {
+                    self.handle_import(import, path.parent().unwrap(), &mut named_items, &file);
                 }
+                for structure in structure_definitions {}
                 for name in function_names {
-                    if let Item::Function(functions) = named_items
-                        .entry(name)
-                        .or_insert_with(|| Item::Function(Vec::new()))
-                    {
-                        functions.push(self.num_functions);
-                    } else {
-                        self.num_errors += 1;
-                        todo!("Duplicate definition");
-                    }
-                    self.num_functions += 1;
+                    self.handle_function_name(name, &mut named_items, &file);
                 }
                 let mut global = Context {
                     variables: HashMap::new(),
@@ -203,6 +164,131 @@ impl Reader {
         self.file_indices.insert(path.to_path_buf(), new_index);
         Ok(new_index)
     }
+
+    fn handle_import(
+        &mut self,
+        Import {
+            keyword_import_pos,
+            target,
+        }: Import,
+        parent_directory: &Path,
+        named_items: &mut HashMap<String, Item>,
+        file: &log::File,
+    ) {
+        let Some(target) = target else {
+            log::missing_import_name(keyword_import_pos, &file);
+            self.num_errors += 1;
+            return;
+        };
+        let (name, path) = match target.term {
+            Term::Identifier(name) => {
+                let path = parent_directory.join(&name);
+                (name, path)
+            }
+            Term::FunctionCall {
+                function,
+                arguments,
+            } => {
+                let name = match function.term {
+                    Term::Identifier(name) => name,
+                    _ => {
+                        log::invalid_import_target(target.pos, file);
+                        self.num_errors += 1;
+                        return;
+                    }
+                };
+                let path = match arguments.into_iter().next() {
+                    Some(ListElement::NonEmpty(argument)) => match argument.term {
+                        Term::StringLiteral(components) => {
+                            let mut path = String::new();
+                            for component in components {
+                                match component {
+                                    StringLiteralComponent::PlaceHolder { .. } => {
+                                        log::invalid_import_target(target.pos, file);
+                                        self.num_errors += 1;
+                                        return;
+                                    }
+                                    StringLiteralComponent::String(value) => {
+                                        path.push_str(&value);
+                                    }
+                                }
+                            }
+                            parent_directory.join(&path)
+                        }
+                        _ => {
+                            log::invalid_import_target(target.pos, file);
+                            self.num_errors += 1;
+                            return;
+                        }
+                    },
+                    Some(ListElement::Empty { comma_pos }) => {
+                        log::empty_element(comma_pos, file);
+                        self.num_errors += 1;
+                        return;
+                    }
+                    None => {
+                        log::invalid_import_target(target.pos, file);
+                        self.num_errors += 1;
+                        return;
+                    }
+                };
+                (name, path)
+            }
+            _ => {
+                log::invalid_import_target(target.pos, file);
+                self.num_errors += 1;
+                return;
+            }
+        };
+        let path = path.with_extension("sysc");
+        let path = match path.canonicalize() {
+            Ok(path) => path,
+            Err(err) => {
+                log::cannot_read_file(&path, file, err);
+                self.num_errors += 1;
+                return;
+            }
+        };
+        if self.import_chain.insert(path.clone()) {
+            match self.read_file(&path) {
+                Ok(n) => {
+                    named_items.insert(name, Item::Import(n));
+                }
+                Err(err) => {
+                    log::cannot_read_file(&path, &file, err);
+                    self.num_errors += 1;
+                }
+            }
+            self.import_chain.remove(&path);
+        } else {
+            log::circular_imports(target.pos, &file);
+            self.num_errors += 1;
+        }
+    }
+
+    fn handle_function_name(
+        &mut self,
+        name: Option<TermWithPos>,
+        named_items: &mut HashMap<String, Item>,
+        file: &log::File,
+    ) {
+        let Some(name) = name else {
+            todo!("Missing function name");
+        };
+        let Term::Identifier(name) = name.term else {
+            todo!("Invalid function name");
+        };
+        if let Item::Function(functions) = named_items
+            .entry(name)
+            .or_insert_with(|| Item::Function(Vec::new()))
+        {
+            functions.push(self.num_functions);
+        } else {
+            self.num_errors += 1;
+            todo!("Duplicate definition");
+        }
+        self.num_functions += 1;
+    }
 }
 
 struct Context {
@@ -247,7 +333,11 @@ impl Context {
                 scope.push((name, prev_index));
                 self.num_variables += 1;
             }
-            Statement::While(condition, body) => {
+            Statement::While {
+                keyword_while_pos,
+                condition,
+                body,
+            } => {
                 let mut body_scope = Vec::new();
                 for stmt in body {
                     self.translate_statement(

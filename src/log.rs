@@ -41,10 +41,17 @@ pub fn aborting(num_errors: u32) {
     eprintln!("Aborting due to {num_errors} previous errors.");
 }
 
+pub fn missing_import_name(keyword_import_pos: Pos, file: &File) {}
+pub fn invalid_import_target(pos: Pos, file: &File) {}
+
 pub fn circular_imports(pos: Pos, file: &File) {
     eprintln!("ERROR: Circular imports at {pos}.");
+    file.quote_pos(pos);
 }
 
+pub fn file_not_found(path: &Path, file: &File, err: std::io::Error) {
+    eprintln!("ERROR: Cannot read file `{}`. {}", path.display(), err);
+}
 pub fn cannot_read_file(path: &Path, file: &File, err: std::io::Error) {
     eprintln!("ERROR: Cannot read file `{}`. {}", path.display(), err);
 }
@@ -54,6 +61,7 @@ pub fn undefined_variable(pos: Pos, file: &File) {
     file.quote_pos(pos);
 }
 
+pub fn empty_element(comma_pos: Pos, file: &File) {}
 pub struct File {
     pub path: PathBuf,
     pub content: String,
@@ -73,61 +81,99 @@ impl File {
     }
     fn quote_pos(&self, Pos { start, end }: Pos) {
         eprintln!("{}", self.path.display());
-        if start.line == end.line {
-            let line = &self.content[self.lines[start.line].clone()];
-            eprintln!(
-                "L{}: {} !-> {} <-! {}",
-                start.line + 1,
-                &line[..start.column],
-                &line[start.column..end.column],
-                &line[end.column..],
-            );
-        } else {
-            let start_line = &self.content[self.lines[start.line].clone()];
-            eprintln!(
-                "L{}: {} !-> {}",
-                start.line + 1,
-                &start_line[..start.column],
-                &start_line[start.column..],
-            );
-            let end_line = &self.content[self.lines[end.line].clone()];
-            eprintln!(
-                "L{}: {} <-! {}",
-                end.line + 1,
-                &end_line[..end.column],
-                &end_line[end.column..],
-            );
+        match end.line - start.line {
+            0 => {
+                let line = &self.content[self.lines[start.line].clone()];
+                eprintln!(
+                    "L{}: {} !-> {} <-! {}",
+                    start.line + 1,
+                    &line[..start.column],
+                    &line[start.column..end.column],
+                    &line[end.column..],
+                );
+            }
+            1 => {
+                let start_line = &self.content[self.lines[start.line].clone()];
+                let end_line = &self.content[self.lines[end.line].clone()];
+                eprintln!(
+                    "L{}: {} !-> {}",
+                    start.line + 1,
+                    &start_line[..start.column],
+                    &start_line[start.column..],
+                );
+                eprintln!(
+                    "L{}: {} <-! {}",
+                    end.line + 1,
+                    &end_line[..end.column],
+                    &end_line[end.column..],
+                );
+            }
+            2 => {
+                let start_line = &self.content[self.lines[start.line].clone()];
+                let mid_line = &self.content[self.lines[start.line + 1].clone()];
+                let end_line = &self.content[self.lines[end.line].clone()];
+                eprintln!(
+                    "L{}: {} !-> {}",
+                    start.line + 1,
+                    &start_line[..start.column],
+                    &start_line[start.column..],
+                );
+                eprintln!("L{}: {}", start.line + 2, mid_line);
+                eprintln!(
+                    "L{}: {} <-! {}",
+                    end.line + 1,
+                    &end_line[..end.column],
+                    &end_line[end.column..],
+                );
+            }
+            num_lines => {
+                let start_line = &self.content[self.lines[start.line].clone()];
+                let end_line = &self.content[self.lines[end.line].clone()];
+                eprintln!(
+                    "L{}: {} !-> {}",
+                    start.line + 1,
+                    &start_line[..start.column],
+                    &start_line[start.column..],
+                );
+                eprintln!("({} lines)", num_lines - 1);
+                eprintln!(
+                    "L{}: {} <-! {}",
+                    end.line + 1,
+                    &end_line[..end.column],
+                    &end_line[end.column..],
+                );
+            }
         }
     }
 }
 
 #[derive(Debug)]
 pub enum ParseError {
+    /// Returned by [`read_token`](../frontend/ast/fn.read_token.html).
     UnexpectedCharacter(Index),
+    /// Returned by
+    /// [`skip_block_comment`](../frontend/ast/fn.skip_block_comment.html).
     UnterminatedComment {
-        starts_index: Vec<Index>,
+        start_indices: Vec<Index>,
     },
+    /// Returned by [`read_token`](../frontend/ast/fn.read_token.html).
     UnterminatedStringLiteral {
         start_index: Index,
     },
+    /// Returned by [`read_token`](../frontend/ast/fn.read_token.html).
     InvalidEscapeSequence {
         backslash_index: Index,
     },
-    UnmatchedClosingBraceInStringLiteral {
-        closing_brace_index: Index,
-        start_index: Index,
+    /// Returned by [`read_token`](../frontend/ast/fn.read_token.html).
+    UnexpectedTokenInStringLiteral {
+        unexpected_token_pos: Pos,
+        dollar_index: Index,
     },
-    UnexpectedToken(Pos),
-    MissingFunctionName {
-        keyword_func_pos: Pos,
-    },
+    /// Returned by [`read_token`](../frontend/ast/fn.read_token.html).
     InvalidBlockComment {
         start_index: Index,
     },
-    UnexpectedTokenAfterKeywordFunc {
-        unexpected_token_pos: Pos,
-        keyword_func_pos: Pos,
-    },
+    UnexpectedToken(Pos),
     UnclosedBlock {
         start_line_indices: Vec<usize>,
     },
@@ -135,20 +181,9 @@ pub enum ParseError {
         unexpected_token_pos: Pos,
         start_line_indices: Vec<usize>,
     },
-    MissingConditionAfterKeywordWhile {
-        keyword_while_pos: Pos,
-    },
-    UnexpectedTokenAfterKeywordWhile {
-        unexpected_token_pos: Pos,
-        keyword_while_pos: Pos,
-    },
-    UnexpectedTokenAfterStatement {
-        unexpected_token_pos: Pos,
-        stmt_pos: Pos,
-    },
-    UnexpectedTokenAfterWhileCondition {
-        unexpected_token_pos: Pos,
-        condition_pos: Pos,
+    ExtraTokenAfterLine {
+        extra_token_pos: Pos,
+        line_pos: Pos,
     },
     UnexpectedTokenInParentheses {
         unexpected_token_pos: Pos,
@@ -173,8 +208,27 @@ impl ParseError {
                 eprintln!("Unexpected character at {}.", index);
                 file.quote_index(index);
             }
-            ParseError::UnterminatedComment { starts_index } => {
-                eprintln!("Unterminated comment");
+            ParseError::UnterminatedStringLiteral { start_index } => {
+                eprintln!("Unterminated string literal started at {start_index}.");
+                file.quote_index(start_index);
+            }
+            ParseError::InvalidEscapeSequence { backslash_index } => {
+                eprintln!("Invalid escape squence at {backslash_index}.");
+                file.quote_index(backslash_index);
+            }
+            ParseError::UnexpectedTokenInStringLiteral {
+                unexpected_token_pos,
+                dollar_index,
+            } => {
+                eprintln!("Unexpected token at {unexpected_token_pos}.");
+                file.quote_pos(unexpected_token_pos);
+                eprintln!("Note: A placeholder in string literal started at {dollar_index}.");
+                file.quote_index(dollar_index);
+            }
+            ParseError::UnterminatedComment {
+                start_indices: starts_index,
+            } => {
+                eprintln!("Unterminated comment started at:");
                 for start_index in starts_index {
                     file.quote_index(start_index);
                 }
@@ -189,6 +243,17 @@ impl ParseError {
             ParseError::UnexpectedToken(unexpected_token_pos) => {
                 eprintln!("Unexpected token at {}.", unexpected_token_pos);
                 file.quote_pos(unexpected_token_pos);
+            }
+            ParseError::ExtraTokenAfterLine {
+                extra_token_pos,
+                line_pos,
+            } => {
+                eprintln!("An extra token at {}.", extra_token_pos);
+                file.quote_pos(extra_token_pos);
+                eprintln!();
+                eprintln!("A line break is required right after:");
+                file.quote_pos(line_pos);
+                eprintln!();
             }
             _ => eprintln!("{:?}", self),
         }
