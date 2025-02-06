@@ -268,15 +268,12 @@ impl Reader {
 
     fn handle_function_name(
         &mut self,
-        name: Option<TermWithPos>,
+        name: Option<String>,
         named_items: &mut HashMap<String, Item>,
         file: &log::File,
     ) {
         let Some(name) = name else {
             todo!("Missing function name");
-        };
-        let Term::Identifier(name) = name.term else {
-            todo!("Invalid function name");
         };
         if let Item::Function(functions) = named_items
             .entry(name)

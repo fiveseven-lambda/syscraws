@@ -28,7 +28,7 @@ use enum_iterator::Sequence;
 pub struct File {
     pub imports: Vec<Import>,
     pub structure_definitions: Vec<StructDefinition>,
-    pub function_names: Vec<Option<TermWithPos>>,
+    pub function_names: Vec<Option<String>>,
     pub top_level_statements: Vec<TopLevelStatement>,
 }
 
@@ -351,15 +351,29 @@ impl Parser<'_, '_> {
 
     fn parse_function_definition(
         &mut self,
-    ) -> Result<(Option<TermWithPos>, TopLevelStatement), ParseError> {
+    ) -> Result<(Option<String>, TopLevelStatement), ParseError> {
         let keyword_func_pos = self.current_pos();
         self.consume_token()?;
 
         // The function name should immediately follow `func`, without a line break.
         let name = if self.current.is_on_new_line {
             None
+        } else if let Some(name) = &mut self.current.token {
+            match name {
+                Token::Identifier(name) => {
+                    let name = std::mem::take(name);
+                    self.consume_token()?;
+                    Some(name)
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedTokenAfterKeywordFunc {
+                        unexpected_token_pos: self.current_pos(),
+                        keyword_func_pos,
+                    })
+                }
+            }
         } else {
-            self.parse_factor(false)?
+            None
         };
 
         // Generic parameters list can follow.

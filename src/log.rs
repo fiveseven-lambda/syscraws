@@ -174,6 +174,10 @@ pub enum ParseError {
         start_index: Index,
     },
     UnexpectedToken(Pos),
+    UnexpectedTokenAfterKeywordFunc {
+        unexpected_token_pos: Pos,
+        keyword_func_pos: Pos,
+    },
     UnclosedBlock {
         start_line_indices: Vec<usize>,
     },
