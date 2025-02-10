@@ -157,3 +157,38 @@ fn parse_addition() {
     assert_eq!(right_operand.term, Term::Identifier(String::from("bar")));
     assert_eq!(right_operand.pos, pos!(0:6-0:9));
 }
+
+#[test]
+fn parse_function_definition() {
+    let input = "
+    func foo(x: int, y: int): int
+        x + y
+    end
+    ";
+    let mut chars_peekable = CharsPeekable::new(&input);
+    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    let (name, definition) = parser.parse_function_definition().unwrap();
+    assert_eq!(name, Some(String::from("foo")));
+    for (parameter, expected_parameter_name) in
+        definition.parameters.unwrap().iter().zip(["x", "y"])
+    {
+        match parameter {
+            ListElement::Empty { comma_pos } => panic!("{comma_pos}"),
+            ListElement::NonEmpty(parameter) => {
+                let Term::TypeAnnotation {
+                    term_left,
+                    colon_pos: _,
+                    term_right,
+                } = &parameter.term
+                else {
+                    panic!("{}", parameter.pos);
+                };
+                let Term::Identifier(parameter_name) = &term_left.term else {
+                    panic!("{}", term_left.pos);
+                };
+                assert_eq!(parameter_name, expected_parameter_name);
+                assert_eq!(Term::IntegerTy, term_right.as_ref().unwrap().term);
+            }
+        }
+    }
+}

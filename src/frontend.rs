@@ -18,13 +18,12 @@
 
 mod ast;
 mod chars_peekable;
-use ast::*;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use crate::log;
+use crate::{backend, log};
 use chars_peekable::CharsPeekable;
 
 /**
@@ -41,8 +40,47 @@ pub fn read_input(root_file_path: &Path) {
         }
     };
     let mut reader = Reader {
+        definitions: backend::Definitions {
+            structures: Vec::new(),
+            functions: vec![
+                (
+                    backend::FunctionTy {
+                        num_ty_parameters: 0,
+                        parameters_ty: vec![
+                            backend::Ty::Application {
+                                constructor: backend::TyConstructor::Integer,
+                                arguments: vec![],
+                            },
+                            backend::Ty::Application {
+                                constructor: backend::TyConstructor::Integer,
+                                arguments: vec![],
+                            },
+                        ],
+                        return_ty: backend::Ty::Application {
+                            constructor: backend::TyConstructor::Integer,
+                            arguments: vec![],
+                        },
+                    },
+                    backend::Function::IAdd,
+                ),
+                (
+                    backend::FunctionTy {
+                        num_ty_parameters: 1,
+                        parameters_ty: vec![backend::Ty::Application {
+                            constructor: backend::TyConstructor::Reference,
+                            arguments: vec![backend::Ty::Parameter(0)],
+                        }],
+                        return_ty: backend::Ty::Parameter(0),
+                    },
+                    backend::Function::Deref,
+                ),
+            ],
+            function_definitions: Vec::new(),
+            num_global_variables: 0,
+        },
         num_functions: 0,
         exported_items: Vec::new(),
+        methods: HashMap::from([(String::from("add"), 0)]),
         files: Vec::new(),
         file_indices: HashMap::new(),
         import_chain: HashSet::from([root_file_path.clone()]),
@@ -62,8 +100,10 @@ pub fn read_input(root_file_path: &Path) {
  * A structure to read files recursively.
  */
 struct Reader {
+    definitions: backend::Definitions,
     num_functions: usize,
     exported_items: Vec<HashMap<String, Item>>,
+    methods: HashMap<String, usize>,
     files: Vec<log::File>,
     /**
      * Used in [`Reader::read_file`] to avoid reading the same file multiple
@@ -71,7 +111,7 @@ struct Reader {
      */
     file_indices: HashMap<PathBuf, usize>,
     /**
-     * Used in [`Parser::parse_import`] to detect circular imports.
+     * Used in [`Reader::handle_import`] to detect circular imports.
      */
     import_chain: HashSet<PathBuf>,
     num_errors: u32,
@@ -96,7 +136,7 @@ impl Reader {
             content,
         };
         match result {
-            Ok(File {
+            Ok(ast::File {
                 imports,
                 structure_definitions,
                 function_names,
@@ -104,11 +144,17 @@ impl Reader {
             }) => {
                 let mut named_items = HashMap::new();
                 for import in imports {
-                    self.handle_import(import, path.parent().unwrap(), &mut named_items, &file);
+                    self.translate_import(import, path.parent().unwrap(), &mut named_items, &file);
                 }
-                for structure in structure_definitions {}
+                for structure_definition in structure_definitions {
+                    self.translate_structure_definition(
+                        structure_definition,
+                        &mut named_items,
+                        &file,
+                    );
+                }
                 for name in function_names {
-                    self.handle_function_name(name, &mut named_items, &file);
+                    self.translate_function_name(name, &mut named_items, &file);
                 }
                 let mut global = Context {
                     variables: HashMap::new(),
@@ -117,31 +163,19 @@ impl Reader {
                 let mut global_scope = Vec::new();
                 for statement in top_level_statements {
                     match statement {
-                        TopLevelStatement::FunctionDefinition {
-                            type_parameters: opt_type_parameters,
-                            parameters: opt_parameters,
-                            return_ty: opt_ret_ty,
-                            body,
-                        } => {
-                            let mut local = Context {
-                                variables: HashMap::new(),
-                                num_variables: 0,
-                            };
-                            let mut local_scope = Vec::new();
-                            for statement in body {
-                                local.translate_statement(
-                                    statement,
-                                    &mut local_scope,
-                                    Some(&global.variables),
-                                    &named_items,
-                                    &self.exported_items,
-                                );
-                            }
+                        ast::TopLevelStatement::FunctionDefinition(function_definition) => {
+                            self.translate_function_definition(
+                                function_definition,
+                                &global.variables,
+                                &mut named_items,
+                            );
                         }
-                        TopLevelStatement::Statement(statement) => {
-                            global.translate_statement(
+                        ast::TopLevelStatement::Statement(statement) => {
+                            self.translate_statement(
+                                &mut global,
                                 statement,
                                 &mut global_scope,
+                                &HashMap::new(),
                                 None,
                                 &named_items,
                                 &self.exported_items,
@@ -165,12 +199,12 @@ impl Reader {
         Ok(new_index)
     }
 
-    fn handle_import(
+    fn translate_import(
         &mut self,
-        Import {
+        ast::Import {
             keyword_import_pos,
             target,
-        }: Import,
+        }: ast::Import,
         parent_directory: &Path,
         named_items: &mut HashMap<String, Item>,
         file: &log::File,
@@ -181,16 +215,16 @@ impl Reader {
             return;
         };
         let (name, path) = match target.term {
-            Term::Identifier(name) => {
+            ast::Term::Identifier(name) => {
                 let path = parent_directory.join(&name);
                 (name, path)
             }
-            Term::FunctionCall {
+            ast::Term::FunctionCall {
                 function,
                 arguments,
             } => {
                 let name = match function.term {
-                    Term::Identifier(name) => name,
+                    ast::Term::Identifier(name) => name,
                     _ => {
                         log::invalid_import_target(target.pos, file);
                         self.num_errors += 1;
@@ -198,17 +232,17 @@ impl Reader {
                     }
                 };
                 let path = match arguments.into_iter().next() {
-                    Some(ListElement::NonEmpty(argument)) => match argument.term {
-                        Term::StringLiteral(components) => {
+                    Some(ast::ListElement::NonEmpty(argument)) => match argument.term {
+                        ast::Term::StringLiteral(components) => {
                             let mut path = String::new();
                             for component in components {
                                 match component {
-                                    StringLiteralComponent::PlaceHolder { .. } => {
+                                    ast::StringLiteralComponent::PlaceHolder { .. } => {
                                         log::invalid_import_target(target.pos, file);
                                         self.num_errors += 1;
                                         return;
                                     }
-                                    StringLiteralComponent::String(value) => {
+                                    ast::StringLiteralComponent::String(value) => {
                                         path.push_str(&value);
                                     }
                                 }
@@ -221,7 +255,7 @@ impl Reader {
                             return;
                         }
                     },
-                    Some(ListElement::Empty { comma_pos }) => {
+                    Some(ast::ListElement::Empty { comma_pos }) => {
                         log::empty_element(comma_pos, file);
                         self.num_errors += 1;
                         return;
@@ -266,7 +300,65 @@ impl Reader {
         }
     }
 
-    fn handle_function_name(
+    fn translate_structure_definition(
+        &mut self,
+        ast::StructureDefinition {
+            keyword_struct_pos,
+            name,
+            fields,
+        }: ast::StructureDefinition,
+        named_items: &mut HashMap<String, Item>,
+        file: &log::File,
+    ) {
+        let Some(name) = name else {
+            todo!("Missing structure name");
+        };
+        let mut ty_parameters = HashMap::new();
+        let name = match name.term {
+            ast::Term::Identifier(name) => name,
+            ast::Term::TypeParameters {
+                term_left,
+                parameters,
+            } => {
+                let name = match term_left.term {
+                    ast::Term::Identifier(name) => name,
+                    _ => todo!(),
+                };
+                for parameter in parameters {
+                    match parameter {
+                        ast::ListElement::Empty { comma_pos } => todo!(),
+                        ast::ListElement::NonEmpty(parameter) => match parameter.term {
+                            ast::Term::Identifier(name) => {
+                                let new_index = ty_parameters.len();
+                                ty_parameters.insert(name, new_index);
+                            }
+                            _ => todo!(),
+                        },
+                    }
+                }
+                name
+            }
+            _ => todo!(),
+        };
+        let new_index = self.definitions.structures.len();
+        self.definitions.structures.push(backend::Structure {
+            num_ty_parameters: ty_parameters.len(),
+            fields_ty: Vec::new(),
+        });
+        named_items.insert(
+            name,
+            if ty_parameters.is_empty() {
+                Item::Ty(backend::Ty::Application {
+                    constructor: backend::TyConstructor::UserDefined(new_index),
+                    arguments: vec![],
+                })
+            } else {
+                Item::TyConstructor(backend::TyConstructor::UserDefined(new_index))
+            },
+        );
+    }
+
+    fn translate_function_name(
         &mut self,
         name: Option<String>,
         named_items: &mut HashMap<String, Item>,
@@ -286,51 +378,95 @@ impl Reader {
         }
         self.num_functions += 1;
     }
-}
 
-struct Context {
-    variables: HashMap<String, usize>,
-    num_variables: usize,
-}
-
-impl Context {
-    fn translate_statement(
+    fn translate_function_definition(
         &mut self,
-        statement: Statement,
+        ast::FunctionDefinition {
+            ty_parameters,
+            parameters,
+            return_ty,
+            body,
+        }: ast::FunctionDefinition,
+        global_variables: &HashMap<String, usize>,
+        named_items: &mut HashMap<String, Item>,
+    ) {
+        let mut local = Context {
+            variables: HashMap::new(),
+            num_variables: 0,
+        };
+        let mut local_scope = Vec::new();
+        let mut ty_parameters_name = HashMap::new();
+        if let Some(ty_parameters) = ty_parameters {
+            for (i, ty_parameter) in ty_parameters.into_iter().enumerate() {
+                match ty_parameter {
+                    ast::ListElement::NonEmpty(ty_parameter) => {
+                        if let ast::Term::Identifier(name) = ty_parameter.term {
+                            ty_parameters_name.insert(name, i);
+                        }
+                    }
+                    ast::ListElement::Empty { comma_pos } => {
+                        todo!();
+                    }
+                }
+            }
+        }
+        for statement in body {
+            self.translate_statement(
+                &mut local,
+                statement,
+                &mut local_scope,
+                &ty_parameters_name,
+                Some(global_variables),
+                &named_items,
+                &self.exported_items,
+            );
+        }
+    }
+
+    fn translate_statement(
+        &self,
+        context: &mut Context,
+        statement: ast::Statement,
         scope: &mut Vec<(String, Option<usize>)>,
+        ty_parameters: &HashMap<String, usize>,
         global_variables: Option<&HashMap<String, usize>>,
         named_items: &HashMap<String, Item>,
         exported_items: &Vec<HashMap<String, Item>>,
     ) {
         match statement {
-            Statement::Expression(term) => {
+            ast::Statement::Term(term) => {
                 let expr = match global_variables {
-                    Some(global_variables) => translate_expression(
+                    Some(global_variables) => self.translate_item(
                         term,
-                        Some(&self.variables),
-                        global_variables,
                         named_items,
+                        ty_parameters,
+                        Some(&context.variables),
+                        global_variables,
                         exported_items,
                     ),
-                    None => translate_expression(
+                    None => self.translate_item(
                         term,
-                        None,
-                        &self.variables,
                         named_items,
+                        ty_parameters,
+                        None,
+                        &context.variables,
                         exported_items,
                     ),
                 };
             }
-            Statement::VariableDeclaration(name) => {
-                let Term::Identifier(name) = name.term else {
+            ast::Statement::VariableDeclaration(name) => {
+                let Some(name) = name else {
                     todo!();
                 };
-                let new_index = self.num_variables;
-                let prev_index = self.variables.insert(name.clone(), new_index);
+                let ast::Term::Identifier(name) = name.term else {
+                    todo!();
+                };
+                let new_index = context.num_variables;
+                let prev_index = context.variables.insert(name.clone(), new_index);
                 scope.push((name, prev_index));
-                self.num_variables += 1;
+                context.num_variables += 1;
             }
-            Statement::While {
+            ast::Statement::While {
                 keyword_while_pos,
                 condition,
                 body,
@@ -338,8 +474,10 @@ impl Context {
                 let mut body_scope = Vec::new();
                 for stmt in body {
                     self.translate_statement(
+                        context,
                         stmt,
                         &mut body_scope,
+                        ty_parameters,
                         global_variables,
                         named_items,
                         exported_items,
@@ -347,37 +485,131 @@ impl Context {
                 }
                 for (name, prev_index) in body_scope.into_iter().rev() {
                     match prev_index {
-                        Some(prev_index) => self.variables.insert(name, prev_index),
-                        None => self.variables.remove(&name),
+                        Some(prev_index) => context.variables.insert(name, prev_index),
+                        None => context.variables.remove(&name),
                     };
                 }
             }
         }
     }
-}
 
-fn translate_expression(
-    term: TermWithPos,
-    local_variables: Option<&HashMap<String, usize>>,
-    global_variables: &HashMap<String, usize>,
-    named_items: &HashMap<String, Item>,
-    exported_items: &Vec<HashMap<String, Item>>,
-) {
-    match term.term {
-        Term::Identifier(name) => {}
-        _ => todo!(),
+    fn translate_item(
+        &self,
+        item: ast::TermWithPos,
+        named_items: &HashMap<String, Item>,
+        ty_parameters: &HashMap<String, usize>,
+        local_variables: Option<&HashMap<String, usize>>,
+        global_variables: &HashMap<String, usize>,
+        exported_items: &Vec<HashMap<String, Item>>,
+    ) -> Result<Item, ()> {
+        match item.term {
+            ast::Term::Identifier(name) => {
+                if let Some(local_variables) = local_variables {
+                    if let Some(&index) = local_variables.get(&name) {
+                        return Ok(Item::LValue(backend::Expression::LocalVariable(index)));
+                    }
+                }
+                if let Some(&index) = global_variables.get(&name) {
+                    return Ok(Item::LValue(backend::Expression::GlobalVariable(index)));
+                }
+                if let Some(&index) = ty_parameters.get(&name) {
+                    return Ok(Item::Ty(backend::Ty::Parameter(index)));
+                }
+                if let Some(item) = named_items.get(&name) {
+                    return Ok(item.clone());
+                }
+                Err(())
+            }
+            ast::Term::IntegerTy => Ok(Item::Ty(backend::Ty::Application {
+                constructor: backend::TyConstructor::Integer,
+                arguments: vec![],
+            })),
+            ast::Term::FloatTy => Ok(Item::Ty(backend::Ty::Application {
+                constructor: backend::TyConstructor::Float,
+                arguments: vec![],
+            })),
+            ast::Term::TypeParameters {
+                term_left,
+                parameters,
+            } => {
+                let term_left = self.translate_item(
+                    *term_left,
+                    named_items,
+                    ty_parameters,
+                    local_variables,
+                    global_variables,
+                    exported_items,
+                );
+                let mut translated_parameters = Some(Vec::new());
+                for parameter in parameters {
+                    let translated_parameter = match parameter {
+                        ast::ListElement::NonEmpty(parameter) => self.translate_item(
+                            parameter,
+                            named_items,
+                            ty_parameters,
+                            local_variables,
+                            global_variables,
+                            exported_items,
+                        ),
+                        ast::ListElement::Empty { comma_pos } => todo!(),
+                    };
+                    if let (Some(translated_parameters), Ok(translated_parameter)) =
+                        (&mut translated_parameters, translated_parameter)
+                    {
+                        if let Item::Ty(ty) = translated_parameter {
+                            translated_parameters.push(ty);
+                        }
+                    }
+                }
+                match (term_left, translated_parameters) {
+                    (Ok(Item::TyConstructor(constructor)), Some(arguments)) => {
+                        Ok(Item::Ty(backend::Ty::Application {
+                            constructor,
+                            arguments,
+                        }))
+                    }
+                    _ => Err(()),
+                }
+            }
+            ast::Term::FieldByName { term_left, name } => {
+                let term_left = self.translate_item(
+                    *term_left,
+                    named_items,
+                    ty_parameters,
+                    local_variables,
+                    global_variables,
+                    exported_items,
+                )?;
+                match term_left {
+                    Item::Import(index) => {
+                        if let Some(item) = exported_items[index].get(&name) {
+                            Ok(item.clone())
+                        } else {
+                            Err(())
+                        }
+                    }
+                    _ => todo!(),
+                }
+            }
+            _ => todo!(),
+        }
     }
 }
 
-#[derive(Debug)]
+struct Context {
+    variables: HashMap<String, usize>,
+    num_variables: usize,
+}
+
+impl Context {}
+
+#[derive(Clone)]
 enum Item {
     Import(usize),
     Function(Vec<usize>),
-    Type(usize),
+    Ty(backend::Ty),
+    TyConstructor(backend::TyConstructor),
     GlobalVariable(usize),
-}
-
-enum Type {
-    Builtin,
-    Struct(usize),
+    LValue(backend::Expression),
+    RValue(backend::Expression),
 }

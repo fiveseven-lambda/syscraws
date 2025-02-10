@@ -69,6 +69,14 @@ pub struct File {
 }
 
 impl File {
+    fn quote_line(&self, line: usize) {
+        eprintln!("{}", self.path.display());
+        eprintln!(
+            "L{}: !-> {}",
+            line + 1,
+            &self.content[self.lines[line].clone()]
+        );
+    }
     fn quote_index(&self, Index { line, column }: Index) {
         eprintln!("{}", self.path.display());
         let start_line = &self.content[self.lines[line].clone()];
@@ -178,9 +186,11 @@ pub enum ParseError {
         unexpected_token_pos: Pos,
         keyword_func_pos: Pos,
     },
+    /// Returned by [`parse_block`](../frontend/ast/fn.parse_block.html).
     UnclosedBlock {
         start_line_indices: Vec<usize>,
     },
+    /// Returned by [`parse_block`](../frontend/ast/fn.parse_block.html).
     UnexpectedTokenInBlock {
         unexpected_token_pos: Pos,
         start_line_indices: Vec<usize>,
@@ -248,16 +258,47 @@ impl ParseError {
                 eprintln!("Unexpected token at {}.", unexpected_token_pos);
                 file.quote_pos(unexpected_token_pos);
             }
+            ParseError::UnexpectedTokenAfterKeywordFunc {
+                unexpected_token_pos,
+                keyword_func_pos,
+            } => {
+                eprintln!("Unexpected token at {}.", unexpected_token_pos);
+                file.quote_pos(unexpected_token_pos);
+                eprintln!();
+                eprintln!(
+                    "Expected an identifier after `func` at {}.",
+                    keyword_func_pos
+                );
+                file.quote_pos(keyword_func_pos);
+                eprintln!();
+            }
             ParseError::ExtraTokenAfterLine {
                 extra_token_pos,
-                line_pos,
+                line_pos: _,
             } => {
                 eprintln!("An extra token at {}.", extra_token_pos);
                 file.quote_pos(extra_token_pos);
                 eprintln!();
-                eprintln!("A line break is required right after:");
-                file.quote_pos(line_pos);
+            }
+            ParseError::UnclosedBlock { start_line_indices } => {
+                eprintln!("Unexpected end of file. Blocks opened at:");
+                for &line_index in &start_line_indices {
+                    file.quote_line(line_index);
+                    eprintln!();
+                }
+            }
+            ParseError::UnexpectedTokenInBlock {
+                unexpected_token_pos,
+                start_line_indices,
+            } => {
+                eprintln!("Unexpected token at {}.", unexpected_token_pos);
+                file.quote_pos(unexpected_token_pos);
                 eprintln!();
+                eprintln!("Blocks opened at:");
+                for &line_index in &start_line_indices {
+                    file.quote_line(line_index);
+                    eprintln!();
+                }
             }
             _ => eprintln!("{:?}", self),
         }

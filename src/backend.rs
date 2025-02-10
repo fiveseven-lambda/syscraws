@@ -17,13 +17,49 @@
  */
 
 pub struct Definitions {
-    pub functions: Vec<FunctionDefinition>,
+    pub structures: Vec<Structure>,
+    pub functions: Vec<(FunctionTy, Function)>,
+    pub function_definitions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
 }
 
+pub struct Structure {
+    pub num_ty_parameters: usize,
+    pub fields_ty: Vec<Ty>,
+}
+
+pub struct FunctionTy {
+    pub num_ty_parameters: usize,
+    pub parameters_ty: Vec<Ty>,
+    pub return_ty: Ty,
+}
+
+pub enum Function {
+    IAdd,
+    Deref,
+    UserDefined(usize),
+}
+
 pub struct FunctionDefinition {
-    pub body: Vec<Statement>,
     pub num_local_variables: usize,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Clone)]
+pub enum Ty {
+    Application {
+        constructor: TyConstructor,
+        arguments: Vec<Ty>,
+    },
+    Parameter(usize),
+}
+
+#[derive(Clone)]
+pub enum TyConstructor {
+    Integer,
+    Float,
+    Reference,
+    UserDefined(usize),
 }
 
 pub enum Statement {
@@ -31,9 +67,17 @@ pub enum Statement {
     While(Expression, Vec<Statement>),
 }
 
+#[derive(Clone)]
 pub enum Expression {
     GlobalVariable(usize),
     LocalVariable(usize),
-    Function(Vec<usize>),
-    Module(usize),
+    Function {
+        candidates: Vec<usize>,
+        calls: Vec<Call>,
+    },
+}
+
+#[derive(Clone)]
+pub struct Call {
+    pub arguments: Vec<Expression>,
 }

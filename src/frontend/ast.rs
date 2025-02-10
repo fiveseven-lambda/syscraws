@@ -27,7 +27,7 @@ use enum_iterator::Sequence;
 
 pub struct File {
     pub imports: Vec<Import>,
-    pub structure_definitions: Vec<StructDefinition>,
+    pub structure_definitions: Vec<StructureDefinition>,
     pub function_names: Vec<Option<String>>,
     pub top_level_statements: Vec<TopLevelStatement>,
 }
@@ -37,20 +37,22 @@ pub struct Import {
     pub target: Option<TermWithPos>,
 }
 
-pub struct StructDefinition {
+pub struct StructureDefinition {
     pub keyword_struct_pos: Pos,
     pub name: Option<TermWithPos>,
     pub fields: Vec<Statement>,
 }
 
 pub enum TopLevelStatement {
-    FunctionDefinition {
-        type_parameters: Option<Vec<ListElement>>,
-        parameters: Option<Vec<ListElement>>,
-        return_ty: Option<ReturnType>,
-        body: Vec<Statement>,
-    },
+    FunctionDefinition(FunctionDefinition),
     Statement(Statement),
+}
+
+pub struct FunctionDefinition {
+    pub ty_parameters: Option<Vec<ListElement>>,
+    pub parameters: Option<Vec<ListElement>>,
+    pub return_ty: Option<ReturnType>,
+    pub body: Vec<Statement>,
 }
 
 pub struct ReturnType {
@@ -59,8 +61,8 @@ pub struct ReturnType {
 }
 
 pub enum Statement {
-    VariableDeclaration(TermWithPos),
-    Expression(TermWithPos),
+    VariableDeclaration(Option<TermWithPos>),
+    Term(TermWithPos),
     While {
         keyword_while_pos: Pos,
         condition: Option<TermWithPos>,
@@ -174,7 +176,8 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
         } else if let Token::KeywordFunc = item_start_token {
             let (name, definition) = parser.parse_function_definition()?;
             file.function_names.push(name);
-            file.top_level_statements.push(definition);
+            file.top_level_statements
+                .push(TopLevelStatement::FunctionDefinition(definition));
         } else if let Some(statement) = parser.parse_statement(&mut Vec::new())? {
             file.top_level_statements
                 .push(TopLevelStatement::Statement(statement));
@@ -330,7 +333,7 @@ impl Parser<'_, '_> {
         })
     }
 
-    fn parse_structure_definition(&mut self) -> Result<StructDefinition, ParseError> {
+    fn parse_structure_definition(&mut self) -> Result<StructureDefinition, ParseError> {
         let keyword_struct_pos = self.current_pos();
         self.consume_token()?;
 
@@ -342,7 +345,7 @@ impl Parser<'_, '_> {
 
         let fields = self.parse_block(&mut vec![keyword_struct_pos.line()])?;
 
-        Ok(StructDefinition {
+        Ok(StructureDefinition {
             keyword_struct_pos,
             name,
             fields,
@@ -351,7 +354,7 @@ impl Parser<'_, '_> {
 
     fn parse_function_definition(
         &mut self,
-    ) -> Result<(Option<String>, TopLevelStatement), ParseError> {
+    ) -> Result<(Option<String>, FunctionDefinition), ParseError> {
         let keyword_func_pos = self.current_pos();
         self.consume_token()?;
 
@@ -377,10 +380,46 @@ impl Parser<'_, '_> {
         };
 
         // Generic parameters list can follow.
-        let type_parameters = if self.current.is_on_new_line {
+        let ty_parameters = if self.current.is_on_new_line {
             None
         } else if let Some(Token::OpeningBracket) = self.current.token {
-            todo!("Parse generic parameters");
+            let opening_bracket_pos = self.current_pos();
+            self.consume_token()?;
+
+            let mut ty_parameters = Vec::new();
+            loop {
+                let parameter = self.parse_assign(true)?;
+                match self.current.token {
+                    Some(Token::ClosingParenthesis) => {
+                        self.consume_token()?;
+                        if let Some(element) = parameter {
+                            ty_parameters.push(ListElement::NonEmpty(element));
+                        }
+                        break;
+                    }
+                    Some(Token::Comma) => {
+                        let comma_pos = self.current_pos();
+                        self.consume_token()?;
+                        if let Some(element) = parameter {
+                            ty_parameters.push(ListElement::NonEmpty(element));
+                        } else {
+                            ty_parameters.push(ListElement::Empty { comma_pos })
+                        }
+                    }
+                    Some(_) => {
+                        return Err(ParseError::UnexpectedTokenInParentheses {
+                            unexpected_token_pos: self.current_pos(),
+                            opening_parenthesis_pos: opening_bracket_pos,
+                        });
+                    }
+                    None => {
+                        return Err(ParseError::UnclosedParenthesis {
+                            opening_parenthesis_pos: opening_bracket_pos,
+                        });
+                    }
+                }
+            }
+            Some(ty_parameters)
         } else {
             None
         };
@@ -431,7 +470,7 @@ impl Parser<'_, '_> {
         };
 
         // The return type can be written after `->` or `:` (undecided).
-        let ret_ty = if let Some(Token::HyphenGreater) = self.current.token {
+        let ret_ty = if let Some(Token::Colon) = self.current.token {
             let arrow_pos = self.current_pos();
             self.consume_token()?;
             Some(ReturnType {
@@ -454,9 +493,9 @@ impl Parser<'_, '_> {
 
         Ok((
             name,
-            TopLevelStatement::FunctionDefinition {
+            FunctionDefinition {
                 parameters,
-                type_parameters,
+                ty_parameters,
                 return_ty: ret_ty,
                 body,
             },
@@ -464,7 +503,15 @@ impl Parser<'_, '_> {
     }
 
     /**
-     * Parses a block consisting of statements and a keyword `end`.
+     * Parses a block consisting of zero or more statements and a keyword
+     * `end`.
+     *
+     * # Errors
+     * - [`ParseError::UnexpectedTokenInBlock`] /
+     *   [`ParseError::UnclosedBlock`]\: Invalid token / EOF encountered
+     *   after zero or more statements: expected either `end` or a token
+     *   that is valid as the beginning of a statement.
+     * - [`ParseError::ExtraTokenAfterLine`]\: An extra token after `end`.
      */
     fn parse_block(
         &mut self,
@@ -497,6 +544,13 @@ impl Parser<'_, '_> {
         }
     }
 
+    /**
+     * Parses a [`Statement`].
+     *
+     * # Errors
+     * - [`ParseError::ExtraTokenAfterLine`]\: An extra token after a term
+     *   statement ([`Statement::Term`]).
+     */
     fn parse_statement(
         &mut self,
         start_line_indices: &mut Vec<usize>,
@@ -514,21 +568,39 @@ impl Parser<'_, '_> {
                     line_pos: term.pos,
                 });
             }
-            Ok(Some(Statement::Expression(term)))
+            Ok(Some(Statement::Term(term)))
         } else {
             Ok(None)
         }
     }
 
+    /**
+     * Parses a [`Statement::VariableDeclaration`].
+     *
+     * # Errors
+     * - [`ParseError::ExtraTokenAfterLine`]\: An extra token after the
+     *   declaration.
+     */
     fn parse_variable_declaration(&mut self) -> Result<Statement, ParseError> {
         let keyword_var_pos = self.current_pos();
         self.consume_token()?;
-        let Some(term) = self.parse_assign(false)? else {
-            panic!("No variable name after keyword `var` at {keyword_var_pos}");
-        };
+        let term = self.parse_assign(false)?;
+        if !self.current.is_on_new_line && self.current.token.is_some() {
+            return Err(ParseError::ExtraTokenAfterLine {
+                extra_token_pos: self.current_pos(),
+                line_pos: self.range_from(keyword_var_pos.start),
+            });
+        }
         Ok(Statement::VariableDeclaration(term))
     }
 
+    /**
+     * Parses a while statement ([`Statement::While`]).
+     *
+     * # Errors
+     * - [`ParseError::ExtraTokenAfterLine`]\: An extra token after `while`
+     *   or the condition.
+     */
     fn parse_while_statement(
         &mut self,
         start_line_indices: &mut Vec<usize>,
@@ -744,6 +816,12 @@ impl Parser<'_, '_> {
             } else {
                 return Err(ParseError::UnexpectedToken(dot_pos));
             }
+        } else if let Token::KeywordInt = first_token {
+            self.consume_token()?;
+            Term::IntegerTy
+        } else if let Token::KeywordFloat = first_token {
+            self.consume_token()?;
+            Term::FloatTy
         } else if let Token::OpeningParenthesis = first_token {
             let opening_parenthesis_pos = self.current_pos();
             self.consume_token()?;
