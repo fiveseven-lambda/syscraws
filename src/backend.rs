@@ -22,7 +22,7 @@ pub struct Definitions {
     pub tys_kind: HashMap<TyConstructor, TyKind>,
     pub structures: Vec<Structure>,
     pub functions_ty: HashMap<Function, FunctionTy>,
-    pub function_definitions: Vec<FunctionDefinition>,
+    pub functions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
 }
 
@@ -56,7 +56,7 @@ impl Definitions {
             ]),
             structures: Vec::new(),
             functions_ty: HashMap::from([]),
-            function_definitions: Vec::new(),
+            functions: Vec::new(),
             num_global_variables: 0,
         }
     }
