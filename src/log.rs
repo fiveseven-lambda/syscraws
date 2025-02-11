@@ -41,27 +41,6 @@ pub fn aborting(num_errors: u32) {
     eprintln!("Aborting due to {num_errors} previous errors.");
 }
 
-pub fn missing_import_name(keyword_import_pos: Pos, file: &File) {}
-pub fn invalid_import_target(pos: Pos, file: &File) {}
-
-pub fn circular_imports(pos: Pos, file: &File) {
-    eprintln!("ERROR: Circular imports at {pos}.");
-    file.quote_pos(pos);
-}
-
-pub fn file_not_found(path: &Path, file: &File, err: std::io::Error) {
-    eprintln!("ERROR: Cannot read file `{}`. {}", path.display(), err);
-}
-pub fn cannot_read_file(path: &Path, file: &File, err: std::io::Error) {
-    eprintln!("ERROR: Cannot read file `{}`. {}", path.display(), err);
-}
-
-pub fn undefined_variable(pos: Pos, file: &File) {
-    eprintln!("ERROR: Undefined variable at {pos}.");
-    file.quote_pos(pos);
-}
-
-pub fn empty_element(comma_pos: Pos, file: &File) {}
 pub struct File {
     pub path: PathBuf,
     pub content: String,
@@ -69,15 +48,16 @@ pub struct File {
 }
 
 impl File {
-    fn quote_line(&self, line: usize) {
+    pub fn quote_line(&self, line: usize) {
         eprintln!("{}", self.path.display());
         eprintln!(
             "L{}: !-> {}",
             line + 1,
             &self.content[self.lines[line].clone()]
         );
+        eprintln!();
     }
-    fn quote_index(&self, Index { line, column }: Index) {
+    pub fn quote_index(&self, Index { line, column }: Index) {
         eprintln!("{}", self.path.display());
         let start_line = &self.content[self.lines[line].clone()];
         eprintln!(
@@ -86,8 +66,9 @@ impl File {
             &start_line[..column],
             &start_line[column..],
         );
+        eprintln!();
     }
-    fn quote_pos(&self, Pos { start, end }: Pos) {
+    pub fn quote_pos(&self, Pos { start, end }: Pos) {
         eprintln!("{}", self.path.display());
         match end.line - start.line {
             0 => {
@@ -152,6 +133,7 @@ impl File {
                 );
             }
         }
+        eprintln!();
     }
 }
 
@@ -185,6 +167,10 @@ pub enum ParseError {
     UnexpectedTokenAfterKeywordFunc {
         unexpected_token_pos: Pos,
         keyword_func_pos: Pos,
+    },
+    UnexpectedTokenAfterKeywordStruct {
+        unexpected_token_pos: Pos,
+        keyword_struct_pos: Pos,
     },
     /// Returned by [`parse_block`](../frontend/ast/fn.parse_block.html).
     UnclosedBlock {
@@ -264,13 +250,11 @@ impl ParseError {
             } => {
                 eprintln!("Unexpected token at {}.", unexpected_token_pos);
                 file.quote_pos(unexpected_token_pos);
-                eprintln!();
                 eprintln!(
                     "Expected an identifier after `func` at {}.",
                     keyword_func_pos
                 );
                 file.quote_pos(keyword_func_pos);
-                eprintln!();
             }
             ParseError::ExtraTokenAfterLine {
                 extra_token_pos,
@@ -278,13 +262,11 @@ impl ParseError {
             } => {
                 eprintln!("An extra token at {}.", extra_token_pos);
                 file.quote_pos(extra_token_pos);
-                eprintln!();
             }
             ParseError::UnclosedBlock { start_line_indices } => {
                 eprintln!("Unexpected end of file. Blocks opened at:");
                 for &line_index in &start_line_indices {
                     file.quote_line(line_index);
-                    eprintln!();
                 }
             }
             ParseError::UnexpectedTokenInBlock {
@@ -293,11 +275,9 @@ impl ParseError {
             } => {
                 eprintln!("Unexpected token at {}.", unexpected_token_pos);
                 file.quote_pos(unexpected_token_pos);
-                eprintln!();
                 eprintln!("Blocks opened at:");
                 for &line_index in &start_line_indices {
                     file.quote_line(line_index);
-                    eprintln!();
                 }
             }
             _ => eprintln!("{:?}", self),
@@ -305,7 +285,7 @@ impl ParseError {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Pos {
     pub start: Index,
     pub end: Index,

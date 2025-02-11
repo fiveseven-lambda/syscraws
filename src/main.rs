@@ -20,6 +20,8 @@ mod backend;
 mod frontend;
 mod log;
 
+use std::process::ExitCode;
+
 use clap::Parser;
 
 #[derive(Parser)]
@@ -27,7 +29,11 @@ struct CommandLineArguments {
     filename: String,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let command_line_arguments = CommandLineArguments::parse();
-    frontend::read_input(std::path::Path::new(&command_line_arguments.filename));
+    let Ok(_) = frontend::read_input(std::path::Path::new(&command_line_arguments.filename)) else {
+        return ExitCode::FAILURE;
+    };
+
+    ExitCode::SUCCESS
 }

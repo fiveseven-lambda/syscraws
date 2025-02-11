@@ -25,47 +25,175 @@ use super::CharsPeekable;
 use crate::log::{Index, ParseError, Pos};
 use enum_iterator::Sequence;
 
+/**
+ * The Abstract Syntax Tree (AST) for the entire file.
+ */
 pub struct File {
+    /**
+     * List of import statements in the file.
+     */
     pub imports: Vec<Import>,
-    pub structure_definitions: Vec<StructureDefinition>,
-    pub function_names: Vec<Option<String>>,
+    /**
+     * List of structure names defined in the file.
+     */
+    pub structure_names: Vec<StructureName>,
+    /**
+     * List of function names defined in the file.
+     */
+    pub function_names: Vec<FunctionName>,
+    /**
+     * Top-level statements in the file (includes function definitions).
+     */
     pub top_level_statements: Vec<TopLevelStatement>,
 }
 
+/**
+ * An import statement.
+ */
 pub struct Import {
+    /**
+     * Position of the keyword `import` at the beginning.
+     */
     pub keyword_import_pos: Pos,
+    /**
+     * The target to import.
+     */
     pub target: Option<TermWithPos>,
+    pub extra_tokens_pos: Option<Pos>,
 }
 
-pub struct StructureDefinition {
+pub struct StructureName {
     pub keyword_struct_pos: Pos,
-    pub name: Option<TermWithPos>,
-    pub fields: Vec<Statement>,
+    pub name: Option<String>,
+    pub extra_tokens_pos: Option<Pos>,
 }
 
+pub struct FunctionName {
+    pub keyword_func_pos: Pos,
+    pub name: Option<String>,
+    pub extra_tokens_pos: Option<Pos>,
+}
+
+/**
+ * A top-level statement in the AST.
+ */
 pub enum TopLevelStatement {
+    /**
+     * A structure definition.
+     */
+    StructureDefinition(StructureDefinition),
+    /**
+     * A function definition.
+     */
     FunctionDefinition(FunctionDefinition),
+    /**
+     * A regular statement.
+     */
     Statement(Statement),
 }
 
-pub struct FunctionDefinition {
+/**
+ * A structure definition.
+ */
+pub struct StructureDefinition {
+    /**
+     * List of type parameters.
+     */
     pub ty_parameters: Option<Vec<ListElement>>,
-    pub parameters: Option<Vec<ListElement>>,
-    pub return_ty: Option<ReturnType>,
-    pub body: Vec<Statement>,
+    /**
+     * List of fields of the structure.
+     */
+    pub fields: Vec<StructureField>,
+    /**
+     * [`Pos`] of extra tokens after `end`.
+     */
+    pub extra_tokens_pos: Option<Pos>,
 }
 
+pub struct StructureField {
+    pub field: TermWithPos,
+    pub extra_tokens_pos: Option<Pos>,
+}
+
+/**
+ * A function definition.
+ *
+ * The function name is stored in [`File::function_names`], so it is not
+ * included here.
+ */
+pub struct FunctionDefinition {
+    /**
+     * List of type parameters.
+     */
+    pub ty_parameters: Option<Vec<ListElement>>,
+    /**
+     * List of parameters.
+     */
+    pub parameters: Option<Vec<ListElement>>,
+    /**
+     * Return type of the function.
+     */
+    pub return_ty: Option<ReturnType>,
+    /**
+     * Body of the function.
+     */
+    pub body: Vec<Statement>,
+    /**
+     * [`Pos`] of extra tokens after `end`.
+     */
+    pub extra_tokens_pos: Option<Pos>,
+}
+
+/**
+ * Return type of a function.
+ */
 pub struct ReturnType {
-    pub arrow_pos: Pos,
+    /**
+     * Position of `:`.
+     */
+    pub colon_pos: Pos,
+    /**
+     * The return type.
+     */
     pub ty: Option<TermWithPos>,
 }
 
+/**
+ * A statement.
+ */
 pub enum Statement {
-    VariableDeclaration(Option<TermWithPos>),
+    /**
+     * Declaration of a variable.
+     */
+    VariableDeclaration {
+        /**
+         * Position of the keyword `var`.
+         */
+        keyword_var_pos: Pos,
+        /**
+         * The variable name, type (optional) and initial value (optional).
+         */
+        term: Option<TermWithPos>,
+    },
+    /**
+     * A single expression.
+     */
     Term(TermWithPos),
+    /**
+     * While loop.
+     */
     While {
+        /**
+         * Position of the keyword `while`.
+         */
         keyword_while_pos: Pos,
+        /**
+         * The condition.
+         */
         condition: Option<TermWithPos>,
+        /**
+         * The body.
+         */
         body: Vec<Statement>,
     },
 }
@@ -76,8 +204,15 @@ pub struct TermWithPos {
     pub pos: Pos,
 }
 
+/**
+ * A term, representing an expression, a type, a type constructor or an
+ * import name.
+ */
 #[derive(PartialEq, Eq, Debug)]
 pub enum Term {
+    /**
+     * A numeric literal, either integer or floating-point number.
+     */
     NumericLiteral(String),
     StringLiteral(Vec<StringLiteralComponent>),
     IntegerTy,
@@ -141,6 +276,9 @@ pub enum Term {
     },
 }
 
+/**
+ * A component of a string literal.
+ */
 #[derive(PartialEq, Eq, Debug)]
 pub enum StringLiteralComponent {
     String(String),
@@ -150,6 +288,9 @@ pub enum StringLiteralComponent {
     },
 }
 
+/**
+ * An element of a list.
+ */
 #[derive(PartialEq, Eq, Debug)]
 pub enum ListElement {
     NonEmpty(TermWithPos),
@@ -163,7 +304,7 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
     let mut parser = Parser::new(chars_peekable)?;
     let mut file = File {
         imports: Vec::new(),
-        structure_definitions: Vec::new(),
+        structure_names: Vec::new(),
         function_names: Vec::new(),
         top_level_statements: Vec::new(),
     };
@@ -171,8 +312,10 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
         if let Token::KeywordImport = item_start_token {
             file.imports.push(parser.parse_import()?);
         } else if let Token::KeywordStruct = item_start_token {
-            file.structure_definitions
-                .push(parser.parse_structure_definition()?);
+            let (name, definition) = parser.parse_structure_definition()?;
+            file.structure_names.push(name);
+            file.top_level_statements
+                .push(TopLevelStatement::StructureDefinition(definition));
         } else if let Token::KeywordFunc = item_start_token {
             let (name, definition) = parser.parse_function_definition()?;
             file.function_names.push(name);
@@ -237,7 +380,7 @@ struct TokenInfo {
 }
 
 /**
- * Tokens.
+ * A token.
  */
 #[derive(Debug, PartialEq, Eq)]
 enum Token {
@@ -323,38 +466,111 @@ impl Parser<'_, '_> {
             self.parse_factor(false)?
         };
 
-        if !self.current.is_on_new_line && self.current.token.is_some() {
-            todo!();
-        }
+        let extra_tokens_pos = self.consume_line()?;
 
         Ok(Import {
             keyword_import_pos,
             target,
+            extra_tokens_pos,
         })
     }
 
-    fn parse_structure_definition(&mut self) -> Result<StructureDefinition, ParseError> {
+    fn parse_structure_definition(
+        &mut self,
+    ) -> Result<(StructureName, StructureDefinition), ParseError> {
         let keyword_struct_pos = self.current_pos();
         self.consume_token()?;
 
         let name = if self.current.is_on_new_line {
             None
+        } else if let Some(name) = &mut self.current.token {
+            match name {
+                Token::Identifier(name) => {
+                    let name = std::mem::take(name);
+                    self.consume_token()?;
+                    Some(name)
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedTokenAfterKeywordStruct {
+                        unexpected_token_pos: self.current_pos(),
+                        keyword_struct_pos,
+                    })
+                }
+            }
         } else {
-            self.parse_factor(false)?
+            None
         };
 
-        let fields = self.parse_block(&mut vec![keyword_struct_pos.line()])?;
+        let ty_parameters = if self.current.is_on_new_line {
+            None
+        } else if let Some(Token::OpeningBracket) = self.current.token {
+            let opening_bracket_pos = self.current_pos();
+            self.consume_token()?;
 
-        Ok(StructureDefinition {
-            keyword_struct_pos,
-            name,
-            fields,
-        })
+            let (ty_parameters, _) = self.parse_list_elements_and_trailing_comma()?;
+            match self.current.token {
+                Some(Token::ClosingBracket) => self.consume_token()?,
+                Some(_) => {
+                    return Err(ParseError::UnexpectedTokenInBrackets {
+                        unexpected_token_pos: self.current_pos(),
+                        opening_bracket_pos,
+                    })
+                }
+                None => {
+                    return Err(ParseError::UnclosedBracket {
+                        opening_bracket_pos,
+                    });
+                }
+            }
+            Some(ty_parameters)
+        } else {
+            None
+        };
+
+        let extra_tokens_after_name_and_ty_parameters = self.consume_line()?;
+
+        let mut fields = Vec::new();
+        loop {
+            if let Some(Token::KeywordEnd) = self.current.token {
+                self.consume_token()?;
+                break;
+            } else if let Some(field) = self.parse_factor(false)? {
+                let extra_tokens_pos = self.consume_line()?;
+                fields.push(StructureField {
+                    field,
+                    extra_tokens_pos,
+                });
+            } else if self.current.token.is_some() {
+                return Err(ParseError::UnexpectedTokenInBlock {
+                    unexpected_token_pos: self.current_pos(),
+                    start_line_indices: vec![keyword_struct_pos.line()],
+                });
+            } else {
+                return Err(ParseError::UnclosedBlock {
+                    start_line_indices: vec![keyword_struct_pos.line()],
+                });
+            }
+        }
+
+        let extra_tokens_after_end = self.consume_line()?;
+
+        Ok((
+            StructureName {
+                name,
+                keyword_struct_pos,
+                extra_tokens_pos: extra_tokens_after_name_and_ty_parameters,
+            },
+            StructureDefinition {
+                ty_parameters,
+                fields,
+                extra_tokens_pos: extra_tokens_after_end,
+            },
+        ))
     }
 
     fn parse_function_definition(
         &mut self,
-    ) -> Result<(Option<String>, FunctionDefinition), ParseError> {
+    ) -> Result<(FunctionName, FunctionDefinition), ParseError> {
         let keyword_func_pos = self.current_pos();
         self.consume_token()?;
 
@@ -386,37 +602,19 @@ impl Parser<'_, '_> {
             let opening_bracket_pos = self.current_pos();
             self.consume_token()?;
 
-            let mut ty_parameters = Vec::new();
-            loop {
-                let parameter = self.parse_assign(true)?;
-                match self.current.token {
-                    Some(Token::ClosingParenthesis) => {
-                        self.consume_token()?;
-                        if let Some(element) = parameter {
-                            ty_parameters.push(ListElement::NonEmpty(element));
-                        }
-                        break;
-                    }
-                    Some(Token::Comma) => {
-                        let comma_pos = self.current_pos();
-                        self.consume_token()?;
-                        if let Some(element) = parameter {
-                            ty_parameters.push(ListElement::NonEmpty(element));
-                        } else {
-                            ty_parameters.push(ListElement::Empty { comma_pos })
-                        }
-                    }
-                    Some(_) => {
-                        return Err(ParseError::UnexpectedTokenInParentheses {
-                            unexpected_token_pos: self.current_pos(),
-                            opening_parenthesis_pos: opening_bracket_pos,
-                        });
-                    }
-                    None => {
-                        return Err(ParseError::UnclosedParenthesis {
-                            opening_parenthesis_pos: opening_bracket_pos,
-                        });
-                    }
+            let (ty_parameters, _) = self.parse_list_elements_and_trailing_comma()?;
+            match self.current.token {
+                Some(Token::ClosingBracket) => self.consume_token()?,
+                Some(_) => {
+                    return Err(ParseError::UnexpectedTokenInBrackets {
+                        unexpected_token_pos: self.current_pos(),
+                        opening_bracket_pos,
+                    })
+                }
+                None => {
+                    return Err(ParseError::UnclosedBracket {
+                        opening_bracket_pos,
+                    });
                 }
             }
             Some(ty_parameters)
@@ -470,34 +668,36 @@ impl Parser<'_, '_> {
         };
 
         // The return type can be written after `->` or `:` (undecided).
-        let ret_ty = if let Some(Token::Colon) = self.current.token {
+        let return_ty = if let Some(Token::Colon) = self.current.token {
             let arrow_pos = self.current_pos();
             self.consume_token()?;
             Some(ReturnType {
-                arrow_pos,
+                colon_pos: arrow_pos,
                 ty: self.parse_disjunction(false)?,
             })
         } else {
             None
         };
 
-        if !self.current.is_on_new_line && self.current.token.is_some() {
-            return Err(ParseError::ExtraTokenAfterLine {
-                extra_token_pos: self.current_pos(),
-                line_pos: self.range_from(keyword_func_pos.start),
-            });
-        }
+        let extra_tokens_after_signature = self.consume_line()?;
 
         // The function body follows.
         let body = self.parse_block(&mut vec![keyword_func_pos.line()])?;
 
+        let extra_tokens_after_end = self.consume_line()?;
+
         Ok((
-            name,
+            FunctionName {
+                keyword_func_pos,
+                name,
+                extra_tokens_pos: extra_tokens_after_signature,
+            },
             FunctionDefinition {
                 parameters,
                 ty_parameters,
-                return_ty: ret_ty,
+                return_ty,
                 body,
+                extra_tokens_pos: extra_tokens_after_end,
             },
         ))
     }
@@ -591,7 +791,10 @@ impl Parser<'_, '_> {
                 line_pos: self.range_from(keyword_var_pos.start),
             });
         }
-        Ok(Statement::VariableDeclaration(term))
+        Ok(Statement::VariableDeclaration {
+            keyword_var_pos,
+            term,
+        })
     }
 
     /**
@@ -631,6 +834,16 @@ impl Parser<'_, '_> {
             condition,
             body,
         })
+    }
+
+    fn consume_line(&mut self) -> Result<Option<Pos>, ParseError> {
+        let start = self.current.start;
+        let mut consumed = false;
+        while self.current.token.is_some() && !self.current.is_on_new_line {
+            self.consume_token()?;
+            consumed = true;
+        }
+        Ok(consumed.then(|| self.range_from(start)))
     }
 
     fn parse_assign(&mut self, allow_line_break: bool) -> Result<Option<TermWithPos>, ParseError> {
@@ -825,45 +1038,23 @@ impl Parser<'_, '_> {
         } else if let Token::OpeningParenthesis = first_token {
             let opening_parenthesis_pos = self.current_pos();
             self.consume_token()?;
-            let mut elements = Vec::new();
-            let has_trailing_comma;
-            loop {
-                let element = self.parse_assign(true)?;
-                match self.current.token {
-                    Some(Token::ClosingParenthesis) => {
-                        self.consume_token()?;
-                        if let Some(element) = element {
-                            has_trailing_comma = false;
-                            elements.push(ListElement::NonEmpty(element));
-                        } else {
-                            has_trailing_comma = true;
-                        }
-                        break;
-                    }
-                    Some(Token::Comma) => {
-                        let comma_pos = self.current_pos();
-                        self.consume_token()?;
-                        if let Some(element) = element {
-                            elements.push(ListElement::NonEmpty(element));
-                        } else {
-                            elements.push(ListElement::Empty { comma_pos })
-                        }
-                    }
-                    Some(_) => {
-                        return Err(ParseError::UnexpectedTokenInParentheses {
-                            unexpected_token_pos: self.current_pos(),
-                            opening_parenthesis_pos,
-                        });
-                    }
-                    None => {
-                        return Err(ParseError::UnclosedParenthesis {
-                            opening_parenthesis_pos,
-                        });
-                    }
+            let (elements, has_trailing_comma) = self.parse_list_elements_and_trailing_comma()?;
+            match self.current.token {
+                Some(Token::ClosingParenthesis) => self.consume_token()?,
+                Some(_) => {
+                    return Err(ParseError::UnexpectedTokenInParentheses {
+                        unexpected_token_pos: self.current_pos(),
+                        opening_parenthesis_pos,
+                    })
+                }
+                None => {
+                    return Err(ParseError::UnclosedParenthesis {
+                        opening_parenthesis_pos,
+                    })
                 }
             }
             if elements.len() == 1 && !has_trailing_comma {
-                let Some(ListElement::NonEmpty(element)) = elements.pop() else {
+                let Some(ListElement::NonEmpty(element)) = elements.into_iter().next() else {
                     panic!();
                 };
                 Term::Parenthesized {
@@ -947,37 +1138,19 @@ impl Parser<'_, '_> {
             } else if let Token::OpeningParenthesis = token {
                 let opening_parenthesis_pos = self.current_pos();
                 self.consume_token()?;
-                let mut elements = Vec::new();
-                loop {
-                    let element = self.parse_assign(true)?;
-                    match self.current.token {
-                        Some(Token::ClosingParenthesis) => {
-                            self.consume_token()?;
-                            if let Some(element) = element {
-                                elements.push(ListElement::NonEmpty(element));
-                            }
-                            break;
-                        }
-                        Some(Token::Comma) => {
-                            let comma_pos = self.current_pos();
-                            self.consume_token()?;
-                            if let Some(element) = element {
-                                elements.push(ListElement::NonEmpty(element));
-                            } else {
-                                elements.push(ListElement::Empty { comma_pos })
-                            }
-                        }
-                        Some(_) => {
-                            return Err(ParseError::UnexpectedTokenInParentheses {
-                                unexpected_token_pos: self.current_pos(),
-                                opening_parenthesis_pos,
-                            });
-                        }
-                        None => {
-                            return Err(ParseError::UnclosedParenthesis {
-                                opening_parenthesis_pos,
-                            });
-                        }
+                let (elements, _) = self.parse_list_elements_and_trailing_comma()?;
+                match self.current.token {
+                    Some(Token::ClosingParenthesis) => self.consume_token()?,
+                    Some(_) => {
+                        return Err(ParseError::UnexpectedTokenInParentheses {
+                            unexpected_token_pos: self.current_pos(),
+                            opening_parenthesis_pos,
+                        })
+                    }
+                    None => {
+                        return Err(ParseError::UnclosedParenthesis {
+                            opening_parenthesis_pos,
+                        })
                     }
                 }
                 factor = Term::FunctionCall {
@@ -991,37 +1164,19 @@ impl Parser<'_, '_> {
             } else if let Token::OpeningBracket = token {
                 let opening_bracket_pos = self.current_pos();
                 self.consume_token()?;
-                let mut elements = Vec::new();
-                loop {
-                    let element = self.parse_assign(true)?;
-                    match self.current.token {
-                        Some(Token::ClosingBracket) => {
-                            self.consume_token()?;
-                            if let Some(element) = element {
-                                elements.push(ListElement::NonEmpty(element));
-                            }
-                            break;
-                        }
-                        Some(Token::Comma) => {
-                            let comma_pos = self.current_pos();
-                            self.consume_token()?;
-                            if let Some(element) = element {
-                                elements.push(ListElement::NonEmpty(element));
-                            } else {
-                                elements.push(ListElement::Empty { comma_pos })
-                            }
-                        }
-                        Some(_) => {
-                            return Err(ParseError::UnexpectedTokenInBrackets {
-                                unexpected_token_pos: self.current_pos(),
-                                opening_bracket_pos,
-                            });
-                        }
-                        None => {
-                            return Err(ParseError::UnclosedBracket {
-                                opening_bracket_pos,
-                            });
-                        }
+                let (elements, _) = self.parse_list_elements_and_trailing_comma()?;
+                match self.current.token {
+                    Some(Token::ClosingBracket) => self.consume_token()?,
+                    Some(_) => {
+                        return Err(ParseError::UnexpectedTokenInBrackets {
+                            unexpected_token_pos: self.current_pos(),
+                            opening_bracket_pos,
+                        })
+                    }
+                    None => {
+                        return Err(ParseError::UnclosedBracket {
+                            opening_bracket_pos,
+                        });
                     }
                 }
                 factor = Term::TypeParameters {
@@ -1040,6 +1195,34 @@ impl Parser<'_, '_> {
             term: factor,
             pos: factor_pos,
         }))
+    }
+
+    fn parse_list_elements_and_trailing_comma(
+        &mut self,
+    ) -> Result<(Vec<ListElement>, bool), ParseError> {
+        let mut elements = Vec::new();
+        loop {
+            let element = self.parse_assign(true)?;
+            if let Some(Token::Comma) = self.current.token {
+                if let Some(element) = element {
+                    elements.push(ListElement::NonEmpty(element));
+                } else {
+                    elements.push(ListElement::Empty {
+                        comma_pos: self.current_pos(),
+                    })
+                }
+                self.consume_token()?;
+            } else {
+                let has_trailing_comma = match element {
+                    Some(element) => {
+                        elements.push(ListElement::NonEmpty(element));
+                        false
+                    }
+                    None => true,
+                };
+                return Ok((elements, has_trailing_comma));
+            }
+        }
     }
 }
 

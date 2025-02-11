@@ -168,7 +168,7 @@ fn parse_function_definition() {
     let mut chars_peekable = CharsPeekable::new(&input);
     let mut parser = Parser::new(&mut chars_peekable).unwrap();
     let (name, definition) = parser.parse_function_definition().unwrap();
-    assert_eq!(name, Some(String::from("foo")));
+    assert_eq!(name.name, Some(String::from("foo")));
     for (parameter, expected_parameter_name) in
         definition.parameters.unwrap().iter().zip(["x", "y"])
     {

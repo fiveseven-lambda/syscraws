@@ -30,422 +30,777 @@ use chars_peekable::CharsPeekable;
  * Reads the file specified by `root_file_path` and any other files it
  * imports, and passes them to `backend`.
  */
-pub fn read_input(root_file_path: &Path) {
+pub fn read_input(root_file_path: &Path) -> Result<(), ()> {
     let root_file_path = root_file_path.with_extension("sysc");
     let root_file_path = match root_file_path.canonicalize() {
         Ok(path) => path,
         Err(err) => {
             log::root_file_not_found(&root_file_path, err);
-            return;
+            return Err(());
         }
     };
-    let mut reader = Reader {
-        definitions: backend::Definitions {
-            structures: Vec::new(),
-            functions: vec![
-                (
-                    backend::FunctionTy {
-                        num_ty_parameters: 0,
-                        parameters_ty: vec![
-                            backend::Ty::Application {
-                                constructor: backend::TyConstructor::Integer,
-                                arguments: vec![],
-                            },
-                            backend::Ty::Application {
-                                constructor: backend::TyConstructor::Integer,
-                                arguments: vec![],
-                            },
-                        ],
-                        return_ty: backend::Ty::Application {
-                            constructor: backend::TyConstructor::Integer,
-                            arguments: vec![],
-                        },
-                    },
-                    backend::Function::IAdd,
-                ),
-                (
-                    backend::FunctionTy {
-                        num_ty_parameters: 1,
-                        parameters_ty: vec![backend::Ty::Application {
-                            constructor: backend::TyConstructor::Reference,
-                            arguments: vec![backend::Ty::Parameter(0)],
-                        }],
-                        return_ty: backend::Ty::Parameter(0),
-                    },
-                    backend::Function::Deref,
-                ),
-            ],
-            function_definitions: Vec::new(),
-            num_global_variables: 0,
-        },
-        num_functions: 0,
-        exported_items: Vec::new(),
-        methods: HashMap::from([(String::from("add"), 0)]),
-        files: Vec::new(),
-        file_indices: HashMap::new(),
-        import_chain: HashSet::from([root_file_path.clone()]),
-        num_errors: 0,
-    };
-    if let Err(err) = reader.read_file(&root_file_path) {
-        log::cannot_read_root_file(&root_file_path, err);
-        reader.num_errors += 1;
-    }
-    if reader.num_errors > 0 {
-        log::aborting(reader.num_errors);
-        return;
-    }
-}
-
-/**
- * A structure to read files recursively.
- */
-struct Reader {
-    definitions: backend::Definitions,
-    num_functions: usize,
-    exported_items: Vec<HashMap<String, Item>>,
-    methods: HashMap<String, usize>,
-    files: Vec<log::File>,
-    /**
-     * Used in [`Reader::read_file`] to avoid reading the same file multiple
-     * times.
-     */
-    file_indices: HashMap<PathBuf, usize>,
-    /**
-     * Used in [`Reader::handle_import`] to detect circular imports.
-     */
-    import_chain: HashSet<PathBuf>,
-    num_errors: u32,
-}
-
-impl Reader {
-    fn read_file(&mut self, path: &Path) -> Result<usize, std::io::Error> {
-        if let Some(&index) = self.file_indices.get(path) {
-            // The file specified by `path` was already read.
-            // Since circular imports should have been detected in `parse_imports`,
-            // this is not circular imports but diamond imports.
-            return Ok(index);
-        }
-        let mut file = std::fs::File::open(path)?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        let mut chars_peekable = CharsPeekable::new(&content);
-        let result = ast::parse_file(&mut chars_peekable);
-        let file = log::File {
-            path: path.to_path_buf(),
-            lines: chars_peekable.lines(),
-            content,
-        };
-        match result {
-            Ok(ast::File {
-                imports,
-                structure_definitions,
-                function_names,
-                top_level_statements,
-            }) => {
-                let mut named_items = HashMap::new();
-                for import in imports {
-                    self.translate_import(import, path.parent().unwrap(), &mut named_items, &file);
-                }
-                for structure_definition in structure_definitions {
-                    self.translate_structure_definition(
-                        structure_definition,
-                        &mut named_items,
-                        &file,
-                    );
-                }
-                for name in function_names {
-                    self.translate_function_name(name, &mut named_items, &file);
-                }
-                let mut global = Context {
-                    variables: HashMap::new(),
-                    num_variables: 0,
-                };
-                let mut global_scope = Vec::new();
-                for statement in top_level_statements {
-                    match statement {
-                        ast::TopLevelStatement::FunctionDefinition(function_definition) => {
-                            self.translate_function_definition(
-                                function_definition,
-                                &global.variables,
-                                &mut named_items,
-                            );
-                        }
-                        ast::TopLevelStatement::Statement(statement) => {
-                            self.translate_statement(
-                                &mut global,
-                                statement,
-                                &mut global_scope,
-                                &HashMap::new(),
-                                None,
-                                &named_items,
-                                &self.exported_items,
-                            );
-                        }
-                    }
-                }
-                for (name, index) in global.variables {
-                    named_items.insert(name, Item::GlobalVariable(index));
-                }
-                self.exported_items.push(named_items);
-                self.files.push(file);
-            }
-            Err(err) => {
-                err.eprint(&file);
-                self.num_errors += 1;
-            }
-        };
-        let new_index = self.file_indices.len();
-        self.file_indices.insert(path.to_path_buf(), new_index);
-        Ok(new_index)
-    }
-
-    fn translate_import(
-        &mut self,
-        ast::Import {
-            keyword_import_pos,
-            target,
-        }: ast::Import,
-        parent_directory: &Path,
-        named_items: &mut HashMap<String, Item>,
-        file: &log::File,
+    let mut num_structures = 0;
+    let mut tys_kind = HashMap::new();
+    let mut structure_definitions = Vec::new();
+    let mut num_functions = 0;
+    let mut functions_ty = HashMap::new();
+    let mut function_definitions = Vec::new();
+    let mut num_global_variables = 0;
+    let mut exported_items = Vec::new();
+    let mut files = Vec::new();
+    let mut file_indices = HashMap::new();
+    let mut import_chain = HashSet::from([root_file_path.clone()]);
+    let mut num_errors = 0;
+    if let Err(err) = read_file(
+        &root_file_path,
+        &mut num_structures,
+        &mut tys_kind,
+        &mut structure_definitions,
+        &mut num_functions,
+        &mut functions_ty,
+        &mut function_definitions,
+        &mut num_global_variables,
+        &mut exported_items,
+        &mut files,
+        &mut file_indices,
+        &mut import_chain,
+        &mut num_errors,
     ) {
-        let Some(target) = target else {
-            log::missing_import_name(keyword_import_pos, &file);
-            self.num_errors += 1;
-            return;
-        };
-        let (name, path) = match target.term {
-            ast::Term::Identifier(name) => {
-                let path = parent_directory.join(&name);
-                (name, path)
+        log::cannot_read_root_file(&root_file_path, err);
+        num_errors += 1;
+    }
+    if num_errors > 0 {
+        log::aborting(num_errors);
+        return Err(());
+    }
+    Ok(())
+}
+
+fn read_file(
+    path: &Path,
+    num_structures: &mut usize,
+    tys_kind: &mut HashMap<backend::TyConstructor, backend::TyKind>,
+    structure_definitions: &mut Vec<backend::Structure>,
+    num_functions: &mut usize,
+    functions_ty: &mut HashMap<backend::Function, backend::FunctionTy>,
+    function_definitions: &mut Vec<backend::FunctionDefinition>,
+    num_global_variables: &mut usize,
+    exported_items: &mut Vec<HashMap<String, Item>>,
+    files: &mut Vec<log::File>,
+    file_indices: &mut HashMap<PathBuf, usize>,
+    import_chain: &mut HashSet<PathBuf>,
+    num_errors: &mut u32,
+) -> Result<usize, std::io::Error> {
+    if let Some(&index) = file_indices.get(path) {
+        // The file specified by `path` was already read.
+        // Since circular imports should have been detected in `parse_imports`,
+        // this is not circular imports but diamond imports.
+        return Ok(index);
+    }
+    let mut file = std::fs::File::open(path)?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    let mut chars_peekable = CharsPeekable::new(&content);
+    let result = ast::parse_file(&mut chars_peekable);
+    let file = log::File {
+        path: path.to_path_buf(),
+        lines: chars_peekable.lines(),
+        content,
+    };
+    match result {
+        Ok(ast) => {
+            let mut named_items = HashMap::new();
+            for import in ast.imports {
+                translate_import(
+                    import,
+                    path.parent().unwrap(),
+                    &mut named_items,
+                    &file,
+                    num_structures,
+                    tys_kind,
+                    structure_definitions,
+                    num_functions,
+                    functions_ty,
+                    function_definitions,
+                    num_global_variables,
+                    exported_items,
+                    files,
+                    file_indices,
+                    import_chain,
+                    num_errors,
+                );
             }
-            ast::Term::FunctionCall {
-                function,
-                arguments,
-            } => {
-                let name = match function.term {
-                    ast::Term::Identifier(name) => name,
-                    _ => {
-                        log::invalid_import_target(target.pos, file);
-                        self.num_errors += 1;
-                        return;
+            for name in ast.structure_names {
+                translate_structure_name(name, &mut named_items, &file, num_structures, num_errors);
+            }
+            for name in ast.function_names {
+                translate_function_name(name, &mut named_items, &file, num_functions, num_errors);
+            }
+            let mut global = Context {
+                variables: HashMap::new(),
+                num_variables: 0,
+            };
+            let mut global_scope = Vec::new();
+            let global_ty_parameters = HashMap::new();
+            let mut global_statements = Ok(Vec::new());
+            for statement in ast.top_level_statements {
+                match statement {
+                    ast::TopLevelStatement::StructureDefinition(structure_definition) => {
+                        translate_structure_definition(
+                            structure_definition,
+                            &mut named_items,
+                            &file,
+                            tys_kind,
+                            structure_definitions,
+                            exported_items,
+                            num_errors,
+                        );
                     }
-                };
-                let path = match arguments.into_iter().next() {
-                    Some(ast::ListElement::NonEmpty(argument)) => match argument.term {
-                        ast::Term::StringLiteral(components) => {
-                            let mut path = String::new();
-                            for component in components {
-                                match component {
-                                    ast::StringLiteralComponent::PlaceHolder { .. } => {
-                                        log::invalid_import_target(target.pos, file);
-                                        self.num_errors += 1;
-                                        return;
-                                    }
-                                    ast::StringLiteralComponent::String(value) => {
-                                        path.push_str(&value);
+                    ast::TopLevelStatement::FunctionDefinition(function_definition) => {
+                        translate_function_definition(
+                            function_definition,
+                            &global.variables,
+                            &named_items,
+                            exported_items,
+                            &file,
+                            num_errors,
+                        );
+                    }
+                    ast::TopLevelStatement::Statement(statement) => {
+                        match translate_statement(
+                            statement,
+                            &mut global,
+                            &mut global_scope,
+                            &global_ty_parameters,
+                            None,
+                            &named_items,
+                            exported_items,
+                            &file,
+                            num_errors,
+                        ) {
+                            Ok(stmt) => {
+                                if let Some(stmt) = stmt {
+                                    if let Ok(global_statements) = &mut global_statements {
+                                        global_statements.push(stmt);
                                     }
                                 }
                             }
-                            parent_directory.join(&path)
+                            Err(()) => global_statements = Err(()),
                         }
-                        _ => {
-                            log::invalid_import_target(target.pos, file);
-                            self.num_errors += 1;
-                            return;
+                    }
+                }
+            }
+            for (name, index) in global.variables {
+                named_items.insert(name, Item::GlobalVariable(index));
+            }
+            exported_items.push(named_items);
+            files.push(file);
+        }
+        Err(err) => {
+            err.eprint(&file);
+            *num_errors += 1;
+        }
+    };
+    let new_index = file_indices.len();
+    file_indices.insert(path.to_path_buf(), new_index);
+    Ok(new_index)
+}
+
+fn translate_import(
+    ast::Import {
+        keyword_import_pos,
+        target,
+        extra_tokens_pos,
+    }: ast::Import,
+    parent_directory: &Path,
+    named_items: &mut HashMap<String, Item>,
+    file: &log::File,
+    num_structures: &mut usize,
+    tys_kind: &mut HashMap<backend::TyConstructor, backend::TyKind>,
+    structure_definitions: &mut Vec<backend::Structure>,
+    num_functions: &mut usize,
+    functions_ty: &mut HashMap<backend::Function, backend::FunctionTy>,
+    function_definitions: &mut Vec<backend::FunctionDefinition>,
+    num_global_variables: &mut usize,
+    exported_items: &mut Vec<HashMap<String, Item>>,
+    files: &mut Vec<log::File>,
+    file_indices: &mut HashMap<PathBuf, usize>,
+    import_chain: &mut HashSet<PathBuf>,
+    num_errors: &mut u32,
+) {
+    let Some(target) = target else {
+        eprintln!("Missing import target after `import` at {keyword_import_pos}.");
+        file.quote_pos(keyword_import_pos);
+        *num_errors += 1;
+        return;
+    };
+    let (name, path) = match target.term {
+        ast::Term::Identifier(name) => {
+            let path = parent_directory.join(&name);
+            (name, path)
+        }
+        ast::Term::FunctionCall {
+            function,
+            arguments,
+        } => {
+            let name = match function.term {
+                ast::Term::Identifier(name) => name,
+                _ => {
+                    eprintln!("Invalid import target at {}.", target.pos);
+                    file.quote_pos(target.pos);
+                    *num_errors += 1;
+                    return;
+                }
+            };
+            let path = match arguments.into_iter().next() {
+                Some(ast::ListElement::NonEmpty(argument)) => match argument.term {
+                    ast::Term::StringLiteral(components) => {
+                        let mut path = String::new();
+                        for component in components {
+                            match component {
+                                ast::StringLiteralComponent::PlaceHolder { .. } => {
+                                    eprintln!("Import path must not contain a placeholder.");
+                                    file.quote_pos(argument.pos);
+                                    *num_errors += 1;
+                                    return;
+                                }
+                                ast::StringLiteralComponent::String(value) => {
+                                    path.push_str(&value);
+                                }
+                            }
                         }
-                    },
-                    Some(ast::ListElement::Empty { comma_pos }) => {
-                        log::empty_element(comma_pos, file);
-                        self.num_errors += 1;
+                        parent_directory.join(&path)
+                    }
+                    _ => {
+                        eprintln!("Invalid import target at {}.", target.pos);
+                        file.quote_pos(target.pos);
+                        *num_errors += 1;
                         return;
                     }
-                    None => {
-                        log::invalid_import_target(target.pos, file);
-                        self.num_errors += 1;
-                        return;
+                },
+                Some(ast::ListElement::Empty { comma_pos }) => {
+                    eprintln!("Empty argument before comma at {comma_pos}.");
+                    file.quote_pos(comma_pos);
+                    *num_errors += 1;
+                    return;
+                }
+                None => {
+                    eprintln!("Missing import path at {}.", target.pos);
+                    file.quote_pos(target.pos);
+                    *num_errors += 1;
+                    return;
+                }
+            };
+            (name, path)
+        }
+        _ => {
+            eprintln!("Invalid import target at {}.", target.pos);
+            file.quote_pos(target.pos);
+            *num_errors += 1;
+            return;
+        }
+    };
+    if let Some(extra_tokens_pos) = extra_tokens_pos {
+        eprintln!("Extra tokens at {}.", extra_tokens_pos);
+        file.quote_pos(extra_tokens_pos);
+        *num_errors += 1;
+        return;
+    }
+    let path = path.with_extension("sysc");
+    let path = match path.canonicalize() {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("Cannot read file `{}`. {}", path.display(), err);
+            file.quote_line(keyword_import_pos.line());
+            *num_errors += 1;
+            return;
+        }
+    };
+    if import_chain.insert(path.clone()) {
+        match read_file(
+            &path,
+            num_structures,
+            tys_kind,
+            structure_definitions,
+            num_functions,
+            functions_ty,
+            function_definitions,
+            num_global_variables,
+            exported_items,
+            files,
+            file_indices,
+            import_chain,
+            num_errors,
+        ) {
+            Ok(n) => {
+                named_items.insert(name, Item::Import(n));
+            }
+            Err(err) => {
+                eprintln!("Cannot read file `{}`. {}", path.display(), err);
+                file.quote_line(keyword_import_pos.line());
+                *num_errors += 1;
+            }
+        }
+        import_chain.remove(&path);
+    } else {
+        eprintln!("Circular imports of `{}`.", path.display());
+        file.quote_line(keyword_import_pos.line());
+        *num_errors += 1;
+    }
+}
+
+fn translate_structure_name(
+    ast::StructureName {
+        keyword_struct_pos,
+        name,
+        extra_tokens_pos,
+    }: ast::StructureName,
+    named_items: &mut HashMap<String, Item>,
+    file: &log::File,
+    num_structures: &mut usize,
+    num_errors: &mut u32,
+) {
+    let Some(name) = name else {
+        eprintln!(
+            "Missing structure name after `struct` at {}.",
+            keyword_struct_pos
+        );
+        file.quote_pos(keyword_struct_pos);
+        *num_errors += 1;
+        return;
+    };
+    match named_items.entry(name) {
+        std::collections::hash_map::Entry::Occupied(entry) => {
+            eprintln!("Duplicate definition of `{}`.", entry.key());
+            file.quote_line(keyword_struct_pos.line());
+            *num_errors += 1;
+        }
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(Item::Ty(backend::Ty::Constructor(
+                backend::TyConstructor::Structure(*num_structures),
+            )));
+            *num_structures += 1;
+        }
+    }
+    if let Some(extra_tokens_pos) = extra_tokens_pos {
+        eprintln!("Extra tokens at {}.", extra_tokens_pos);
+        file.quote_pos(extra_tokens_pos);
+        *num_errors += 1;
+    }
+}
+
+fn translate_structure_definition(
+    ast::StructureDefinition {
+        ty_parameters,
+        fields,
+        extra_tokens_pos,
+    }: ast::StructureDefinition,
+    named_items: &mut HashMap<String, Item>,
+    file: &log::File,
+    tys_kind: &mut HashMap<backend::TyConstructor, backend::TyKind>,
+    structure_definitions: &mut Vec<backend::Structure>,
+    exported_items: &Vec<HashMap<String, Item>>,
+    num_errors: &mut u32,
+) {
+    let mut ty_parameters_name = HashMap::new();
+    let kind = if let Some(ty_parameters) = ty_parameters {
+        for ty_parameter in ty_parameters {
+            match ty_parameter {
+                ast::ListElement::NonEmpty(name) => match name.term {
+                    ast::Term::Identifier(name) => {
+                        let new_index = ty_parameters_name.len();
+                        ty_parameters_name.insert(name, new_index);
                     }
-                };
-                (name, path)
+                    _ => {
+                        eprintln!("Invalid type parameter at {}.", name.pos);
+                        file.quote_pos(name.pos);
+                        *num_errors += 1;
+                    }
+                },
+                ast::ListElement::Empty { comma_pos } => {
+                    eprintln!("Empty type parameter before comma at {}.", comma_pos);
+                    file.quote_pos(comma_pos);
+                    *num_errors += 1;
+                }
+            }
+        }
+        backend::TyKind::Abstraction {
+            parameters: (0..ty_parameters_name.len())
+                .map(|_| backend::TyKind::Ty)
+                .collect(),
+            ret: Box::new(backend::TyKind::Ty),
+        }
+    } else {
+        backend::TyKind::Ty
+    };
+    let mut translated_fields_ty = Vec::new();
+    for ast::StructureField {
+        field,
+        extra_tokens_pos,
+    } in fields
+    {
+        match field.term {
+            ast::Term::TypeAnnotation {
+                term_left: _,
+                colon_pos: _,
+                term_right: Some(field_ty),
+            } => {
+                let field_ty_pos = field_ty.pos.clone();
+                match translate_item(
+                    *field_ty,
+                    named_items,
+                    &ty_parameters_name,
+                    None,
+                    &HashMap::new(),
+                    &exported_items,
+                ) {
+                    Ok(Item::Ty(ty)) => {
+                        translated_fields_ty.push(ty);
+                    }
+                    Ok(_) => {
+                        eprintln!("Expected a type at {field_ty_pos}.");
+                        file.quote_pos(field_ty_pos);
+                        *num_errors += 1;
+                    }
+                    Err(()) => {}
+                }
             }
             _ => {
-                log::invalid_import_target(target.pos, file);
-                self.num_errors += 1;
-                return;
+                eprintln!("Invalid structure field at {}.", field.pos);
+                file.quote_pos(field.pos);
             }
-        };
-        let path = path.with_extension("sysc");
-        let path = match path.canonicalize() {
-            Ok(path) => path,
-            Err(err) => {
-                log::cannot_read_file(&path, file, err);
-                self.num_errors += 1;
-                return;
-            }
-        };
-        if self.import_chain.insert(path.clone()) {
-            match self.read_file(&path) {
-                Ok(n) => {
-                    named_items.insert(name, Item::Import(n));
-                }
-                Err(err) => {
-                    log::cannot_read_file(&path, &file, err);
-                    self.num_errors += 1;
-                }
-            }
-            self.import_chain.remove(&path);
-        } else {
-            log::circular_imports(target.pos, &file);
-            self.num_errors += 1;
+        }
+        if let Some(extra_tokens_pos) = extra_tokens_pos {
+            eprintln!("Extra tokens at {}.", extra_tokens_pos);
+            file.quote_pos(extra_tokens_pos);
+            *num_errors += 1;
         }
     }
+    if let Some(extra_tokens_pos) = extra_tokens_pos {
+        eprintln!("Extra tokens at {}.", extra_tokens_pos);
+        file.quote_pos(extra_tokens_pos);
+        *num_errors += 1;
+    }
+    let new_index = structure_definitions.len();
+    tys_kind.insert(backend::TyConstructor::Structure(new_index), kind);
+    structure_definitions.push(backend::Structure {
+        num_ty_parameters: ty_parameters_name.len(),
+        fields_ty: translated_fields_ty,
+    });
+}
 
-    fn translate_structure_definition(
-        &mut self,
-        ast::StructureDefinition {
-            keyword_struct_pos,
-            name,
-            fields,
-        }: ast::StructureDefinition,
-        named_items: &mut HashMap<String, Item>,
-        file: &log::File,
-    ) {
-        let Some(name) = name else {
-            todo!("Missing structure name");
-        };
-        let mut ty_parameters = HashMap::new();
-        let name = match name.term {
-            ast::Term::Identifier(name) => name,
-            ast::Term::TypeParameters {
-                term_left,
-                parameters,
-            } => {
-                let name = match term_left.term {
-                    ast::Term::Identifier(name) => name,
-                    _ => todo!(),
-                };
-                for parameter in parameters {
-                    match parameter {
-                        ast::ListElement::Empty { comma_pos } => todo!(),
-                        ast::ListElement::NonEmpty(parameter) => match parameter.term {
-                            ast::Term::Identifier(name) => {
-                                let new_index = ty_parameters.len();
-                                ty_parameters.insert(name, new_index);
-                            }
-                            _ => todo!(),
-                        },
+fn translate_function_name(
+    ast::FunctionName {
+        keyword_func_pos,
+        name,
+        extra_tokens_pos,
+    }: ast::FunctionName,
+    named_items: &mut HashMap<String, Item>,
+    file: &log::File,
+    num_functions: &mut usize,
+    num_errors: &mut u32,
+) {
+    let Some(name) = name else {
+        eprintln!(
+            "Missing structure name after `func` at {}.",
+            keyword_func_pos
+        );
+        file.quote_pos(keyword_func_pos);
+        *num_errors += 1;
+        return;
+    };
+    match named_items.entry(name) {
+        std::collections::hash_map::Entry::Occupied(mut entry) => {
+            if let Item::Function(functions) = entry.get_mut() {
+                functions.push(*num_functions);
+            } else {
+                eprintln!("Duplicate definition of `{}`.", entry.key());
+                file.quote_line(keyword_func_pos.line());
+                *num_errors += 1;
+            }
+        }
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(Item::Function(vec![*num_functions]));
+        }
+    }
+    *num_functions += 1;
+    if let Some(extra_tokens_pos) = extra_tokens_pos {
+        eprintln!("Extra tokens at {}.", extra_tokens_pos);
+        file.quote_pos(extra_tokens_pos);
+        *num_errors += 1;
+    }
+}
+
+fn translate_function_definition(
+    ast::FunctionDefinition {
+        ty_parameters,
+        parameters,
+        return_ty,
+        body,
+        extra_tokens_pos,
+    }: ast::FunctionDefinition,
+    global_variables: &HashMap<String, usize>,
+    named_items: &HashMap<String, Item>,
+    exported_items: &Vec<HashMap<String, Item>>,
+    file: &log::File,
+    num_errors: &mut u32,
+) {
+    let mut ty_parameters_name = HashMap::new();
+    if let Some(ty_parameters) = ty_parameters {
+        for (i, ty_parameter) in ty_parameters.into_iter().enumerate() {
+            match ty_parameter {
+                ast::ListElement::NonEmpty(ty_parameter) => {
+                    if let ast::Term::Identifier(name) = ty_parameter.term {
+                        ty_parameters_name.insert(name, i);
+                    } else {
+                        eprintln!("Invalid type parameter at {}.", ty_parameter.pos);
+                        file.quote_pos(ty_parameter.pos);
+                        *num_errors += 1;
                     }
                 }
-                name
+                ast::ListElement::Empty { comma_pos } => {
+                    eprintln!("Empty type parameter before comma at {}.", comma_pos);
+                    file.quote_pos(comma_pos);
+                    *num_errors += 1;
+                }
             }
-            _ => todo!(),
-        };
-        let new_index = self.definitions.structures.len();
-        self.definitions.structures.push(backend::Structure {
-            num_ty_parameters: ty_parameters.len(),
-            fields_ty: Vec::new(),
-        });
-        named_items.insert(
-            name,
-            if ty_parameters.is_empty() {
-                Item::Ty(backend::Ty::Application {
-                    constructor: backend::TyConstructor::UserDefined(new_index),
-                    arguments: vec![],
-                })
-            } else {
-                Item::TyConstructor(backend::TyConstructor::UserDefined(new_index))
-            },
-        );
-    }
-
-    fn translate_function_name(
-        &mut self,
-        name: Option<String>,
-        named_items: &mut HashMap<String, Item>,
-        file: &log::File,
-    ) {
-        let Some(name) = name else {
-            todo!("Missing function name");
-        };
-        if let Item::Function(functions) = named_items
-            .entry(name)
-            .or_insert_with(|| Item::Function(Vec::new()))
-        {
-            functions.push(self.num_functions);
-        } else {
-            self.num_errors += 1;
-            todo!("Duplicate definition");
         }
-        self.num_functions += 1;
     }
-
-    fn translate_function_definition(
-        &mut self,
-        ast::FunctionDefinition {
-            ty_parameters,
-            parameters,
-            return_ty,
-            body,
-        }: ast::FunctionDefinition,
-        global_variables: &HashMap<String, usize>,
-        named_items: &mut HashMap<String, Item>,
-    ) {
-        let mut local = Context {
-            variables: HashMap::new(),
-            num_variables: 0,
-        };
-        let mut local_scope = Vec::new();
-        let mut ty_parameters_name = HashMap::new();
-        if let Some(ty_parameters) = ty_parameters {
-            for (i, ty_parameter) in ty_parameters.into_iter().enumerate() {
-                match ty_parameter {
-                    ast::ListElement::NonEmpty(ty_parameter) => {
-                        if let ast::Term::Identifier(name) = ty_parameter.term {
-                            ty_parameters_name.insert(name, i);
+    let mut local = Context {
+        variables: HashMap::new(),
+        num_variables: 0,
+    };
+    let mut local_scope = Vec::new();
+    let mut parameters_ty = Vec::new();
+    if let Some(parameters) = parameters {
+        for parameter in parameters {
+            match parameter {
+                ast::ListElement::NonEmpty(parameter) => match parameter.term {
+                    ast::Term::TypeAnnotation {
+                        term_left: parameter_name,
+                        colon_pos,
+                        term_right: parameter_ty,
+                    } => {
+                        match parameter_name.term {
+                            ast::Term::Identifier(name) => {
+                                match local.variables.entry(name.clone()) {
+                                    std::collections::hash_map::Entry::Occupied(_) => {
+                                        eprintln!(
+                                            "Duplicate parameter name at {}.",
+                                            parameter_name.pos
+                                        );
+                                        file.quote_pos(parameter_name.pos);
+                                    }
+                                    std::collections::hash_map::Entry::Vacant(entry) => {
+                                        entry.insert(local.num_variables);
+                                        local_scope.push((name, None));
+                                        local.num_variables += 1;
+                                    }
+                                }
+                            }
+                            _ => {
+                                eprintln!("Invalid parameter name at {}.", parameter_name.pos);
+                                file.quote_pos(parameter_name.pos);
+                                *num_errors += 1;
+                            }
+                        }
+                        if let Some(parameter_ty) = parameter_ty {
+                            let field_ty_pos = parameter_ty.pos.clone();
+                            match translate_item(
+                                *parameter_ty,
+                                named_items,
+                                &ty_parameters_name,
+                                None,
+                                &HashMap::new(),
+                                &exported_items,
+                            ) {
+                                Ok(Item::Ty(ty)) => {
+                                    parameters_ty.push(ty);
+                                }
+                                Ok(_) => {
+                                    eprintln!("Expected a type at {field_ty_pos}.");
+                                    file.quote_pos(field_ty_pos);
+                                    *num_errors += 1;
+                                }
+                                Err(()) => {}
+                            }
+                        } else {
+                            eprintln!("Missing type after colon at {}.", colon_pos);
+                            file.quote_pos(colon_pos);
+                            *num_errors += 1;
                         }
                     }
-                    ast::ListElement::Empty { comma_pos } => {
-                        todo!();
+                    _ => {
+                        eprintln!("Invalid parameter at {}.", parameter.pos);
+                        file.quote_pos(parameter.pos);
+                        *num_errors += 1;
                     }
+                },
+                ast::ListElement::Empty { comma_pos } => {
+                    eprintln!("Empty parameter before comma at {}.", comma_pos);
+                    file.quote_pos(comma_pos);
+                    *num_errors += 1;
                 }
             }
         }
-        for statement in body {
-            self.translate_statement(
-                &mut local,
-                statement,
-                &mut local_scope,
+    } else {
+        eprintln!("Missing parameter list.");
+        *num_errors += 1;
+    }
+    let return_ty = if let Some(return_ty) = return_ty {
+        if let Some(return_ty) = return_ty.ty {
+            let return_ty_pos = return_ty.pos.clone();
+            match translate_item(
+                return_ty,
+                named_items,
                 &ty_parameters_name,
-                Some(global_variables),
-                &named_items,
-                &self.exported_items,
+                None,
+                &HashMap::new(),
+                &exported_items,
+            ) {
+                Ok(Item::Ty(ty)) => ty,
+                Ok(_) => {
+                    eprintln!("Expected a type at {}.", return_ty_pos);
+                    file.quote_pos(return_ty_pos);
+                    *num_errors += 1;
+                    return;
+                }
+                Err(()) => {
+                    return;
+                }
+            }
+        } else {
+            eprintln!(
+                "Missing return type after colon at {}.",
+                return_ty.colon_pos
             );
+            file.quote_pos(return_ty.colon_pos);
+            *num_errors += 1;
+            return;
+        }
+    } else {
+        backend::Ty::Application {
+            constructor: Box::new(backend::Ty::Constructor(backend::TyConstructor::Tuple)),
+            arguments: vec![],
+        }
+    };
+    if let Some(extra_tokens_pos) = extra_tokens_pos {
+        eprintln!("Extra tokens at {}.", extra_tokens_pos);
+        file.quote_pos(extra_tokens_pos);
+        *num_errors += 1;
+    }
+    backend::FunctionTy {
+        num_ty_parameters: ty_parameters_name.len(),
+        parameters_ty,
+        return_ty,
+    };
+    let mut translated_body = Ok(Vec::new());
+    for statement in body {
+        match translate_statement(
+            statement,
+            &mut local,
+            &mut local_scope,
+            &ty_parameters_name,
+            Some(global_variables),
+            named_items,
+            exported_items,
+            file,
+            num_errors,
+        ) {
+            Ok(statement) => {
+                if let Ok(translated_body) = &mut translated_body {
+                    translated_body.push(statement);
+                }
+            }
+            Err(()) => translated_body = Err(()),
         }
     }
+}
 
-    fn translate_statement(
-        &self,
-        context: &mut Context,
-        statement: ast::Statement,
-        scope: &mut Vec<(String, Option<usize>)>,
-        ty_parameters: &HashMap<String, usize>,
-        global_variables: Option<&HashMap<String, usize>>,
-        named_items: &HashMap<String, Item>,
-        exported_items: &Vec<HashMap<String, Item>>,
-    ) {
-        match statement {
-            ast::Statement::Term(term) => {
+fn translate_statement(
+    statement: ast::Statement,
+    context: &mut Context,
+    scope: &mut Vec<(String, Option<usize>)>,
+    ty_parameters: &HashMap<String, usize>,
+    global_variables: Option<&HashMap<String, usize>>,
+    named_items: &HashMap<String, Item>,
+    exported_items: &Vec<HashMap<String, Item>>,
+    file: &log::File,
+    num_errors: &mut u32,
+) -> Result<Option<backend::Statement>, ()> {
+    match statement {
+        ast::Statement::Term(term) => {
+            let term_pos = term.pos.clone();
+            let expr = match global_variables {
+                Some(global_variables) => translate_item(
+                    term,
+                    named_items,
+                    ty_parameters,
+                    Some(&context.variables),
+                    global_variables,
+                    exported_items,
+                ),
+                None => translate_item(
+                    term,
+                    named_items,
+                    ty_parameters,
+                    None,
+                    &context.variables,
+                    exported_items,
+                ),
+            };
+            match expr? {
+                Item::RValue(expr) => Ok(Some(backend::Statement::Expr(expr))),
+                Item::LValue(expr) => Ok(Some(backend::Statement::Expr(expr))),
+                _ => {
+                    eprintln!("Expected an expression at {}.", term_pos);
+                    file.quote_pos(term_pos);
+                    Err(())
+                }
+            }
+        }
+        ast::Statement::VariableDeclaration {
+            keyword_var_pos,
+            term,
+        } => {
+            let Some(name) = term else {
+                eprintln!("Missing variable name after `var` at {}.", keyword_var_pos);
+                file.quote_pos(keyword_var_pos);
+                return Err(());
+            };
+            match name.term {
+                ast::Term::Identifier(name) => {
+                    let new_index = context.num_variables;
+                    let prev_index = context.variables.insert(name.clone(), new_index);
+                    scope.push((name, prev_index));
+                    context.num_variables += 1;
+                    Ok(None)
+                }
+                _ => {
+                    eprintln!("Expected a variable name at {}.", name.pos);
+                    file.quote_pos(name.pos);
+                    return Err(());
+                }
+            }
+        }
+        ast::Statement::While {
+            keyword_while_pos,
+            condition,
+            body,
+        } => {
+            let condition = if let Some(condition) = condition {
+                let condition_pos = condition.pos.clone();
                 let expr = match global_variables {
-                    Some(global_variables) => self.translate_item(
-                        term,
+                    Some(global_variables) => translate_item(
+                        condition,
                         named_items,
                         ty_parameters,
                         Some(&context.variables),
                         global_variables,
                         exported_items,
                     ),
-                    None => self.translate_item(
-                        term,
+                    None => translate_item(
+                        condition,
                         named_items,
                         ty_parameters,
                         None,
@@ -453,146 +808,155 @@ impl Reader {
                         exported_items,
                     ),
                 };
-            }
-            ast::Statement::VariableDeclaration(name) => {
-                let Some(name) = name else {
-                    todo!();
-                };
-                let ast::Term::Identifier(name) = name.term else {
-                    todo!();
-                };
-                let new_index = context.num_variables;
-                let prev_index = context.variables.insert(name.clone(), new_index);
-                scope.push((name, prev_index));
-                context.num_variables += 1;
-            }
-            ast::Statement::While {
-                keyword_while_pos,
-                condition,
-                body,
-            } => {
-                let mut body_scope = Vec::new();
-                for stmt in body {
-                    self.translate_statement(
-                        context,
-                        stmt,
-                        &mut body_scope,
-                        ty_parameters,
-                        global_variables,
-                        named_items,
-                        exported_items,
-                    );
+                match expr {
+                    Ok(Item::RValue(condition)) => Ok(condition),
+                    Ok(Item::LValue(_)) => todo!("deref to obtain condition"),
+                    Ok(_) => {
+                        eprintln!("Expected an expression at {}", condition_pos);
+                        Err(())
+                    }
+                    Err(()) => Err(()),
                 }
-                for (name, prev_index) in body_scope.into_iter().rev() {
-                    match prev_index {
-                        Some(prev_index) => context.variables.insert(name, prev_index),
-                        None => context.variables.remove(&name),
-                    };
+            } else {
+                eprintln!("Missing condition after `while` at {}", keyword_while_pos);
+                file.quote_pos(keyword_while_pos);
+                Err(())
+            };
+            let mut body_scope = Vec::new();
+            let mut translated_stmts = Ok(Vec::new());
+            for stmt in body {
+                match translate_statement(
+                    stmt,
+                    context,
+                    &mut body_scope,
+                    ty_parameters,
+                    global_variables,
+                    named_items,
+                    exported_items,
+                    file,
+                    num_errors,
+                ) {
+                    Ok(stmt) => {
+                        if let Some(stmt) = stmt {
+                            if let Ok(translated_stmts) = &mut translated_stmts {
+                                translated_stmts.push(stmt);
+                            }
+                        }
+                    }
+                    Err(()) => translated_stmts = Err(()),
                 }
+            }
+            for (name, prev_index) in body_scope.into_iter().rev() {
+                match prev_index {
+                    Some(prev_index) => context.variables.insert(name, prev_index),
+                    None => context.variables.remove(&name),
+                };
+            }
+            if let (Ok(condition), Ok(translated_stmts)) = (condition, translated_stmts) {
+                Ok(Some(backend::Statement::While(condition, translated_stmts)))
+            } else {
+                Err(())
             }
         }
     }
+}
 
-    fn translate_item(
-        &self,
-        item: ast::TermWithPos,
-        named_items: &HashMap<String, Item>,
-        ty_parameters: &HashMap<String, usize>,
-        local_variables: Option<&HashMap<String, usize>>,
-        global_variables: &HashMap<String, usize>,
-        exported_items: &Vec<HashMap<String, Item>>,
-    ) -> Result<Item, ()> {
-        match item.term {
-            ast::Term::Identifier(name) => {
-                if let Some(local_variables) = local_variables {
-                    if let Some(&index) = local_variables.get(&name) {
-                        return Ok(Item::LValue(backend::Expression::LocalVariable(index)));
-                    }
-                }
-                if let Some(&index) = global_variables.get(&name) {
-                    return Ok(Item::LValue(backend::Expression::GlobalVariable(index)));
-                }
-                if let Some(&index) = ty_parameters.get(&name) {
-                    return Ok(Item::Ty(backend::Ty::Parameter(index)));
-                }
-                if let Some(item) = named_items.get(&name) {
-                    return Ok(item.clone());
-                }
-                Err(())
-            }
-            ast::Term::IntegerTy => Ok(Item::Ty(backend::Ty::Application {
-                constructor: backend::TyConstructor::Integer,
-                arguments: vec![],
-            })),
-            ast::Term::FloatTy => Ok(Item::Ty(backend::Ty::Application {
-                constructor: backend::TyConstructor::Float,
-                arguments: vec![],
-            })),
-            ast::Term::TypeParameters {
-                term_left,
-                parameters,
-            } => {
-                let term_left = self.translate_item(
-                    *term_left,
-                    named_items,
-                    ty_parameters,
-                    local_variables,
-                    global_variables,
-                    exported_items,
-                );
-                let mut translated_parameters = Some(Vec::new());
-                for parameter in parameters {
-                    let translated_parameter = match parameter {
-                        ast::ListElement::NonEmpty(parameter) => self.translate_item(
-                            parameter,
-                            named_items,
-                            ty_parameters,
-                            local_variables,
-                            global_variables,
-                            exported_items,
-                        ),
-                        ast::ListElement::Empty { comma_pos } => todo!(),
-                    };
-                    if let (Some(translated_parameters), Ok(translated_parameter)) =
-                        (&mut translated_parameters, translated_parameter)
-                    {
-                        if let Item::Ty(ty) = translated_parameter {
-                            translated_parameters.push(ty);
-                        }
-                    }
-                }
-                match (term_left, translated_parameters) {
-                    (Ok(Item::TyConstructor(constructor)), Some(arguments)) => {
-                        Ok(Item::Ty(backend::Ty::Application {
-                            constructor,
-                            arguments,
-                        }))
-                    }
-                    _ => Err(()),
+fn translate_item(
+    item: ast::TermWithPos,
+    named_items: &HashMap<String, Item>,
+    ty_parameters: &HashMap<String, usize>,
+    local_variables: Option<&HashMap<String, usize>>,
+    global_variables: &HashMap<String, usize>,
+    exported_items: &Vec<HashMap<String, Item>>,
+) -> Result<Item, ()> {
+    match item.term {
+        ast::Term::Identifier(name) => {
+            if let Some(local_variables) = local_variables {
+                if let Some(&index) = local_variables.get(&name) {
+                    return Ok(Item::LValue(backend::Expression::LocalVariable(index)));
                 }
             }
-            ast::Term::FieldByName { term_left, name } => {
-                let term_left = self.translate_item(
-                    *term_left,
-                    named_items,
-                    ty_parameters,
-                    local_variables,
-                    global_variables,
-                    exported_items,
-                )?;
-                match term_left {
-                    Item::Import(index) => {
-                        if let Some(item) = exported_items[index].get(&name) {
-                            Ok(item.clone())
-                        } else {
-                            Err(())
-                        }
-                    }
-                    _ => todo!(),
-                }
+            if let Some(&index) = global_variables.get(&name) {
+                return Ok(Item::LValue(backend::Expression::GlobalVariable(index)));
             }
-            _ => todo!(),
+            if let Some(&index) = ty_parameters.get(&name) {
+                return Ok(Item::Ty(backend::Ty::Parameter(index)));
+            }
+            if let Some(item) = named_items.get(&name) {
+                return Ok(item.clone());
+            }
+            Err(())
         }
+        ast::Term::IntegerTy => Ok(Item::Ty(backend::Ty::Constructor(
+            backend::TyConstructor::Integer,
+        ))),
+        ast::Term::FloatTy => Ok(Item::Ty(backend::Ty::Constructor(
+            backend::TyConstructor::Float,
+        ))),
+        ast::Term::TypeParameters {
+            term_left,
+            parameters,
+        } => {
+            let term_left = translate_item(
+                *term_left,
+                named_items,
+                ty_parameters,
+                local_variables,
+                global_variables,
+                exported_items,
+            );
+            let mut translated_parameters = Some(Vec::new());
+            for parameter in parameters {
+                let translated_parameter = match parameter {
+                    ast::ListElement::NonEmpty(parameter) => translate_item(
+                        parameter,
+                        named_items,
+                        ty_parameters,
+                        local_variables,
+                        global_variables,
+                        exported_items,
+                    ),
+                    ast::ListElement::Empty { comma_pos } => todo!(),
+                };
+                if let (Some(translated_parameters), Ok(translated_parameter)) =
+                    (&mut translated_parameters, translated_parameter)
+                {
+                    if let Item::Ty(ty) = translated_parameter {
+                        translated_parameters.push(ty);
+                    }
+                }
+            }
+            match (term_left, translated_parameters) {
+                (Ok(Item::Ty(constructor)), Some(arguments)) => {
+                    Ok(Item::Ty(backend::Ty::Application {
+                        constructor: Box::new(constructor),
+                        arguments,
+                    }))
+                }
+                _ => Err(()),
+            }
+        }
+        ast::Term::FieldByName { term_left, name } => {
+            let term_left = translate_item(
+                *term_left,
+                named_items,
+                ty_parameters,
+                local_variables,
+                global_variables,
+                exported_items,
+            )?;
+            match term_left {
+                Item::Import(index) => {
+                    if let Some(item) = exported_items[index].get(&name) {
+                        Ok(item.clone())
+                    } else {
+                        Err(())
+                    }
+                }
+                _ => todo!(),
+            }
+        }
+        _ => todo!(),
     }
 }
 
@@ -601,14 +965,11 @@ struct Context {
     num_variables: usize,
 }
 
-impl Context {}
-
 #[derive(Clone)]
 enum Item {
     Import(usize),
     Function(Vec<usize>),
     Ty(backend::Ty),
-    TyConstructor(backend::TyConstructor),
     GlobalVariable(usize),
     LValue(backend::Expression),
     RValue(backend::Expression),

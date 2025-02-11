@@ -16,11 +16,50 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use std::collections::HashMap;
+
 pub struct Definitions {
+    pub tys_kind: HashMap<TyConstructor, TyKind>,
     pub structures: Vec<Structure>,
-    pub functions: Vec<(FunctionTy, Function)>,
+    pub functions_ty: HashMap<Function, FunctionTy>,
     pub function_definitions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
+}
+
+impl Definitions {
+    pub fn builtin() -> Definitions {
+        Definitions {
+            tys_kind: HashMap::from([
+                (TyConstructor::Integer, TyKind::Ty),
+                (TyConstructor::Float, TyKind::Ty),
+                (
+                    TyConstructor::Reference,
+                    TyKind::Abstraction {
+                        parameters: vec![TyKind::Ty],
+                        ret: Box::new(TyKind::Ty),
+                    },
+                ),
+                (
+                    TyConstructor::Tuple,
+                    TyKind::Abstraction {
+                        parameters: vec![TyKind::List(Box::new(TyKind::Ty))],
+                        ret: Box::new(TyKind::Ty),
+                    },
+                ),
+                (
+                    TyConstructor::Function,
+                    TyKind::Abstraction {
+                        parameters: vec![TyKind::List(Box::new(TyKind::Ty)), TyKind::Ty],
+                        ret: Box::new(TyKind::Ty),
+                    },
+                ),
+            ]),
+            structures: Vec::new(),
+            functions_ty: HashMap::from([]),
+            function_definitions: Vec::new(),
+            num_global_variables: 0,
+        }
+    }
 }
 
 pub struct Structure {
@@ -34,6 +73,7 @@ pub struct FunctionTy {
     pub return_ty: Ty,
 }
 
+#[derive(PartialEq, Eq, Hash)]
 pub enum Function {
     IAdd,
     Deref,
@@ -47,22 +87,36 @@ pub struct FunctionDefinition {
 
 #[derive(Clone)]
 pub enum Ty {
+    Constructor(TyConstructor),
+    Parameter(usize),
     Application {
-        constructor: TyConstructor,
+        constructor: Box<Ty>,
         arguments: Vec<Ty>,
     },
-    Parameter(usize),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum TyConstructor {
     Integer,
     Float,
     Reference,
-    UserDefined(usize),
+    Tuple,
+    Function,
+    Structure(usize),
+}
+
+#[derive(Clone)]
+pub enum TyKind {
+    Ty,
+    List(Box<TyKind>),
+    Abstraction {
+        parameters: Vec<TyKind>,
+        ret: Box<TyKind>,
+    },
 }
 
 pub enum Statement {
+    Empty,
     Expr(Expression),
     While(Expression, Vec<Statement>),
 }

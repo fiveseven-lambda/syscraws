@@ -29,9 +29,9 @@ use std::str::CharIndices;
  * A structure used in the parser to iterate over the characters of an input
  * string.
  *
- * The next character can be peeked using the [`peek_char`](Self::peek_char)
- * method. It also tracks the byte ranges of each line, which can be
- * retrieved using the [`lines`](Self::lines) method.
+ * The next character can be peeked using the [`peek`](Self::peek) method.
+ * It also tracks the byte ranges of each line, which can be retrieved using
+ * the [`lines`](Self::lines) method.
  *
  * # TODO
  * Handle `\r\n` on Windows.
@@ -129,9 +129,8 @@ impl<'input> CharsPeekable<'input> {
      * the input string).
      *
      * Any line and column numbers previously obtained through the
-     * [`peek_index`](Self::peek_index) method (even if at EOF) will
-     * correspond to a valid UTF-8 boundary within the ranges returned by
-     * this method.
+     * [`peek`](Self::peek) method (even if at EOF) will correspond to a
+     * valid UTF-8 boundary within the ranges returned by this method.
      */
     pub fn lines(mut self) -> Vec<Range<usize>> {
         self.lines.push(self.current_line_start..self.current_index);
