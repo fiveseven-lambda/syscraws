@@ -1,0 +1,4 @@
+func foo()
+  while true
+    while true
+      func bar()

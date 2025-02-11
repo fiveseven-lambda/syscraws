@@ -17,7 +17,7 @@
  */
 
 /*!
- * Defines the abstract syntax tree and its parser.
+ * Defines the Abstract Syntax Tree (AST) and its parser.
  */
 
 mod tests;
@@ -48,7 +48,7 @@ pub struct File {
 }
 
 /**
- * An import statement.
+ * An import statement in the AST.
  */
 pub struct Import {
     /**
@@ -62,12 +62,18 @@ pub struct Import {
     pub extra_tokens_pos: Option<Pos>,
 }
 
+/**
+ * A structure name in the AST.
+ */
 pub struct StructureName {
     pub keyword_struct_pos: Pos,
     pub name: Option<String>,
     pub extra_tokens_pos: Option<Pos>,
 }
 
+/**
+ * A function name in the AST.
+ */
 pub struct FunctionName {
     pub keyword_func_pos: Pos,
     pub name: Option<String>,
@@ -93,7 +99,7 @@ pub enum TopLevelStatement {
 }
 
 /**
- * A structure definition.
+ * A structure definition in the AST.
  */
 pub struct StructureDefinition {
     /**
@@ -110,13 +116,16 @@ pub struct StructureDefinition {
     pub extra_tokens_pos: Option<Pos>,
 }
 
+/**
+ * A structure field in the AST.
+ */
 pub struct StructureField {
     pub field: TermWithPos,
     pub extra_tokens_pos: Option<Pos>,
 }
 
 /**
- * A function definition.
+ * A function definition in the AST.
  *
  * The function name is stored in [`File::function_names`], so it is not
  * included here.
@@ -145,7 +154,7 @@ pub struct FunctionDefinition {
 }
 
 /**
- * Return type of a function.
+ * Return type of a function in the AST.
  */
 pub struct ReturnType {
     /**
@@ -159,7 +168,7 @@ pub struct ReturnType {
 }
 
 /**
- * A statement.
+ * A statement in the AST.
  */
 pub enum Statement {
     /**
@@ -198,6 +207,9 @@ pub enum Statement {
     },
 }
 
+/**
+ * Pair of a [`Term`] and its [`Pos`].
+ */
 #[derive(PartialEq, Eq, Debug)]
 pub struct TermWithPos {
     pub term: Term,
@@ -205,8 +217,7 @@ pub struct TermWithPos {
 }
 
 /**
- * A term, representing an expression, a type, a type constructor or an
- * import name.
+ * A term in the AST, representing an expression, a type, or an import name.
  */
 #[derive(PartialEq, Eq, Debug)]
 pub enum Term {
@@ -214,34 +225,70 @@ pub enum Term {
      * A numeric literal, either integer or floating-point number.
      */
     NumericLiteral(String),
+    /**
+     * A string literal.
+     */
     StringLiteral(Vec<StringLiteralComponent>),
+    /**
+     * The integer type (`int`)
+     */
     IntegerTy,
+    /**
+     * The floating-point type (`float`)
+     */
     FloatTy,
+    /**
+     * The identity function (`_`)
+     */
     Identity,
+    /**
+     * An identifier.
+     */
     Identifier(String),
+    /**
+     * A method name.
+     */
     MethodName(String),
+    /**
+     * A term followed by `.` and field name.
+     */
     FieldByName {
         term_left: Box<TermWithPos>,
         name: String,
     },
+    /**
+     * A term followed by `.` and field number.
+     */
     FieldByNumber {
         term_left: Box<TermWithPos>,
         number: String,
     },
+    /**
+     * A term followed by `:` and another term.
+     */
     TypeAnnotation {
         term_left: Box<TermWithPos>,
         colon_pos: Pos,
         term_right: Option<Box<TermWithPos>>,
     },
+    /**
+     * Unary operation.
+     */
     UnaryOperation {
         operator: Box<TermWithPos>,
         operand: Option<Box<TermWithPos>>,
     },
+    /**
+     * Binary operation.
+     */
     BinaryOperation {
         left_operand: Option<Box<TermWithPos>>,
         operator: Box<TermWithPos>,
         right_operand: Option<Box<TermWithPos>>,
     },
+    /**
+     * Assignment.
+     */
     Assignment {
         left_hand_side: Option<Box<TermWithPos>>,
         operator: Box<TermWithPos>,
@@ -277,7 +324,7 @@ pub enum Term {
 }
 
 /**
- * A component of a string literal.
+ * A component of a string literal in the AST.
  */
 #[derive(PartialEq, Eq, Debug)]
 pub enum StringLiteralComponent {
@@ -289,7 +336,7 @@ pub enum StringLiteralComponent {
 }
 
 /**
- * An element of a list.
+ * An element of a list in the AST.
  */
 #[derive(PartialEq, Eq, Debug)]
 pub enum ListElement {
@@ -331,9 +378,18 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
     Ok(file)
 }
 
+/**
+ * The parser used in [`parse_file`].
+ */
 struct Parser<'str, 'iter> {
     iter: &'iter mut CharsPeekable<'str>,
+    /**
+     * Information on the current token.
+     */
     current: TokenInfo,
+    /**
+     * End index of the previous token.
+     */
     prev_end: Index,
 }
 
@@ -355,26 +411,21 @@ impl<'str, 'iter> Parser<'str, 'iter> {
     }
 }
 
+/**
+ * Information on a token.
+ */
 struct TokenInfo {
+    /**
+     * Token.
+     */
     token: Option<Token>,
+    /**
+     * Start index of the token.
+     */
     start: Index,
     /**
-     * Examples:
-     * ```
-     * foo
-     * bar -- is_on_new_line: true
-     * ```
-     * ```
-     * foo bar -- is_on_new_line: false
-     * ```
-     * ```
-     * foo
-     * /- -/ bar -- is_on_new_line: true
-     * ```
-     * ```
-     * foo /-
-     * -/ bar -- is_on_new_line: false
-     * ```
+     * Whether there is a line break between this token and the previous
+     * one.
      */
     is_on_new_line: bool,
 }
@@ -836,6 +887,9 @@ impl Parser<'_, '_> {
         })
     }
 
+    /**
+     * Consumes all remaining tokens on the current line.
+     */
     fn consume_line(&mut self) -> Result<Option<Pos>, ParseError> {
         let start = self.current.start;
         let mut consumed = false;
@@ -846,6 +900,9 @@ impl Parser<'_, '_> {
         Ok(consumed.then(|| self.range_from(start)))
     }
 
+    /**
+     * Parses an assignment expression.
+     */
     fn parse_assign(&mut self, allow_line_break: bool) -> Result<Option<TermWithPos>, ParseError> {
         let start = self.current.start;
         let left_hand_side = self.parse_disjunction(allow_line_break)?;
@@ -900,14 +957,14 @@ impl Parser<'_, '_> {
         allow_line_break: bool,
     ) -> Result<Option<TermWithPos>, ParseError> {
         let start = self.current.start;
-        let term = self.parse_binary_operator(allow_line_break)?;
+        let term = self.parse_binary_operation(allow_line_break)?;
         if let Some(Token::DoubleAmpersand) = self.current.token {
             let mut conditions = vec![term];
             let mut operators_pos = Vec::new();
             while let Some(Token::DoubleAmpersand) = self.current.token {
                 operators_pos.push(self.current_pos());
                 self.consume_token()?;
-                conditions.push(self.parse_binary_operator(allow_line_break)?);
+                conditions.push(self.parse_binary_operation(allow_line_break)?);
             }
             Ok(Some(TermWithPos {
                 term: Term::Conjunction {
@@ -921,14 +978,14 @@ impl Parser<'_, '_> {
         }
     }
 
-    fn parse_binary_operator(
+    fn parse_binary_operation(
         &mut self,
         allow_line_break: bool,
     ) -> Result<Option<TermWithPos>, ParseError> {
-        self.parse_binary_operator_rec(allow_line_break, Precedence::first())
+        self.parse_binary_operation_rec(allow_line_break, Precedence::first())
     }
 
-    fn parse_binary_operator_rec(
+    fn parse_binary_operation_rec(
         &mut self,
         allow_line_break: bool,
         precedence: Option<Precedence>,
@@ -938,7 +995,7 @@ impl Parser<'_, '_> {
         };
         let start = self.current.start;
         let mut left_operand =
-            self.parse_binary_operator_rec(allow_line_break, precedence.next())?;
+            self.parse_binary_operation_rec(allow_line_break, precedence.next())?;
         while allow_line_break || !self.current.is_on_new_line {
             let Some(ref token) = self.current.token else {
                 break;
@@ -947,7 +1004,7 @@ impl Parser<'_, '_> {
                 let operator_pos = self.current_pos();
                 self.consume_token()?;
                 let right_operand =
-                    self.parse_binary_operator_rec(allow_line_break, precedence.next())?;
+                    self.parse_binary_operation_rec(allow_line_break, precedence.next())?;
                 left_operand = Some(TermWithPos {
                     term: Term::BinaryOperation {
                         left_operand: left_operand.map(Box::new),
@@ -967,26 +1024,150 @@ impl Parser<'_, '_> {
     }
 
     fn parse_factor(&mut self, allow_line_break: bool) -> Result<Option<TermWithPos>, ParseError> {
-        let factor_start = self.current.start;
+        let start = self.current.start;
+        let mut factor = match self.parse_atom(allow_line_break)? {
+            Some(factor) => factor,
+            None => return Ok(None),
+        };
+        while let Some(ref token) = self.current.token {
+            if let Token::Dot = token {
+                let dot_pos = self.current_pos();
+                self.consume_token()?;
+                match self.current.token {
+                    Some(Token::Identifier(ref mut name)) => {
+                        let name = std::mem::take(name);
+                        self.consume_token()?;
+                        factor = TermWithPos {
+                            term: Term::FieldByName {
+                                term_left: Box::new(factor),
+                                name,
+                            },
+                            pos: self.range_from(start),
+                        };
+                    }
+                    Some(Token::Digits(ref mut number)) => {
+                        let number = std::mem::take(number);
+                        self.consume_token()?;
+                        factor = TermWithPos {
+                            term: Term::FieldByNumber {
+                                term_left: Box::new(factor),
+                                number,
+                            },
+                            pos: self.range_from(start),
+                        };
+                    }
+                    Some(_) => {
+                        return Err(ParseError::UnexpectedTokenAfterDot {
+                            unexpected_token_pos: self.current_pos(),
+                            dot_pos,
+                        })
+                    }
+                    None => return Err(ParseError::MissingFieldAfterDot { dot_pos }),
+                }
+            } else if let Token::Colon = token {
+                let colon_pos = self.current_pos();
+                self.consume_token()?;
+                let opt_term_right = self.parse_factor(allow_line_break)?;
+                factor = TermWithPos {
+                    term: Term::TypeAnnotation {
+                        term_left: Box::new(factor),
+                        colon_pos,
+                        term_right: opt_term_right.map(Box::new),
+                    },
+                    pos: self.range_from(start),
+                };
+            } else if let Token::HyphenGreater = token {
+                let arrow_pos = self.current_pos();
+                self.consume_token()?;
+                let opt_ret = self.parse_factor(allow_line_break)?;
+                factor = TermWithPos {
+                    term: Term::ReturnType {
+                        arrow_pos,
+                        parameters: Box::new(factor),
+                        return_ty: opt_ret.map(Box::new),
+                    },
+                    pos: self.range_from(start),
+                }
+            } else if !allow_line_break && self.current.is_on_new_line {
+                break;
+            } else if let Token::OpeningParenthesis = token {
+                let opening_parenthesis_pos = self.current_pos();
+                self.consume_token()?;
+                let (elements, _) = self.parse_list_elements_and_trailing_comma()?;
+                match self.current.token {
+                    Some(Token::ClosingParenthesis) => self.consume_token()?,
+                    Some(_) => {
+                        return Err(ParseError::UnexpectedTokenInParentheses {
+                            unexpected_token_pos: self.current_pos(),
+                            opening_parenthesis_pos,
+                        })
+                    }
+                    None => {
+                        return Err(ParseError::UnclosedParenthesis {
+                            opening_parenthesis_pos,
+                        })
+                    }
+                }
+                factor = TermWithPos {
+                    term: Term::FunctionCall {
+                        function: Box::new(factor),
+                        arguments: elements,
+                    },
+                    pos: self.range_from(start),
+                };
+            } else if let Token::OpeningBracket = token {
+                let opening_bracket_pos = self.current_pos();
+                self.consume_token()?;
+                let (elements, _) = self.parse_list_elements_and_trailing_comma()?;
+                match self.current.token {
+                    Some(Token::ClosingBracket) => self.consume_token()?,
+                    Some(_) => {
+                        return Err(ParseError::UnexpectedTokenInBrackets {
+                            unexpected_token_pos: self.current_pos(),
+                            opening_bracket_pos,
+                        })
+                    }
+                    None => {
+                        return Err(ParseError::UnclosedBracket {
+                            opening_bracket_pos,
+                        });
+                    }
+                }
+                factor = TermWithPos {
+                    term: Term::TypeParameters {
+                        term_left: Box::new(factor),
+                        parameters: elements,
+                    },
+                    pos: self.range_from(start),
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(Some(factor))
+    }
+
+    fn parse_atom(&mut self, allow_line_break: bool) -> Result<Option<TermWithPos>, ParseError> {
         let Some(first_token) = &mut self.current.token else {
             return Ok(None);
         };
-        let mut factor = if let Token::Underscore = first_token {
+        let start = self.current.start;
+        let term = if let Token::Underscore = first_token {
             Term::Identity
-        } else if let Token::Identifier(ref mut name) = first_token {
+        } else if let Token::Identifier(name) = first_token {
             let name = std::mem::take(name);
             self.consume_token()?;
             Term::Identifier(name)
-        } else if let Token::StringLiteral(ref mut components) = first_token {
+        } else if let Token::StringLiteral(components) = first_token {
             let components = std::mem::take(components);
             self.consume_token()?;
             Term::StringLiteral(components)
-        } else if let Token::Digits(ref mut value) = first_token {
+        } else if let Token::Digits(value) = first_token {
             let mut value = std::mem::take(value);
             self.consume_token()?;
             if self.current.start == self.prev_end {
                 if let Some(Token::Dot) = self.current.token {
-                    let number_pos = self.range_from(factor_start);
+                    let number_pos = self.range_from(start);
                     self.consume_token()?;
                     if let Some(Token::Identifier(ref mut name)) = self.current.token {
                         let number = TermWithPos {
@@ -995,10 +1176,13 @@ impl Parser<'_, '_> {
                         };
                         let name = std::mem::take(name);
                         self.consume_token()?;
-                        Term::FieldByName {
-                            term_left: Box::new(number),
-                            name,
-                        }
+                        return Ok(Some(TermWithPos {
+                            term: Term::FieldByName {
+                                term_left: Box::new(number),
+                                name,
+                            },
+                            pos: self.range_from(start),
+                        }));
                     } else {
                         value.push('.');
                         if self.current.start == self.prev_end {
@@ -1007,14 +1191,10 @@ impl Parser<'_, '_> {
                                 self.consume_token()?;
                             }
                         }
-                        Term::NumericLiteral(value)
                     }
-                } else {
-                    Term::NumericLiteral(value)
                 }
-            } else {
-                Term::NumericLiteral(value)
             }
+            Term::NumericLiteral(value)
         } else if let Token::Dot = first_token {
             let dot_pos = self.current_pos();
             self.consume_token()?;
@@ -1054,11 +1234,11 @@ impl Parser<'_, '_> {
                 }
             }
             if elements.len() == 1 && !has_trailing_comma {
-                let Some(ListElement::NonEmpty(element)) = elements.into_iter().next() else {
-                    panic!();
-                };
-                Term::Parenthesized {
-                    inner: Box::new(element),
+                match elements.into_iter().next().unwrap() {
+                    ListElement::NonEmpty(element) => Term::Parenthesized {
+                        inner: Box::new(element),
+                    },
+                    ListElement::Empty { .. } => unreachable!(),
                 }
             } else {
                 Term::Tuple { elements }
@@ -1077,123 +1257,9 @@ impl Parser<'_, '_> {
         } else {
             return Ok(None);
         };
-        let mut factor_pos = self.range_from(factor_start);
-        while let Some(ref token) = self.current.token {
-            if let Token::Dot = token {
-                let dot_pos = self.current_pos();
-                self.consume_token()?;
-                if let Some(Token::Identifier(ref mut name)) = self.current.token {
-                    let name = std::mem::take(name);
-                    self.consume_token()?;
-                    factor = Term::FieldByName {
-                        term_left: Box::new(TermWithPos {
-                            term: factor,
-                            pos: factor_pos,
-                        }),
-                        name,
-                    };
-                    factor_pos = self.range_from(factor_start);
-                } else if let Some(Token::Digits(ref mut number)) = self.current.token {
-                    let number = std::mem::take(number);
-                    self.consume_token()?;
-                    factor = Term::FieldByNumber {
-                        term_left: Box::new(TermWithPos {
-                            term: factor,
-                            pos: factor_pos,
-                        }),
-                        number,
-                    };
-                    factor_pos = self.range_from(factor_start);
-                } else {
-                    panic!();
-                }
-            } else if let Token::Colon = token {
-                let colon_pos = self.current_pos();
-                self.consume_token()?;
-                let opt_term_right = self.parse_factor(allow_line_break)?;
-                factor = Term::TypeAnnotation {
-                    term_left: Box::new(TermWithPos {
-                        term: factor,
-                        pos: factor_pos,
-                    }),
-                    colon_pos,
-                    term_right: opt_term_right.map(Box::new),
-                };
-                factor_pos = self.range_from(factor_start);
-            } else if !allow_line_break && self.current.is_on_new_line {
-                break;
-            } else if let Token::HyphenGreater = token {
-                let arrow_pos = self.current_pos();
-                self.consume_token()?;
-                let opt_ret = self.parse_factor(allow_line_break)?;
-                factor = Term::ReturnType {
-                    arrow_pos,
-                    parameters: Box::new(TermWithPos {
-                        term: factor,
-                        pos: factor_pos,
-                    }),
-                    return_ty: opt_ret.map(Box::new),
-                };
-                factor_pos = self.range_from(factor_start);
-            } else if let Token::OpeningParenthesis = token {
-                let opening_parenthesis_pos = self.current_pos();
-                self.consume_token()?;
-                let (elements, _) = self.parse_list_elements_and_trailing_comma()?;
-                match self.current.token {
-                    Some(Token::ClosingParenthesis) => self.consume_token()?,
-                    Some(_) => {
-                        return Err(ParseError::UnexpectedTokenInParentheses {
-                            unexpected_token_pos: self.current_pos(),
-                            opening_parenthesis_pos,
-                        })
-                    }
-                    None => {
-                        return Err(ParseError::UnclosedParenthesis {
-                            opening_parenthesis_pos,
-                        })
-                    }
-                }
-                factor = Term::FunctionCall {
-                    function: Box::new(TermWithPos {
-                        term: factor,
-                        pos: factor_pos,
-                    }),
-                    arguments: elements,
-                };
-                factor_pos = self.range_from(factor_start);
-            } else if let Token::OpeningBracket = token {
-                let opening_bracket_pos = self.current_pos();
-                self.consume_token()?;
-                let (elements, _) = self.parse_list_elements_and_trailing_comma()?;
-                match self.current.token {
-                    Some(Token::ClosingBracket) => self.consume_token()?,
-                    Some(_) => {
-                        return Err(ParseError::UnexpectedTokenInBrackets {
-                            unexpected_token_pos: self.current_pos(),
-                            opening_bracket_pos,
-                        })
-                    }
-                    None => {
-                        return Err(ParseError::UnclosedBracket {
-                            opening_bracket_pos,
-                        });
-                    }
-                }
-                factor = Term::TypeParameters {
-                    term_left: Box::new(TermWithPos {
-                        term: factor,
-                        pos: factor_pos,
-                    }),
-                    parameters: elements,
-                };
-                factor_pos = self.range_from(factor_start);
-            } else {
-                break;
-            }
-        }
         Ok(Some(TermWithPos {
-            term: factor,
-            pos: factor_pos,
+            term,
+            pos: self.range_from(start),
         }))
     }
 
@@ -1237,6 +1303,9 @@ fn prefix_operator(token: &Token) -> Option<&'static str> {
     }
 }
 
+/**
+ * Precedence of binary operators.
+ */
 #[derive(Clone, Copy, Sequence)]
 enum Precedence {
     LogicalOr,

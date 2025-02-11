@@ -60,14 +60,44 @@ pub fn read_input(root_file_path: &Path) -> Result<backend::Definitions, ()> {
     Ok(reader.definitions)
 }
 
+/**
+ * A structure used in [`read_input`].
+ */
 struct Reader {
+    /**
+     * Total number of structures defined in all files. Used and updated by
+     * [`register_structure_name`].
+     */
     num_structures: usize,
+    /**
+     * Total number of functions defined in all files. Used and updated by
+     * [`register_function_name`].
+     */
     num_functions: usize,
+    /**
+     * The target which [`Reader::read_file`] stores the results in.
+     */
     definitions: backend::Definitions,
+    /**
+     * Items exported from each file.
+     */
     exported_items: Vec<HashMap<String, Item>>,
+    /**
+     * Debug information of each file.
+     */
     files: Vec<log::File>,
+    /**
+     * Used in [`Reader::read_file`] to avoid reading the same file multiple
+     * times.
+     */
     file_indices: HashMap<PathBuf, usize>,
+    /**
+     * Used in [`Reader::import_file`] to detect circular imports.
+     */
     import_chain: HashSet<PathBuf>,
+    /**
+     * Number of errors while reading files.
+     */
     num_errors: u32,
 }
 
@@ -94,7 +124,7 @@ impl Reader {
                 let mut named_items = HashMap::new();
                 for import in ast.imports {
                     if let Ok((name, index)) =
-                        self.translate_import(import, path.parent().unwrap(), &file)
+                        self.import_file(import, path.parent().unwrap(), &file)
                     {
                         named_items.insert(name, Item::Import(index));
                     }
@@ -196,7 +226,7 @@ impl Reader {
         Ok(new_index)
     }
 
-    fn translate_import(
+    fn import_file(
         &mut self,
         ast::Import {
             keyword_import_pos,

@@ -77,11 +77,83 @@ macro_rules! pos {
 }
 
 #[test]
+fn skip_comments() {
+    for (is_on_new_line, input) in std::iter::repeat(true)
+        .zip([
+            "foo--comment\nbar",
+            "foo/-comment-/\nbar",
+            "foo\n/-comment-/bar",
+            r"foo
+            // comment
+            |  comment
+            \\ comment
+            bar",
+            r"foo
+            ///  comment
+            | // comment
+            | |  comment
+            | \\ comment
+            \\\  comment
+            bar",
+            r"foo
+            ////   comment
+            | |    comment
+            | \\// comment
+            |   |  comment
+            \\  \\ comment
+            bar",
+        ])
+        .chain(std::iter::repeat(false).zip([
+            "foo/-com-//-ment-/bar",
+            "foo/-/-com-//-ment-/-/bar",
+            "foo/-/comment-/bar",
+            "foo/-/-/comment-/--/bar",
+            "foo/-com//-ment-/-/bar",
+            "foo/-com\nment-/bar",
+        ]))
+    {
+        let mut chars_peekable = CharsPeekable::new(&input);
+        let mut parser = Parser::new(&mut chars_peekable).unwrap();
+        assert_eq!(
+            parser.current.token,
+            Some(Token::Identifier(String::from("foo")))
+        );
+        let foo_pos = parser.current_pos();
+        parser.consume_token().unwrap();
+        assert_eq!(
+            parser.current.token,
+            Some(Token::Identifier(String::from("bar")))
+        );
+        assert_eq!(parser.current.is_on_new_line, is_on_new_line);
+        let bar_pos = parser.current_pos();
+        parser.consume_token().unwrap();
+        assert!(parser.current.token.is_none());
+        let lines = chars_peekable.lines();
+        assert_eq!(
+            &input[lines[foo_pos.start.line].start + foo_pos.start.column
+                ..lines[foo_pos.end.line].start + foo_pos.end.column],
+            "foo"
+        );
+        assert_eq!(
+            &input[lines[bar_pos.start.line].start + bar_pos.start.column
+                ..lines[bar_pos.end.line].start + bar_pos.end.column],
+            "bar"
+        );
+    }
+    for input in ["foo//\\\\", "foo/-\n-/ //\\\\"] {
+        let mut chars_peekable = CharsPeekable::new(&input);
+        let mut parser = Parser::new(&mut chars_peekable).unwrap();
+        assert!(parser.consume_token().is_err());
+    }
+}
+
+#[test]
 fn parse_numeric_literal() {
     for input in ["12", "1.2", "12.", ".12", "6.02e23", "6.02e+23", "1.6e-19"] {
         let mut chars_peekable = CharsPeekable::new(&input);
         let mut parser = Parser::new(&mut chars_peekable).unwrap();
-        let factor = parser.parse_factor(false).unwrap().unwrap();
+        let factor = parser.parse_atom(false).unwrap().unwrap();
+        assert_eq!(factor.pos, pos!(0:0-0:(input.len())));
         assert_eq!(factor.term, Term::NumericLiteral(String::from(input)));
     }
 }
@@ -91,7 +163,7 @@ fn parse_string_literal() {
     let input = r#""foo$x{10}${ bar }baz""#;
     let mut chars_peekable = CharsPeekable::new(&input);
     let mut parser = Parser::new(&mut chars_peekable).unwrap();
-    let factor = parser.parse_factor(false).unwrap().unwrap();
+    let factor = parser.parse_atom(false).unwrap().unwrap();
     let Term::StringLiteral(components) = factor.term else {
         panic!("Not a string literal");
     };
@@ -128,9 +200,46 @@ fn parse_identifier() {
     let input = "foo";
     let mut chars_peekable = CharsPeekable::new(&input);
     let mut parser = Parser::new(&mut chars_peekable).unwrap();
-    let factor = parser.parse_factor(false).unwrap().unwrap();
+    let factor = parser.parse_atom(false).unwrap().unwrap();
     assert_eq!(factor.term, Term::Identifier(String::from("foo")));
     assert_eq!(factor.pos, pos!(0:0-0:3));
+}
+
+#[test]
+fn parse_field() {
+    let input = "10.foo.20.bar";
+    let mut chars_peekable = CharsPeekable::new(&input);
+    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    let term_10_foo_20_bar = parser.parse_factor(false).unwrap().unwrap();
+    assert_eq!(term_10_foo_20_bar.pos, pos!(0:0-0:13));
+    let Term::FieldByName {
+        term_left: term_10_foo_20,
+        name: field_bar,
+    } = term_10_foo_20_bar.term
+    else {
+        panic!("Not a field by name");
+    };
+    assert_eq!(field_bar, "bar");
+    assert_eq!(term_10_foo_20.pos, pos!(0:0-0:9));
+    let Term::FieldByNumber {
+        term_left: term_10_foo,
+        number: field_20,
+    } = term_10_foo_20.term
+    else {
+        panic!("Not a field by number");
+    };
+    assert_eq!(field_20, "20");
+    assert_eq!(term_10_foo.pos, pos!(0:0-0:6));
+    let Term::FieldByName {
+        term_left: term_10,
+        name: field_foo,
+    } = term_10_foo.term
+    else {
+        panic!("Not a field by name");
+    };
+    assert_eq!(field_foo, "foo");
+    assert_eq!(term_10.pos, pos!(0:0-0:2));
+    assert_eq!(term_10.term, Term::NumericLiteral(String::from("10")));
 }
 
 #[test]
@@ -138,7 +247,7 @@ fn parse_addition() {
     let input = "foo + bar";
     let mut chars_peekable = CharsPeekable::new(&input);
     let mut parser = Parser::new(&mut chars_peekable).unwrap();
-    let factor = parser.parse_binary_operator(false).unwrap().unwrap();
+    let factor = parser.parse_binary_operation(false).unwrap().unwrap();
     assert_eq!(factor.pos, pos!(0:0-0:9));
     let Term::BinaryOperation {
         left_operand,

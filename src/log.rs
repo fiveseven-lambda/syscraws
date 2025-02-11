@@ -185,6 +185,13 @@ pub enum ParseError {
         extra_token_pos: Pos,
         line_pos: Pos,
     },
+    UnexpectedTokenAfterDot {
+        unexpected_token_pos: Pos,
+        dot_pos: Pos,
+    },
+    MissingFieldAfterDot {
+        dot_pos: Pos,
+    },
     UnexpectedTokenInParentheses {
         unexpected_token_pos: Pos,
         opening_parenthesis_pos: Pos,
@@ -244,6 +251,18 @@ impl ParseError {
                 eprintln!("Unexpected token at {}.", unexpected_token_pos);
                 file.quote_pos(unexpected_token_pos);
             }
+            ParseError::UnexpectedTokenAfterKeywordStruct {
+                unexpected_token_pos,
+                keyword_struct_pos,
+            } => {
+                eprintln!("Unexpected token at {}.", unexpected_token_pos);
+                file.quote_pos(unexpected_token_pos);
+                eprintln!(
+                    "Expected an identifier after `struct` at {}.",
+                    keyword_struct_pos
+                );
+                file.quote_pos(keyword_struct_pos);
+            }
             ParseError::UnexpectedTokenAfterKeywordFunc {
                 unexpected_token_pos,
                 keyword_func_pos,
@@ -280,7 +299,52 @@ impl ParseError {
                     file.quote_line(line_index);
                 }
             }
-            _ => eprintln!("{:?}", self),
+            ParseError::MissingFieldAfterDot { dot_pos } => {
+                eprintln!("Missing field name or number after `.` at {dot_pos}.");
+                file.quote_pos(dot_pos);
+            }
+            ParseError::UnexpectedTokenAfterDot {
+                unexpected_token_pos,
+                dot_pos,
+            } => {
+                eprintln!("Unexpected token at {}.", unexpected_token_pos);
+                file.quote_pos(unexpected_token_pos);
+                eprintln!("Note: expected a field name or number after `.` at {dot_pos}.");
+                file.quote_pos(dot_pos);
+            }
+            ParseError::UnexpectedTokenInParentheses {
+                unexpected_token_pos,
+                opening_parenthesis_pos,
+            } => {
+                eprintln!("Unexpected token at {}.", unexpected_token_pos);
+                file.quote_pos(unexpected_token_pos);
+                eprintln!("Note: opening parenthesis at {}.", opening_parenthesis_pos);
+                file.quote_pos(opening_parenthesis_pos);
+            }
+            ParseError::UnclosedParenthesis {
+                opening_parenthesis_pos,
+            } => {
+                eprintln!(
+                    "Unclosed parenthesis opened at {}.",
+                    opening_parenthesis_pos
+                );
+                file.quote_pos(opening_parenthesis_pos);
+            }
+            ParseError::UnexpectedTokenInBrackets {
+                unexpected_token_pos,
+                opening_bracket_pos,
+            } => {
+                eprintln!("Unexpected token at {}.", unexpected_token_pos);
+                file.quote_pos(unexpected_token_pos);
+                eprintln!("Note: opening bracket at {}.", opening_bracket_pos);
+                file.quote_pos(opening_bracket_pos);
+            }
+            ParseError::UnclosedBracket {
+                opening_bracket_pos,
+            } => {
+                eprintln!("Unclosed bracket opened at {}.", opening_bracket_pos);
+                file.quote_pos(opening_bracket_pos);
+            }
         }
     }
 }
