@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Atsushi Komaba
+ * Copyright (c) 2023-2025 Atsushi Komaba
  *
  * This file is part of Syscraws.
  * Syscraws is free software: you can redistribute it and/or
@@ -16,25 +16,24 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-mod ast;
-mod lines;
-mod parser;
-mod pre_ast;
+mod backend;
+mod frontend;
+mod log;
 
-use std::io::Read;
+use std::process::ExitCode;
 
-fn main() {
-    let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input).unwrap();
-    let stmts = match parser::parse(&input) {
-        Ok(stmts) => stmts,
-        Err(error) => return error.eprint(&input),
+use clap::Parser;
+
+#[derive(Parser)]
+struct CommandLineArguments {
+    filename: String,
+}
+
+fn main() -> ExitCode {
+    let command_line_arguments = CommandLineArguments::parse();
+    let Ok(_) = frontend::read_input(std::path::Path::new(&command_line_arguments.filename)) else {
+        return ExitCode::FAILURE;
     };
-    let program = match pre_ast::into_ast(stmts) {
-        Ok(res) => res,
-        Err(errors) => return pre_ast::eprint_errors(&errors, &input),
-    };
-    ast::ty::Checker::new(&program).run();
-    program._debug_print();
-    ast::translate::translate(&program);
+
+    ExitCode::SUCCESS
 }
