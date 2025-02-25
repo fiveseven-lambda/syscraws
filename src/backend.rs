@@ -16,7 +16,7 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 pub struct Definitions {
     pub tys_kind: HashMap<TyConstructor, TyKind>,
@@ -35,21 +35,27 @@ impl Definitions {
                 (
                     TyConstructor::Reference,
                     TyKind::Abstraction {
-                        parameters: vec![TyKind::Ty],
+                        parameters: TyListKind::Cons(
+                            Box::new(TyKind::Ty),
+                            Box::new(TyListKind::Nil),
+                        ),
                         ret: Box::new(TyKind::Ty),
                     },
                 ),
                 (
                     TyConstructor::Tuple,
                     TyKind::Abstraction {
-                        parameters: vec![TyKind::List(Box::new(TyKind::Ty))],
+                        parameters: TyListKind::Rest,
                         ret: Box::new(TyKind::Ty),
                     },
                 ),
                 (
                     TyConstructor::Function,
                     TyKind::Abstraction {
-                        parameters: vec![TyKind::List(Box::new(TyKind::Ty)), TyKind::Ty],
+                        parameters: TyListKind::Cons(
+                            Box::new(TyKind::Ty),
+                            Box::new(TyListKind::Rest),
+                        ),
                         ret: Box::new(TyKind::Ty),
                     },
                 ),
@@ -64,20 +70,28 @@ impl Definitions {
 
 pub struct Structure {
     pub num_ty_parameters: usize,
-    pub fields_ty: Vec<Ty>,
+    pub fields_ty: Vec<TyBuilder>,
 }
 
 pub struct FunctionTy {
     pub num_ty_parameters: usize,
-    pub parameters_ty: Vec<Ty>,
-    pub return_ty: Ty,
+    pub parameters_ty: Vec<TyBuilder>,
+    pub return_ty: TyBuilder,
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Function {
     IAdd,
     Deref,
     UserDefined(usize),
+    Field {
+        structure_index: usize,
+        field_index: usize,
+    },
+    FieldRef {
+        structure_index: usize,
+        field_index: usize,
+    },
 }
 
 pub struct FunctionDefinition {
@@ -86,12 +100,12 @@ pub struct FunctionDefinition {
 }
 
 #[derive(Clone)]
-pub enum Ty {
+pub enum TyBuilder {
     Constructor(TyConstructor),
     Parameter(usize),
     Application {
-        constructor: Box<Ty>,
-        arguments: Vec<Ty>,
+        constructor: Box<TyBuilder>,
+        arguments: Vec<TyBuilder>,
     },
 }
 
@@ -105,14 +119,41 @@ pub enum TyConstructor {
     Structure(usize),
 }
 
-#[derive(Clone)]
 pub enum TyKind {
     Ty,
-    List(Box<TyKind>),
     Abstraction {
-        parameters: Vec<TyKind>,
+        parameters: TyListKind,
         ret: Box<TyKind>,
     },
+}
+
+pub enum TyListKind {
+    Nil,
+    Cons(Box<TyKind>, Box<TyListKind>),
+    Rest,
+}
+
+struct Ty {
+    inner: Rc<RefCell<TyInner>>,
+}
+
+enum TyInner {
+    Constructor(TyConstructor),
+    Parameter(usize),
+    Application { constructor: Ty, arguments: TyList },
+    Undetermined,
+    SameAs(Ty),
+}
+
+struct TyList {
+    inner: Rc<RefCell<TyListInner>>,
+}
+
+enum TyListInner {
+    Nil,
+    Cons(Ty, TyList),
+    Undetermined,
+    SameAs(TyList),
 }
 
 pub enum Statement {
@@ -121,17 +162,17 @@ pub enum Statement {
     While(Expression, Vec<Statement>),
 }
 
-#[derive(Clone)]
 pub enum Expression {
     GlobalVariable(usize),
     LocalVariable(usize),
     Function {
-        candidates: Vec<usize>,
+        candidates: Vec<Function>,
         calls: Vec<Call>,
     },
 }
 
-#[derive(Clone)]
+fn translate_function() {}
+
 pub struct Call {
     pub arguments: Vec<Expression>,
 }

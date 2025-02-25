@@ -147,10 +147,8 @@ impl Reader {
                         &mut self.num_errors,
                     );
                 }
-                let mut global = Context {
-                    variables: HashMap::new(),
-                    num_variables: 0,
-                };
+                let mut global_variables = HashMap::new();
+                let mut num_global_variables = 0;
                 let mut global_scope = Vec::new();
                 let global_ty_parameters = HashMap::new();
                 let mut global_statements = Ok(Vec::new());
@@ -171,9 +169,9 @@ impl Reader {
                             self.definitions.structures.push(definition);
                         }
                         ast::TopLevelStatement::FunctionDefinition(function_definition) => {
-                            if let Ok((ty, definition)) = translate_function_definition(
+                            if let Some((ty, definition)) = translate_function_definition(
                                 function_definition,
-                                &global.variables,
+                                &global_variables,
                                 &named_items,
                                 &self.exported_items,
                                 &file,
@@ -189,7 +187,8 @@ impl Reader {
                         ast::TopLevelStatement::Statement(statement) => {
                             match translate_statement(
                                 statement,
-                                &mut global,
+                                &mut global_variables,
+                                &mut num_global_variables,
                                 &mut global_scope,
                                 &global_ty_parameters,
                                 None,
@@ -198,19 +197,19 @@ impl Reader {
                                 &file,
                                 &mut self.num_errors,
                             ) {
-                                Ok(stmt) => {
+                                Some(stmt) => {
                                     if let Some(stmt) = stmt {
                                         if let Ok(global_statements) = &mut global_statements {
                                             global_statements.push(stmt);
                                         }
                                     }
                                 }
-                                Err(()) => global_statements = Err(()),
+                                None => global_statements = Err(()),
                             }
                         }
                     }
                 }
-                for (name, index) in global.variables {
+                for (name, index) in global_variables {
                     named_items.insert(name, Item::GlobalVariable(index));
                 }
                 self.exported_items.push(named_items);
@@ -372,7 +371,7 @@ fn register_structure_name(
             *num_errors += 1;
         }
         std::collections::hash_map::Entry::Vacant(entry) => {
-            entry.insert(Item::Ty(backend::Ty::Constructor(
+            entry.insert(Item::Ty(backend::TyBuilder::Constructor(
                 backend::TyConstructor::Structure(*num_structures),
             )));
             *num_structures += 1;
@@ -408,7 +407,7 @@ fn register_function_name(
     match named_items.entry(name) {
         std::collections::hash_map::Entry::Occupied(mut entry) => {
             if let Item::Function(functions) = entry.get_mut() {
-                functions.push(*num_functions);
+                functions.push(backend::Function::UserDefined(*num_functions));
             } else {
                 eprintln!("Duplicate definition of `{}`.", entry.key());
                 file.quote_line(keyword_func_pos.line());
@@ -416,7 +415,9 @@ fn register_function_name(
             }
         }
         std::collections::hash_map::Entry::Vacant(entry) => {
-            entry.insert(Item::Function(vec![*num_functions]));
+            entry.insert(Item::Function(vec![backend::Function::UserDefined(
+                *num_functions,
+            )]));
         }
     }
     *num_functions += 1;
@@ -461,9 +462,9 @@ fn translate_structure_definition(
             }
         }
         backend::TyKind::Abstraction {
-            parameters: (0..ty_parameters_name.len())
-                .map(|_| backend::TyKind::Ty)
-                .collect(),
+            parameters: (0..ty_parameters_name.len()).fold(backend::TyListKind::Nil, |tail, _| {
+                backend::TyListKind::Cons(Box::new(backend::TyKind::Ty), Box::new(tail))
+            }),
             ret: Box::new(backend::TyKind::Ty),
         }
     } else {
@@ -481,24 +482,15 @@ fn translate_structure_definition(
                 colon_pos: _,
                 term_right: Some(field_ty),
             } => {
-                let field_ty_pos = field_ty.pos.clone();
-                match translate_item(
+                if let Some(ty) = translate_ty(
                     *field_ty,
                     named_items,
                     &ty_parameters_name,
-                    None,
-                    &HashMap::new(),
                     &exported_items,
+                    file,
+                    num_errors,
                 ) {
-                    Ok(Item::Ty(ty)) => {
-                        translated_fields_ty.push(ty);
-                    }
-                    Ok(_) => {
-                        eprintln!("Expected a type at {field_ty_pos}.");
-                        file.quote_pos(field_ty_pos);
-                        *num_errors += 1;
-                    }
-                    Err(()) => {}
+                    translated_fields_ty.push(ty);
                 }
             }
             _ => {
@@ -539,7 +531,7 @@ fn translate_function_definition(
     exported_items: &Vec<HashMap<String, Item>>,
     file: &log::File,
     num_errors: &mut u32,
-) -> Result<(backend::FunctionTy, backend::FunctionDefinition), ()> {
+) -> Option<(backend::FunctionTy, backend::FunctionDefinition)> {
     let mut ty_parameters_name = HashMap::new();
     if let Some(ty_parameters) = ty_parameters {
         for (i, ty_parameter) in ty_parameters.into_iter().enumerate() {
@@ -561,10 +553,8 @@ fn translate_function_definition(
             }
         }
     }
-    let mut local = Context {
-        variables: HashMap::new(),
-        num_variables: 0,
-    };
+    let mut local_variables = HashMap::new();
+    let mut num_local_variables = 0;
     let mut local_scope = Vec::new();
     let mut parameters_ty = Vec::new();
     if let Some(parameters) = parameters {
@@ -578,7 +568,7 @@ fn translate_function_definition(
                     } => {
                         match parameter_name.term {
                             ast::Term::Identifier(name) => {
-                                match local.variables.entry(name.clone()) {
+                                match local_variables.entry(name.clone()) {
                                     std::collections::hash_map::Entry::Occupied(_) => {
                                         eprintln!(
                                             "Duplicate parameter name at {}.",
@@ -587,9 +577,9 @@ fn translate_function_definition(
                                         file.quote_pos(parameter_name.pos);
                                     }
                                     std::collections::hash_map::Entry::Vacant(entry) => {
-                                        entry.insert(local.num_variables);
+                                        entry.insert(num_local_variables);
                                         local_scope.push((name, None));
-                                        local.num_variables += 1;
+                                        num_local_variables += 1;
                                     }
                                 }
                             }
@@ -600,24 +590,15 @@ fn translate_function_definition(
                             }
                         }
                         if let Some(parameter_ty) = parameter_ty {
-                            let field_ty_pos = parameter_ty.pos.clone();
-                            match translate_item(
+                            if let Some(ty) = translate_ty(
                                 *parameter_ty,
                                 named_items,
                                 &ty_parameters_name,
-                                None,
-                                &HashMap::new(),
                                 &exported_items,
+                                file,
+                                num_errors,
                             ) {
-                                Ok(Item::Ty(ty)) => {
-                                    parameters_ty.push(ty);
-                                }
-                                Ok(_) => {
-                                    eprintln!("Expected a type at {field_ty_pos}.");
-                                    file.quote_pos(field_ty_pos);
-                                    *num_errors += 1;
-                                }
-                                Err(()) => {}
+                                parameters_ty.push(ty);
                             }
                         } else {
                             eprintln!("Missing type after colon at {}.", colon_pos);
@@ -644,25 +625,16 @@ fn translate_function_definition(
     }
     let return_ty = if let Some(return_ty) = return_ty {
         if let Some(return_ty) = return_ty.ty {
-            let return_ty_pos = return_ty.pos.clone();
-            match translate_item(
+            match translate_ty(
                 return_ty,
                 named_items,
                 &ty_parameters_name,
-                None,
-                &HashMap::new(),
                 &exported_items,
+                file,
+                num_errors,
             ) {
-                Ok(Item::Ty(ty)) => ty,
-                Ok(_) => {
-                    eprintln!("Expected a type at {}.", return_ty_pos);
-                    file.quote_pos(return_ty_pos);
-                    *num_errors += 1;
-                    return Err(());
-                }
-                Err(()) => {
-                    return Err(());
-                }
+                Some(ty) => ty,
+                None => return None,
             }
         } else {
             eprintln!(
@@ -671,11 +643,13 @@ fn translate_function_definition(
             );
             file.quote_pos(return_ty.colon_pos);
             *num_errors += 1;
-            return Err(());
+            return None;
         }
     } else {
-        backend::Ty::Application {
-            constructor: Box::new(backend::Ty::Constructor(backend::TyConstructor::Tuple)),
+        backend::TyBuilder::Application {
+            constructor: Box::new(backend::TyBuilder::Constructor(
+                backend::TyConstructor::Tuple,
+            )),
             arguments: vec![],
         }
     };
@@ -684,11 +658,12 @@ fn translate_function_definition(
         file.quote_pos(extra_tokens_pos);
         *num_errors += 1;
     }
-    let mut translated_body = Ok(Vec::new());
+    let mut translated_body = Some(Vec::new());
     for statement in body {
-        match translate_statement(
+        let translated_statement = translate_statement(
             statement,
-            &mut local,
+            &mut local_variables,
+            &mut num_local_variables,
             &mut local_scope,
             &ty_parameters_name,
             Some(global_variables),
@@ -696,24 +671,25 @@ fn translate_function_definition(
             exported_items,
             file,
             num_errors,
-        ) {
-            Ok(Some(statement)) => {
-                if let Ok(translated_body) = &mut translated_body {
+        );
+        match translated_statement {
+            Some(Some(statement)) => {
+                if let Some(translated_body) = &mut translated_body {
                     translated_body.push(statement);
                 }
             }
-            Ok(None) => {}
-            Err(()) => translated_body = Err(()),
+            Some(None) => {}
+            None => translated_body = None,
         }
     }
-    Ok((
+    Some((
         backend::FunctionTy {
             num_ty_parameters: ty_parameters_name.len(),
             parameters_ty,
             return_ty,
         },
         backend::FunctionDefinition {
-            num_local_variables: local.num_variables,
+            num_local_variables,
             body: translated_body?,
         },
     ))
@@ -721,7 +697,8 @@ fn translate_function_definition(
 
 fn translate_statement(
     statement: ast::Statement,
-    context: &mut Context,
+    variables: &mut HashMap<String, usize>,
+    num_variables: &mut usize,
     scope: &mut Vec<(String, Option<usize>)>,
     ty_parameters: &HashMap<String, usize>,
     global_variables: Option<&HashMap<String, usize>>,
@@ -729,37 +706,33 @@ fn translate_statement(
     exported_items: &Vec<HashMap<String, Item>>,
     file: &log::File,
     num_errors: &mut u32,
-) -> Result<Option<backend::Statement>, ()> {
+) -> Option<Option<backend::Statement>> {
     match statement {
         ast::Statement::Term(term) => {
             let term_pos = term.pos.clone();
             let expr = match global_variables {
-                Some(global_variables) => translate_item(
+                Some(global_variables) => translate_expression(
                     term,
                     named_items,
                     ty_parameters,
-                    Some(&context.variables),
+                    Some(&variables),
                     global_variables,
                     exported_items,
+                    file,
+                    num_errors,
                 ),
-                None => translate_item(
+                None => translate_expression(
                     term,
                     named_items,
                     ty_parameters,
                     None,
-                    &context.variables,
+                    &variables,
                     exported_items,
+                    file,
+                    num_errors,
                 ),
             };
-            match expr? {
-                Item::RValue(expr) => Ok(Some(backend::Statement::Expr(expr))),
-                Item::LValue(expr) => Ok(Some(backend::Statement::Expr(expr))),
-                _ => {
-                    eprintln!("Expected an expression at {}.", term_pos);
-                    file.quote_pos(term_pos);
-                    Err(())
-                }
-            }
+            Some(expr.map(backend::Statement::Expr))
         }
         ast::Statement::VariableDeclaration {
             keyword_var_pos,
@@ -768,20 +741,19 @@ fn translate_statement(
             let Some(name) = term else {
                 eprintln!("Missing variable name after `var` at {}.", keyword_var_pos);
                 file.quote_pos(keyword_var_pos);
-                return Err(());
+                return None;
             };
             match name.term {
                 ast::Term::Identifier(name) => {
-                    let new_index = context.num_variables;
-                    let prev_index = context.variables.insert(name.clone(), new_index);
+                    let prev_index = variables.insert(name.clone(), *num_variables);
                     scope.push((name, prev_index));
-                    context.num_variables += 1;
-                    Ok(None)
+                    *num_variables += 1;
+                    Some(None)
                 }
                 _ => {
                     eprintln!("Expected a variable name at {}.", name.pos);
                     file.quote_pos(name.pos);
-                    return Err(());
+                    return None;
                 }
             }
         }
@@ -792,44 +764,40 @@ fn translate_statement(
         } => {
             let condition = if let Some(condition) = condition {
                 let condition_pos = condition.pos.clone();
-                let expr = match global_variables {
-                    Some(global_variables) => translate_item(
+                match global_variables {
+                    Some(global_variables) => translate_expression(
                         condition,
                         named_items,
                         ty_parameters,
-                        Some(&context.variables),
+                        Some(&variables),
                         global_variables,
                         exported_items,
+                        file,
+                        num_errors,
                     ),
-                    None => translate_item(
+                    None => translate_expression(
                         condition,
                         named_items,
                         ty_parameters,
                         None,
-                        &context.variables,
+                        &variables,
                         exported_items,
+                        file,
+                        num_errors,
                     ),
-                };
-                match expr {
-                    Ok(Item::RValue(condition)) => Ok(condition),
-                    Ok(Item::LValue(_)) => todo!("deref to obtain condition"),
-                    Ok(_) => {
-                        eprintln!("Expected an expression at {}", condition_pos);
-                        Err(())
-                    }
-                    Err(()) => Err(()),
                 }
             } else {
                 eprintln!("Missing condition after `while` at {}", keyword_while_pos);
                 file.quote_pos(keyword_while_pos);
-                Err(())
+                None
             };
             let mut body_scope = Vec::new();
-            let mut translated_stmts = Ok(Vec::new());
+            let mut translated_stmts = Some(Vec::new());
             for stmt in body {
                 match translate_statement(
                     stmt,
-                    context,
+                    variables,
+                    num_variables,
                     &mut body_scope,
                     ty_parameters,
                     global_variables,
@@ -838,141 +806,421 @@ fn translate_statement(
                     file,
                     num_errors,
                 ) {
-                    Ok(stmt) => {
+                    Some(stmt) => {
                         if let Some(stmt) = stmt {
-                            if let Ok(translated_stmts) = &mut translated_stmts {
+                            if let Some(translated_stmts) = &mut translated_stmts {
                                 translated_stmts.push(stmt);
                             }
                         }
                     }
-                    Err(()) => translated_stmts = Err(()),
+                    None => translated_stmts = None,
                 }
             }
             for (name, prev_index) in body_scope.into_iter().rev() {
                 match prev_index {
-                    Some(prev_index) => context.variables.insert(name, prev_index),
-                    None => context.variables.remove(&name),
+                    Some(prev_index) => variables.insert(name, prev_index),
+                    None => variables.remove(&name),
                 };
             }
-            if let (Ok(condition), Ok(translated_stmts)) = (condition, translated_stmts) {
-                Ok(Some(backend::Statement::While(condition, translated_stmts)))
-            } else {
-                Err(())
-            }
+            (|| {
+                Some(Some(backend::Statement::While(
+                    condition?,
+                    translated_stmts?,
+                )))
+            })()
         }
     }
 }
 
-fn translate_item(
-    item: ast::TermWithPos,
+fn translate_import(
+    import: ast::TermWithPos,
+    named_items: &HashMap<String, Item>,
+    exported_items: &Vec<HashMap<String, Item>>,
+    file: &log::File,
+    num_errors: &mut u32,
+) -> Option<usize> {
+    let item = match import.term {
+        ast::Term::Identifier(name) => match named_items.get(&name) {
+            Some(item) => item,
+            None => return None,
+        },
+        ast::Term::FieldByName { term_left, name } => {
+            let file_index =
+                translate_import(*term_left, named_items, exported_items, file, num_errors)?;
+            match exported_items[file_index].get(&name) {
+                Some(item) => item,
+                None => return None,
+            }
+        }
+        _ => return None,
+    };
+    match *item {
+        Item::Import(n) => Some(n),
+        _ => None,
+    }
+}
+
+fn translate_ty(
+    ty: ast::TermWithPos,
+    named_items: &HashMap<String, Item>,
+    ty_parameters: &HashMap<String, usize>,
+    exported_items: &Vec<HashMap<String, Item>>,
+    file: &log::File,
+    num_errors: &mut u32,
+) -> Option<backend::TyBuilder> {
+    let item = match ty.term {
+        ast::Term::IntegerTy => {
+            return Some(backend::TyBuilder::Constructor(
+                backend::TyConstructor::Integer,
+            ))
+        }
+        ast::Term::FloatTy => {
+            return Some(backend::TyBuilder::Constructor(
+                backend::TyConstructor::Float,
+            ))
+        }
+        ast::Term::Identifier(name) => {
+            if let Some(&index) = ty_parameters.get(&name) {
+                return Some(backend::TyBuilder::Parameter(index));
+            }
+            match named_items.get(&name) {
+                Some(item) => item,
+                None => return None,
+            }
+        }
+        ast::Term::FieldByName { term_left, name } => {
+            let file_index =
+                translate_import(*term_left, named_items, exported_items, file, num_errors)?;
+            match exported_items[file_index].get(&name) {
+                Some(item) => item,
+                None => return None,
+            }
+        }
+        ast::Term::TypeParameters {
+            term_left,
+            parameters,
+        } => {
+            let term_left = translate_ty(
+                *term_left,
+                named_items,
+                ty_parameters,
+                exported_items,
+                file,
+                num_errors,
+            );
+            let mut translated_parameters = Some(Vec::new());
+            for parameter in parameters {
+                let translated_parameter = match parameter {
+                    ast::ListElement::NonEmpty(parameter) => translate_ty(
+                        parameter,
+                        named_items,
+                        ty_parameters,
+                        exported_items,
+                        file,
+                        num_errors,
+                    ),
+                    ast::ListElement::Empty { comma_pos } => {
+                        eprintln!("Empty type parameter before comma at {comma_pos}");
+                        None
+                    }
+                };
+                match translated_parameter {
+                    Some(parameter) => {
+                        if let Some(translated_parameters) = &mut translated_parameters {
+                            translated_parameters.push(parameter);
+                        };
+                    }
+                    None => translated_parameters = None,
+                }
+            }
+            return (|| {
+                Some(backend::TyBuilder::Application {
+                    constructor: Box::new(term_left?),
+                    arguments: translated_parameters?,
+                })
+            })();
+        }
+        _ => return None,
+    };
+    match item {
+        Item::Ty(ty) => Some(ty.clone()),
+        _ => None,
+    }
+}
+
+fn translate_expression(
+    expression: ast::TermWithPos,
     named_items: &HashMap<String, Item>,
     ty_parameters: &HashMap<String, usize>,
     local_variables: Option<&HashMap<String, usize>>,
     global_variables: &HashMap<String, usize>,
     exported_items: &Vec<HashMap<String, Item>>,
-) -> Result<Item, ()> {
-    match item.term {
+    file: &log::File,
+    num_errors: &mut u32,
+) -> Option<backend::Expression> {
+    let item = match expression.term {
         ast::Term::Identifier(name) => {
             if let Some(local_variables) = local_variables {
                 if let Some(&index) = local_variables.get(&name) {
-                    return Ok(Item::LValue(backend::Expression::LocalVariable(index)));
+                    return Some(backend::Expression::Function {
+                        candidates: vec![backend::Function::Deref],
+                        calls: vec![backend::Call {
+                            arguments: vec![backend::Expression::LocalVariable(index)],
+                        }],
+                    });
                 }
             }
             if let Some(&index) = global_variables.get(&name) {
-                return Ok(Item::LValue(backend::Expression::GlobalVariable(index)));
+                return Some(backend::Expression::Function {
+                    candidates: vec![backend::Function::Deref],
+                    calls: vec![backend::Call {
+                        arguments: vec![backend::Expression::GlobalVariable(index)],
+                    }],
+                });
             }
-            if let Some(&index) = ty_parameters.get(&name) {
-                return Ok(Item::Ty(backend::Ty::Parameter(index)));
+            match named_items.get(&name) {
+                Some(item) => item,
+                None => return None,
             }
-            if let Some(item) = named_items.get(&name) {
-                return Ok(item.clone());
-            }
-            Err(())
         }
-        ast::Term::IntegerTy => Ok(Item::Ty(backend::Ty::Constructor(
-            backend::TyConstructor::Integer,
-        ))),
-        ast::Term::FloatTy => Ok(Item::Ty(backend::Ty::Constructor(
-            backend::TyConstructor::Float,
-        ))),
-        ast::Term::TypeParameters {
-            term_left,
-            parameters,
+        ast::Term::FunctionCall {
+            function,
+            arguments,
         } => {
-            let term_left = translate_item(
-                *term_left,
-                named_items,
-                ty_parameters,
-                local_variables,
-                global_variables,
-                exported_items,
-            );
-            let mut translated_parameters = Some(Vec::new());
-            for parameter in parameters {
-                let translated_parameter = match parameter {
-                    ast::ListElement::NonEmpty(parameter) => translate_item(
-                        parameter,
-                        named_items,
-                        ty_parameters,
-                        local_variables,
-                        global_variables,
-                        exported_items,
-                    ),
-                    ast::ListElement::Empty { comma_pos } => todo!(),
-                };
-                if let (Some(translated_parameters), Ok(translated_parameter)) =
-                    (&mut translated_parameters, translated_parameter)
+            if let ast::Term::FieldByName { term_left, name } = function.term {
+                let function_pos = term_left.pos.clone();
+                let translated_function = translate_expression(
+                    *term_left,
+                    named_items,
+                    ty_parameters,
+                    local_variables,
+                    global_variables,
+                    exported_items,
+                    file,
+                    num_errors,
+                );
+                let mut translated_arguments = Vec::new();
+                for argument in arguments {
+                    match argument {
+                        ast::ListElement::NonEmpty(argument) => {
+                            if let Some(expression) = translate_expression(
+                                argument,
+                                named_items,
+                                ty_parameters,
+                                local_variables,
+                                global_variables,
+                                exported_items,
+                                file,
+                                num_errors,
+                            ) {
+                                translated_arguments.push(expression);
+                            }
+                        }
+                        ast::ListElement::Empty { comma_pos } => {
+                            eprintln!("Empty argument before comma at {comma_pos}");
+                        }
+                    }
+                }
+                let mut ret = translated_function?;
+                if let backend::Expression::Function {
+                    candidates: _,
+                    calls,
+                } = &mut ret
                 {
-                    if let Item::Ty(ty) = translated_parameter {
-                        translated_parameters.push(ty);
-                    }
+                    calls.push(backend::Call {
+                        arguments: translated_arguments,
+                    });
+                    return Some(ret);
+                } else {
+                    eprintln!("Not a function");
+                    file.quote_pos(function_pos);
+                    return None;
                 }
-            }
-            match (term_left, translated_parameters) {
-                (Ok(Item::Ty(constructor)), Some(arguments)) => {
-                    Ok(Item::Ty(backend::Ty::Application {
-                        constructor: Box::new(constructor),
-                        arguments,
-                    }))
-                }
-                _ => Err(()),
+            } else {
+                todo!();
             }
         }
-        ast::Term::FieldByName { term_left, name } => {
-            let term_left = translate_item(
+        ast::Term::TypeAnnotation {
+            term_left,
+            colon_pos,
+            term_right,
+        } => {
+            translate_expression(
                 *term_left,
                 named_items,
                 ty_parameters,
                 local_variables,
                 global_variables,
                 exported_items,
-            )?;
-            match term_left {
-                Item::Import(index) => {
-                    if let Some(item) = exported_items[index].get(&name) {
-                        Ok(item.clone())
-                    } else {
-                        Err(())
-                    }
-                }
-                _ => todo!(),
+                file,
+                num_errors,
+            );
+            if let Some(ty) = term_right {
+                translate_ty(
+                    *ty,
+                    named_items,
+                    ty_parameters,
+                    exported_items,
+                    file,
+                    num_errors,
+                );
+            } else {
+                eprintln!("Missing type after colon at {colon_pos}");
+                return None;
             }
+            todo!();
         }
+        _ => todo!(),
+    };
+    match item {
+        Item::Function(candidates) => Some(backend::Expression::Function {
+            candidates: candidates.clone(),
+            calls: vec![],
+        }),
         _ => todo!(),
     }
 }
 
-struct Context {
-    variables: HashMap<String, usize>,
-    num_variables: usize,
+fn translate_reference(
+    expression: ast::TermWithPos,
+    named_items: &HashMap<String, Item>,
+    ty_parameters: &HashMap<String, usize>,
+    local_variables: Option<&HashMap<String, usize>>,
+    global_variables: &HashMap<String, usize>,
+    exported_items: &Vec<HashMap<String, Item>>,
+    file: &log::File,
+    num_errors: &mut u32,
+) -> Option<backend::Expression> {
+    let item = match expression.term {
+        ast::Term::Identifier(name) => {
+            if let Some(local_variables) = local_variables {
+                if let Some(&index) = local_variables.get(&name) {
+                    return Some(backend::Expression::LocalVariable(index));
+                }
+            }
+            if let Some(&index) = global_variables.get(&name) {
+                return Some(backend::Expression::GlobalVariable(index));
+            }
+            match named_items.get(&name) {
+                Some(item) => item,
+                None => return None,
+            }
+        }
+        ast::Term::FieldByName { term_left, name } => {
+            todo!();
+        }
+        _ => todo!(),
+    };
+    todo!();
+}
+
+enum ImportOrExpression {
+    Import(usize),
+    Expression(backend::Expression),
+}
+
+fn translate_import_or_expression(
+    expression: ast::TermWithPos,
+    named_items: &HashMap<String, Item>,
+    ty_parameters: &HashMap<String, usize>,
+    local_variables: Option<&HashMap<String, usize>>,
+    global_variables: &HashMap<String, usize>,
+    exported_items: &Vec<HashMap<String, Item>>,
+    file: &log::File,
+    num_errors: &mut u32,
+) -> Option<ImportOrExpression> {
+    let item = match expression.term {
+        ast::Term::Identifier(name) => {
+            if let Some(local_variables) = local_variables {
+                if let Some(&index) = local_variables.get(&name) {
+                    return Some(ImportOrExpression::Expression(
+                        backend::Expression::LocalVariable(index),
+                    ));
+                }
+            }
+            if let Some(&index) = global_variables.get(&name) {
+                return Some(ImportOrExpression::Expression(
+                    backend::Expression::GlobalVariable(index),
+                ));
+            }
+            match named_items.get(&name) {
+                Some(item) => item,
+                None => return None,
+            }
+        }
+        ast::Term::FieldByName { term_left, name } => {
+            todo!();
+        }
+        _ => todo!(),
+    };
+    match item {
+        Item::Import(index) => Some(ImportOrExpression::Import(*index)),
+        Item::Function(candidates) => Some(ImportOrExpression::Expression(
+            backend::Expression::Function {
+                candidates: candidates.clone(),
+                calls: vec![],
+            },
+        )),
+        Item::GlobalVariable(index) => Some(ImportOrExpression::Expression(
+            backend::Expression::GlobalVariable(*index),
+        )),
+        _ => todo!(),
+    }
+}
+
+fn translate_import_or_reference(
+    expression: ast::TermWithPos,
+    named_items: &HashMap<String, Item>,
+    ty_parameters: &HashMap<String, usize>,
+    local_variables: Option<&HashMap<String, usize>>,
+    global_variables: &HashMap<String, usize>,
+    exported_items: &Vec<HashMap<String, Item>>,
+    file: &log::File,
+    num_errors: &mut u32,
+) -> Option<ImportOrExpression> {
+    let item = match expression.term {
+        ast::Term::Identifier(name) => {
+            if let Some(local_variables) = local_variables {
+                if let Some(&index) = local_variables.get(&name) {
+                    return Some(ImportOrExpression::Expression(
+                        backend::Expression::LocalVariable(index),
+                    ));
+                }
+            }
+            if let Some(&index) = global_variables.get(&name) {
+                return Some(ImportOrExpression::Expression(
+                    backend::Expression::GlobalVariable(index),
+                ));
+            }
+            match named_items.get(&name) {
+                Some(item) => item,
+                None => return None,
+            }
+        }
+        ast::Term::FieldByName { term_left, name } => {
+            todo!();
+        }
+        _ => todo!(),
+    };
+    match item {
+        Item::Import(index) => Some(ImportOrExpression::Import(*index)),
+        Item::Function(candidates) => Some(ImportOrExpression::Expression(
+            backend::Expression::Function {
+                candidates: candidates.clone(),
+                calls: vec![],
+            },
+        )),
+        Item::GlobalVariable(index) => Some(ImportOrExpression::Expression(
+            backend::Expression::GlobalVariable(*index),
+        )),
+        _ => todo!(),
+    }
 }
 
 #[derive(Clone)]
 enum Item {
     Import(usize),
-    Function(Vec<usize>),
-    Ty(backend::Ty),
+    Ty(backend::TyBuilder),
+    Function(Vec<backend::Function>),
     GlobalVariable(usize),
-    LValue(backend::Expression),
-    RValue(backend::Expression),
 }

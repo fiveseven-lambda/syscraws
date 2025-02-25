@@ -1009,6 +1009,7 @@ impl Parser<'_, '_> {
                     term: Term::BinaryOperation {
                         left_operand: left_operand.map(Box::new),
                         operator: Box::new(TermWithPos {
+                            // TODO: remove `.to_string()`
                             term: Term::MethodName(operator.to_string()),
                             pos: operator_pos,
                         }),
