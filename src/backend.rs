@@ -21,8 +21,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 pub struct Definitions {
     pub tys_kind: HashMap<TyConstructor, TyKind>,
     pub structures: Vec<Structure>,
-    pub functions_ty: HashMap<Function, FunctionTy>,
-    pub functions: Vec<FunctionDefinition>,
+    pub functions: Vec<(FunctionTy, FunctionDefinition)>,
     pub num_global_variables: usize,
 }
 
@@ -61,7 +60,6 @@ impl Definitions {
                 ),
             ]),
             structures: Vec::new(),
-            functions_ty: HashMap::from([]),
             functions: Vec::new(),
             num_global_variables: 0,
         }
@@ -141,33 +139,14 @@ struct Ty {
 enum TyInner {
     Constructor(TyConstructor),
     Parameter(usize),
-    Application { constructor: Ty, arguments: TyList },
+    Application { constructor: Ty, arguments: Ty },
+    Nil,
+    Cons(Ty, Ty),
     Undetermined,
     SameAs(Ty),
 }
 
-#[derive(Clone)]
-struct TyList {
-    inner: Rc<RefCell<TyListInner>>,
-}
-
-enum TyListInner {
-    Nil,
-    Cons(Ty, TyList),
-    Undetermined,
-    SameAs(TyList),
-}
-
-enum TyOrTyList {
-    Ty(Ty),
-    TyList(TyList),
-}
-
-trait Contains<T> {
-    fn contains(&self, other: &T) -> bool;
-}
-
-impl Contains<Ty> for Ty {
+impl Ty {
     fn contains(&self, other: &Ty) -> bool {
         if Rc::ptr_eq(&self.inner, &other.inner) {
             return true;
@@ -179,56 +158,14 @@ impl Contains<Ty> for Ty {
                 constructor,
                 arguments,
             } => constructor.contains(other) || arguments.contains(other),
+            TyInner::Nil => false,
+            TyInner::Cons(head, tail) => head.contains(other) || tail.contains(other),
             TyInner::Undetermined => false,
             TyInner::SameAs(this) => this.contains(other),
         }
     }
-}
-impl Contains<TyList> for Ty {
-    fn contains(&self, other: &TyList) -> bool {
-        match &*self.inner.borrow() {
-            TyInner::Constructor(_) => false,
-            TyInner::Parameter(_) => false,
-            TyInner::Application {
-                constructor,
-                arguments,
-            } => constructor.contains(other) || arguments.contains(other),
-            TyInner::Undetermined => false,
-            TyInner::SameAs(this) => this.contains(other),
-        }
-    }
-}
 
-impl Contains<Ty> for TyList {
-    fn contains(&self, other: &Ty) -> bool {
-        match &*self.inner.borrow() {
-            TyListInner::Nil => false,
-            TyListInner::Cons(head, tail) => head.contains(other) || tail.contains(other),
-            TyListInner::Undetermined => false,
-            TyListInner::SameAs(this) => this.contains(other),
-        }
-    }
-}
-impl Contains<TyList> for TyList {
-    fn contains(&self, other: &TyList) -> bool {
-        if Rc::ptr_eq(&self.inner, &other.inner) {
-            return true;
-        }
-        match &*self.inner.borrow() {
-            TyListInner::Nil => false,
-            TyListInner::Cons(head, tail) => head.contains(other) || tail.contains(other),
-            TyListInner::Undetermined => false,
-            TyListInner::SameAs(this) => this.contains(other),
-        }
-    }
-}
-
-trait Unify {
-    fn unify(&self, other: &Self, history: &mut Vec<TyOrTyList>) -> bool;
-}
-
-impl Unify for Ty {
-    fn unify(&self, other: &Ty, history: &mut Vec<TyOrTyList>) -> bool {
+    fn unify(&self, other: &Ty, history: &mut Vec<Ty>) -> bool {
         let self_binding = self.inner.borrow();
         let other_binding = other.inner.borrow();
         match (&*self_binding, &*other_binding) {
@@ -245,7 +182,7 @@ impl Unify for Ty {
                     return false;
                 }
                 drop(self_binding);
-                history.push(TyOrTyList::Ty(self.clone()));
+                history.push(self.clone());
                 *self.inner.borrow_mut() = TyInner::SameAs(other.clone());
                 true
             }
@@ -254,7 +191,7 @@ impl Unify for Ty {
                     return false;
                 }
                 drop(other_binding);
-                history.push(TyOrTyList::Ty(other.clone()));
+                history.push(other.clone());
                 *other.inner.borrow_mut() = TyInner::SameAs(self.clone());
                 true
             }
@@ -263,6 +200,10 @@ impl Unify for Ty {
             }
             (TyInner::Parameter(self_index), TyInner::Parameter(other_index)) => {
                 self_index == other_index
+            }
+            (TyInner::Nil, TyInner::Nil) => true,
+            (TyInner::Cons(self_head, self_tail), TyInner::Cons(other_head, other_tail)) => {
+                self_head.unify(other_head, history) && self_tail.unify(other_tail, history)
             }
             (
                 TyInner::Application {
@@ -282,53 +223,9 @@ impl Unify for Ty {
     }
 }
 
-impl Unify for TyList {
-    fn unify(&self, other: &TyList, history: &mut Vec<TyOrTyList>) -> bool {
-        let self_binding = self.inner.borrow();
-        let other_binding = other.inner.borrow();
-        match (&*self_binding, &*other_binding) {
-            (TyListInner::SameAs(self_), _) => {
-                drop(other_binding);
-                self_.unify(other, history)
-            }
-            (_, TyListInner::SameAs(other_)) => {
-                drop(self_binding);
-                self.unify(other_, history)
-            }
-            (TyListInner::Undetermined, _) => {
-                if other.contains(self) {
-                    return false;
-                }
-                drop(self_binding);
-                history.push(TyOrTyList::TyList(self.clone()));
-                *self.inner.borrow_mut() = TyListInner::SameAs(other.clone());
-                true
-            }
-            (_, TyListInner::Undetermined) => {
-                if self.contains(other) {
-                    return false;
-                }
-                drop(other_binding);
-                history.push(TyOrTyList::TyList(other.clone()));
-                *other.inner.borrow_mut() = TyListInner::SameAs(self.clone());
-                true
-            }
-            (TyListInner::Nil, TyListInner::Nil) => true,
-            (
-                TyListInner::Cons(self_head, self_tail),
-                TyListInner::Cons(other_head, other_tail),
-            ) => self_head.unify(other_head, history) && self_tail.unify(other_tail, history),
-            _ => todo!(),
-        }
-    }
-}
-
-fn rollback(history: &[TyOrTyList]) {
-    for ty_or_ty_list in history {
-        match ty_or_ty_list {
-            TyOrTyList::Ty(ty) => *ty.inner.borrow_mut() = TyInner::Undetermined,
-            TyOrTyList::TyList(ty_list) => *ty_list.inner.borrow_mut() = TyListInner::Undetermined,
-        }
+fn rollback(history: &[Ty]) {
+    for ty in history {
+        *ty.inner.borrow_mut() = TyInner::Undetermined
     }
 }
 
@@ -351,4 +248,102 @@ fn translate_function() {}
 
 pub struct Call {
     pub arguments: Vec<Expression>,
+}
+
+impl FunctionTy {
+    fn build(&self) -> Ty {
+        let ty_parameters: Vec<_> = (0..self.num_ty_parameters)
+            .map(|_| Ty {
+                inner: Rc::new(RefCell::new(TyInner::Undetermined)),
+            })
+            .collect();
+        let mut arguments = Ty {
+            inner: Rc::new(RefCell::new(TyInner::Nil)),
+        };
+        for ty in self.parameters_ty.iter().rev() {
+            arguments = Ty {
+                inner: Rc::new(RefCell::new(TyInner::Cons(
+                    ty.build(&ty_parameters),
+                    arguments,
+                ))),
+            };
+        }
+        let arguments = Ty {
+            inner: Rc::new(RefCell::new(TyInner::Cons(
+                self.return_ty.build(&ty_parameters),
+                arguments,
+            ))),
+        };
+        Ty {
+            inner: Rc::new(RefCell::new(TyInner::Application {
+                constructor: Ty {
+                    inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Function))),
+                },
+                arguments,
+            })),
+        }
+    }
+}
+
+impl TyBuilder {
+    fn build(&self, parameters: &[Ty]) -> Ty {
+        match *self {
+            TyBuilder::Constructor(ref constructor) => Ty {
+                inner: Rc::new(RefCell::new(TyInner::Constructor(constructor.clone()))),
+            },
+            TyBuilder::Application {
+                ref constructor,
+                ref arguments,
+            } => Ty {
+                inner: Rc::new(RefCell::new(TyInner::Application {
+                    constructor: constructor.build(parameters),
+                    arguments: arguments.iter().rev().fold(
+                        Ty {
+                            inner: Rc::new(RefCell::new(TyInner::Nil)),
+                        },
+                        |tail, head| Ty {
+                            inner: Rc::new(RefCell::new(TyInner::Cons(
+                                head.build(parameters),
+                                tail,
+                            ))),
+                        },
+                    ),
+                })),
+            },
+            TyBuilder::Parameter(index) => parameters[index].clone(),
+        }
+    }
+}
+
+fn get_function_ty(
+    function: &Function,
+    function_definition: &[(FunctionTy, FunctionDefinition)],
+) -> Ty {
+    match *function {
+        Function::UserDefined(index) => function_definition[index].0.build(),
+        _ => todo!(),
+    }
+}
+
+fn get_ty(expression: &Expression, function_definition: &[(FunctionTy, FunctionDefinition)]) {
+    match expression {
+        Expression::Function { candidates, calls } => {
+            for candidate in candidates {
+                let ty = get_function_ty(candidate, function_definition);
+                for call in calls {
+                    match *ty.inner.borrow() {
+                        TyInner::Application {
+                            ref constructor,
+                            ref arguments,
+                        } => match *constructor.inner.borrow() {
+                            TyInner::Constructor(TyConstructor::Function) => {}
+                            _ => todo!(),
+                        },
+                        _ => todo!(),
+                    }
+                }
+            }
+        }
+        _ => todo!(),
+    }
 }

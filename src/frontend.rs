@@ -177,11 +177,7 @@ impl Reader {
                                 &file,
                                 &mut self.num_errors,
                             ) {
-                                let new_index = self.definitions.functions.len();
-                                self.definitions
-                                    .functions_ty
-                                    .insert(backend::Function::UserDefined(new_index), ty);
-                                self.definitions.functions.push(definition);
+                                self.definitions.functions.push((ty, definition));
                             }
                         }
                         ast::TopLevelStatement::Statement(statement) => {
