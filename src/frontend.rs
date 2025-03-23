@@ -151,7 +151,11 @@ impl Reader {
                 let mut num_global_variables = 0;
                 let mut global_scope = Vec::new();
                 let global_ty_parameters = HashMap::new();
-                let mut global_statements = Ok(Vec::new());
+                let mut translated_body = backend::Block {
+                    statements: Vec::new(),
+                    size: 0,
+                };
+                let mut translated_expressions = Vec::new();
                 for statement in ast.top_level_statements {
                     match statement {
                         ast::TopLevelStatement::StructureDefinition(structure_definition) => {
@@ -181,8 +185,10 @@ impl Reader {
                             }
                         }
                         ast::TopLevelStatement::Statement(statement) => {
-                            match translate_statement(
+                            translate_statement(
                                 statement,
+                                &mut translated_body,
+                                &mut translated_expressions,
                                 &mut global_variables,
                                 &mut num_global_variables,
                                 &mut global_scope,
@@ -192,16 +198,7 @@ impl Reader {
                                 &self.exported_items,
                                 &file,
                                 &mut self.num_errors,
-                            ) {
-                                Some(stmt) => {
-                                    if let Some(stmt) = stmt {
-                                        if let Ok(global_statements) = &mut global_statements {
-                                            global_statements.push(stmt);
-                                        }
-                                    }
-                                }
-                                None => global_statements = Err(()),
-                            }
+                            );
                         }
                     }
                 }
@@ -654,10 +651,16 @@ fn translate_function_definition(
         file.quote_pos(extra_tokens_pos);
         *num_errors += 1;
     }
-    let mut translated_body = Some(Vec::new());
+    let mut translated_body = backend::Block {
+        statements: Vec::new(),
+        size: 0,
+    };
+    let mut translated_expressions = Vec::new();
     for statement in body {
-        let translated_statement = translate_statement(
+        translate_statement(
             statement,
+            &mut translated_body,
+            &mut translated_expressions,
             &mut local_variables,
             &mut num_local_variables,
             &mut local_scope,
@@ -668,15 +671,6 @@ fn translate_function_definition(
             file,
             num_errors,
         );
-        match translated_statement {
-            Some(Some(statement)) => {
-                if let Some(translated_body) = &mut translated_body {
-                    translated_body.push(statement);
-                }
-            }
-            Some(None) => {}
-            None => translated_body = None,
-        }
     }
     Some((
         backend::FunctionTy {
@@ -686,13 +680,15 @@ fn translate_function_definition(
         },
         backend::FunctionDefinition {
             num_local_variables,
-            body: translated_body?,
+            body: translated_body,
         },
     ))
 }
 
 fn translate_statement(
     statement: ast::Statement,
+    target_block: &mut backend::Block,
+    target_expressions: &mut Vec<backend::Expression>,
     variables: &mut HashMap<String, usize>,
     num_variables: &mut usize,
     scope: &mut Vec<(String, Option<usize>)>,
@@ -702,7 +698,7 @@ fn translate_statement(
     exported_items: &Vec<HashMap<String, Item>>,
     file: &log::File,
     num_errors: &mut u32,
-) -> Option<Option<backend::Statement>> {
+) {
     match statement {
         ast::Statement::Term(term) => {
             let term_pos = term.pos.clone();
@@ -728,7 +724,9 @@ fn translate_statement(
                     num_errors,
                 ),
             };
-            Some(expr.map(backend::Statement::Expr))
+            if let Some(expr) = expr {
+                target_expressions.push(expr);
+            }
         }
         ast::Statement::VariableDeclaration {
             keyword_var_pos,
@@ -737,19 +735,18 @@ fn translate_statement(
             let Some(name) = term else {
                 eprintln!("Missing variable name after `var` at {}.", keyword_var_pos);
                 file.quote_pos(keyword_var_pos);
-                return None;
+                return;
             };
             match name.term {
                 ast::Term::Identifier(name) => {
                     let prev_index = variables.insert(name.clone(), *num_variables);
                     scope.push((name, prev_index));
                     *num_variables += 1;
-                    Some(None)
                 }
                 _ => {
                     eprintln!("Expected a variable name at {}.", name.pos);
                     file.quote_pos(name.pos);
-                    return None;
+                    return;
                 }
             }
         }
@@ -788,10 +785,16 @@ fn translate_statement(
                 None
             };
             let mut body_scope = Vec::new();
-            let mut translated_stmts = Some(Vec::new());
+            let mut translated_body = backend::Block {
+                statements: Vec::new(),
+                size: 0,
+            };
+            let mut translated_expressions = Vec::new();
             for stmt in body {
-                match translate_statement(
+                translate_statement(
                     stmt,
+                    &mut translated_body,
+                    &mut translated_expressions,
                     variables,
                     num_variables,
                     &mut body_scope,
@@ -801,16 +804,7 @@ fn translate_statement(
                     exported_items,
                     file,
                     num_errors,
-                ) {
-                    Some(stmt) => {
-                        if let Some(stmt) = stmt {
-                            if let Some(translated_stmts) = &mut translated_stmts {
-                                translated_stmts.push(stmt);
-                            }
-                        }
-                    }
-                    None => translated_stmts = None,
-                }
+                );
             }
             for (name, prev_index) in body_scope.into_iter().rev() {
                 match prev_index {
@@ -818,12 +812,23 @@ fn translate_statement(
                     None => variables.remove(&name),
                 };
             }
-            (|| {
-                Some(Some(backend::Statement::While(
-                    condition?,
-                    translated_stmts?,
-                )))
-            })()
+            if !target_expressions.is_empty() {
+                target_block.size += 1;
+                target_block
+                    .statements
+                    .push(backend::Statement::Expr(std::mem::take(target_expressions)));
+            }
+            if !translated_expressions.is_empty() {
+                translated_body.size += 1;
+                translated_body
+                    .statements
+                    .push(backend::Statement::Expr(translated_expressions));
+            }
+            target_block.size += translated_body.size + 1;
+            target_block.statements.push(backend::Statement::While(
+                condition.unwrap(),
+                translated_body,
+            ));
         }
     }
 }

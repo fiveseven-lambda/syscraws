@@ -94,7 +94,7 @@ pub enum Function {
 
 pub struct FunctionDefinition {
     pub num_local_variables: usize,
-    pub body: Vec<Statement>,
+    pub body: Block,
 }
 
 #[derive(Clone)]
@@ -229,10 +229,20 @@ fn rollback(history: &[Ty]) {
     }
 }
 
+pub struct Block {
+    pub statements: Vec<Statement>,
+    pub size: usize,
+}
+
 pub enum Statement {
-    Empty,
-    Expr(Expression),
-    While(Expression, Vec<Statement>),
+    Expr(Vec<Expression>),
+    If {
+        antecedents: Vec<Expression>,
+        condition: Expression,
+        then_block: Block,
+        else_block: Block,
+    },
+    While(Expression, Block),
 }
 
 pub enum Expression {
