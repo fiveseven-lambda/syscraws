@@ -16,54 +16,12 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 pub struct Definitions {
-    pub tys_kind: HashMap<TyConstructor, TyKind>,
-    pub structures: Vec<Structure>,
+    pub structures: Vec<(TyKind, Structure)>,
     pub functions: Vec<(FunctionTy, FunctionDefinition)>,
     pub num_global_variables: usize,
-}
-
-impl Definitions {
-    pub fn builtin() -> Definitions {
-        Definitions {
-            tys_kind: HashMap::from([
-                (TyConstructor::Integer, TyKind::Ty),
-                (TyConstructor::Float, TyKind::Ty),
-                (
-                    TyConstructor::Reference,
-                    TyKind::Abstraction {
-                        parameters: TyListKind::Cons(
-                            Box::new(TyKind::Ty),
-                            Box::new(TyListKind::Nil),
-                        ),
-                        ret: Box::new(TyKind::Ty),
-                    },
-                ),
-                (
-                    TyConstructor::Tuple,
-                    TyKind::Abstraction {
-                        parameters: TyListKind::Rest,
-                        ret: Box::new(TyKind::Ty),
-                    },
-                ),
-                (
-                    TyConstructor::Function,
-                    TyKind::Abstraction {
-                        parameters: TyListKind::Cons(
-                            Box::new(TyKind::Ty),
-                            Box::new(TyListKind::Rest),
-                        ),
-                        ret: Box::new(TyKind::Ty),
-                    },
-                ),
-            ]),
-            structures: Vec::new(),
-            functions: Vec::new(),
-            num_global_variables: 0,
-        }
-    }
 }
 
 pub struct Structure {
@@ -242,7 +200,10 @@ pub enum Statement {
         then_block: Block,
         else_block: Block,
     },
-    While(Expression, Block),
+    While {
+        condition: Expression,
+        do_block: Block,
+    },
 }
 
 pub enum Expression {

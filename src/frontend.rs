@@ -42,7 +42,16 @@ pub fn read_input(root_file_path: &Path) -> Result<backend::Definitions, ()> {
     let mut reader = Reader {
         num_structures: 0,
         num_functions: 0,
-        definitions: backend::Definitions::builtin(),
+        definitions: backend::Definitions {
+            structures: Vec::new(),
+            functions: Vec::new(),
+            num_global_variables: 0,
+        },
+        global_block: backend::Block {
+            statements: Vec::new(),
+            size: 0,
+        },
+        global_expressions: Vec::new(),
         exported_items: Vec::new(),
         files: Vec::new(),
         file_indices: HashMap::new(),
@@ -78,6 +87,8 @@ struct Reader {
      * The target which [`Reader::read_file`] stores the results in.
      */
     definitions: backend::Definitions,
+    global_block: backend::Block,
+    global_expressions: Vec<backend::Expression>,
     /**
      * Items exported from each file.
      */
@@ -151,11 +162,6 @@ impl Reader {
                 let mut num_global_variables = 0;
                 let mut global_scope = Vec::new();
                 let global_ty_parameters = HashMap::new();
-                let mut translated_body = backend::Block {
-                    statements: Vec::new(),
-                    size: 0,
-                };
-                let mut translated_expressions = Vec::new();
                 for statement in ast.top_level_statements {
                     match statement {
                         ast::TopLevelStatement::StructureDefinition(structure_definition) => {
@@ -166,11 +172,7 @@ impl Reader {
                                 &file,
                                 &mut self.num_errors,
                             );
-                            let new_index = self.definitions.structures.len();
-                            self.definitions
-                                .tys_kind
-                                .insert(backend::TyConstructor::Structure(new_index), kind);
-                            self.definitions.structures.push(definition);
+                            self.definitions.structures.push((kind, definition));
                         }
                         ast::TopLevelStatement::FunctionDefinition(function_definition) => {
                             if let Some((ty, definition)) = translate_function_definition(
@@ -187,8 +189,8 @@ impl Reader {
                         ast::TopLevelStatement::Statement(statement) => {
                             translate_statement(
                                 statement,
-                                &mut translated_body,
-                                &mut translated_expressions,
+                                &mut self.global_block,
+                                &mut self.global_expressions,
                                 &mut global_variables,
                                 &mut num_global_variables,
                                 &mut global_scope,
@@ -750,10 +752,97 @@ fn translate_statement(
                 }
             }
         }
+        ast::Statement::If {
+            keyword_if_pos,
+            extra_tokens_pos,
+            condition: ast_condition,
+            then_block: ast_then_block,
+            else_block: ast_else_block,
+        } => {
+            let condition = if let Some(expr) = ast_condition {
+                translate_expression(
+                    expr,
+                    named_items,
+                    ty_parameters,
+                    global_variables.map(|_| &*variables),
+                    global_variables.unwrap_or(&variables),
+                    exported_items,
+                    file,
+                    num_errors,
+                )
+            } else {
+                todo!();
+            };
+            let mut then_scope = Vec::new();
+            let mut then_block = backend::Block {
+                statements: Vec::new(),
+                size: 0,
+            };
+            let mut then_expressions = Vec::new();
+            for stmt in ast_then_block {
+                translate_statement(
+                    stmt,
+                    &mut then_block,
+                    &mut then_expressions,
+                    variables,
+                    num_variables,
+                    &mut then_scope,
+                    ty_parameters,
+                    global_variables,
+                    named_items,
+                    exported_items,
+                    file,
+                    num_errors,
+                );
+            }
+            if !then_expressions.is_empty() {
+                then_block.size += 1;
+                then_block
+                    .statements
+                    .push(backend::Statement::Expr(then_expressions));
+            }
+            let mut else_scope = Vec::new();
+            let mut else_block = backend::Block {
+                statements: Vec::new(),
+                size: 0,
+            };
+            let mut else_expressions = Vec::new();
+            if let Some(ast_else_block) = ast_else_block {
+                for stmt in ast_else_block {
+                    translate_statement(
+                        stmt,
+                        &mut else_block,
+                        &mut else_expressions,
+                        variables,
+                        num_variables,
+                        &mut else_scope,
+                        ty_parameters,
+                        global_variables,
+                        named_items,
+                        exported_items,
+                        file,
+                        num_errors,
+                    );
+                }
+                if !else_expressions.is_empty() {
+                    else_block.size += 1;
+                    else_block
+                        .statements
+                        .push(backend::Statement::Expr(else_expressions));
+                }
+            }
+            target_block.size += then_block.size + else_block.size + 1;
+            target_block.statements.push(backend::Statement::If {
+                antecedents: std::mem::take(target_expressions),
+                condition: condition.unwrap(),
+                then_block,
+                else_block,
+            });
+        }
         ast::Statement::While {
             keyword_while_pos,
             condition,
-            body,
+            do_block: body,
         } => {
             let condition = if let Some(condition) = condition {
                 let condition_pos = condition.pos.clone();
@@ -825,10 +914,10 @@ fn translate_statement(
                     .push(backend::Statement::Expr(translated_expressions));
             }
             target_block.size += translated_body.size + 1;
-            target_block.statements.push(backend::Statement::While(
-                condition.unwrap(),
-                translated_body,
-            ));
+            target_block.statements.push(backend::Statement::While {
+                condition: condition.unwrap(),
+                do_block: translated_body,
+            });
         }
     }
 }

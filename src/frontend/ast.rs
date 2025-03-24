@@ -203,7 +203,17 @@ pub enum Statement {
         /**
          * The body.
          */
-        body: Vec<Statement>,
+        do_block: Vec<Statement>,
+    },
+    If {
+        keyword_if_pos: Pos,
+        /**
+         * [`Pos`] of extra tokens after `if`.
+         */
+        extra_tokens_pos: Option<Pos>,
+        condition: Option<TermWithPos>,
+        then_block: Vec<Statement>,
+        else_block: Option<Vec<Statement>>,
     },
 }
 
@@ -808,6 +818,9 @@ impl Parser<'_, '_> {
     ) -> Result<Option<Statement>, ParseError> {
         if let Some(Token::KeywordVar) = self.current.token {
             self.parse_variable_declaration().map(Option::Some)
+        } else if let Some(Token::KeywordIf) = self.current.token {
+            self.parse_if_statement(start_line_indices)
+                .map(Option::Some)
         } else if let Some(Token::KeywordWhile) = self.current.token {
             self.parse_while_statement(start_line_indices)
                 .map(Option::Some)
@@ -848,6 +861,44 @@ impl Parser<'_, '_> {
         })
     }
 
+    fn parse_if_statement(
+        &mut self,
+        start_line_indices: &mut Vec<usize>,
+    ) -> Result<Statement, ParseError> {
+        let keyword_if_pos = self.current_pos();
+        self.consume_token()?;
+
+        // The condition should immediately follow `if`, without line break.
+        let condition = if self.current.is_on_new_line {
+            None
+        } else {
+            self.parse_disjunction(false)?
+        };
+
+        let extra_tokens_pos = self.consume_line()?;
+
+        start_line_indices.push(keyword_if_pos.line());
+        let then_block = self.parse_block(start_line_indices)?;
+        start_line_indices.pop();
+
+        let else_block;
+        if let Some(Token::KeywordElse) = self.current.token {
+            start_line_indices.push(keyword_if_pos.line());
+            else_block = Some(self.parse_block(start_line_indices)?);
+            start_line_indices.pop();
+        } else {
+            else_block = None;
+        }
+
+        Ok(Statement::If {
+            keyword_if_pos,
+            extra_tokens_pos,
+            condition,
+            then_block,
+            else_block,
+        })
+    }
+
     /**
      * Parses a while statement ([`Statement::While`]).
      *
@@ -878,12 +929,12 @@ impl Parser<'_, '_> {
         }
 
         start_line_indices.push(keyword_while_pos.line());
-        let body = self.parse_block(start_line_indices)?;
+        let do_block = self.parse_block(start_line_indices)?;
         start_line_indices.pop();
         Ok(Statement::While {
             keyword_while_pos,
             condition,
-            body,
+            do_block,
         })
     }
 
