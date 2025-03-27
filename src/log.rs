@@ -181,10 +181,6 @@ pub enum ParseError {
         unexpected_token_pos: Pos,
         start_line_indices: Vec<usize>,
     },
-    ExtraTokenAfterLine {
-        extra_token_pos: Pos,
-        line_pos: Pos,
-    },
     UnexpectedTokenAfterDot {
         unexpected_token_pos: Pos,
         dot_pos: Pos,
@@ -275,13 +271,6 @@ impl ParseError {
                 );
                 file.quote_pos(keyword_func_pos);
             }
-            ParseError::ExtraTokenAfterLine {
-                extra_token_pos,
-                line_pos: _,
-            } => {
-                eprintln!("An extra token at {}.", extra_token_pos);
-                file.quote_pos(extra_token_pos);
-            }
             ParseError::UnclosedBlock { start_line_indices } => {
                 eprintln!("Unexpected end of file. Blocks opened at:");
                 for &line_index in &start_line_indices {
@@ -347,6 +336,11 @@ impl ParseError {
             }
         }
     }
+}
+
+pub fn extra_tokens(pos: Pos, file: &File) {
+    eprintln!("Extra tokens at {}.", pos);
+    file.quote_pos(pos);
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

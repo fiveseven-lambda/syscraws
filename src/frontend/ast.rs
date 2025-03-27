@@ -32,7 +32,7 @@ pub struct File {
     /**
      * List of import statements in the file.
      */
-    pub imports: Vec<Import>,
+    pub imports: Vec<WithExtraTokens<Import>>,
     /**
      * List of structure names defined in the file.
      */
@@ -44,7 +44,19 @@ pub struct File {
     /**
      * Top-level statements in the file (includes function definitions).
      */
-    pub top_level_statements: Vec<TopLevelStatement>,
+    pub top_level_statements: Vec<WithExtraTokens<TopLevelStatement>>,
+}
+
+/**
+ * A parsed item that may contain extra tokens following its valid construct
+ * on the same line.
+ */
+pub struct WithExtraTokens<T> {
+    pub content: T,
+    /**
+     * [`Pos`] of extra tokens, if any. `None` if there are no extra tokens.
+     */
+    pub extra_tokens_pos: Option<Pos>,
 }
 
 /**
@@ -52,32 +64,41 @@ pub struct File {
  */
 pub struct Import {
     /**
-     * Position of the keyword `import` at the beginning.
+     * [`Pos`] of the keyword `import`.
      */
     pub keyword_import_pos: Pos,
     /**
      * The target to import.
      */
     pub target: Option<TermWithPos>,
-    pub extra_tokens_pos: Option<Pos>,
 }
 
 /**
  * A structure name in the AST.
  */
 pub struct StructureName {
+    /**
+     * [`Pos`] of the keyword `struct`.
+     */
     pub keyword_struct_pos: Pos,
+    /**
+     * The structure name.
+     */
     pub name: Option<String>,
-    pub extra_tokens_pos: Option<Pos>,
 }
 
 /**
  * A function name in the AST.
  */
 pub struct FunctionName {
+    /**
+     * [`Pos`] of the keyword `func`.
+     */
     pub keyword_func_pos: Pos,
+    /**
+     * The function name.
+     */
     pub name: Option<String>,
-    pub extra_tokens_pos: Option<Pos>,
 }
 
 /**
@@ -107,21 +128,15 @@ pub struct StructureDefinition {
      */
     pub ty_parameters: Option<Vec<ListElement>>,
     /**
+     * [`Pos`] of extra tokens if any appear on the same line after the
+     * keyword `struct`, optional struct name, and optional type parameter
+     * list.
+     */
+    pub extra_tokens_pos: Option<Pos>,
+    /**
      * List of fields of the structure.
      */
-    pub fields: Vec<StructureField>,
-    /**
-     * [`Pos`] of extra tokens after `end`.
-     */
-    pub extra_tokens_pos: Option<Pos>,
-}
-
-/**
- * A structure field in the AST.
- */
-pub struct StructureField {
-    pub field: TermWithPos,
-    pub extra_tokens_pos: Option<Pos>,
+    pub fields: Vec<WithExtraTokens<TermWithPos>>,
 }
 
 /**
@@ -144,13 +159,15 @@ pub struct FunctionDefinition {
      */
     pub return_ty: Option<ReturnType>,
     /**
-     * Body of the function.
-     */
-    pub body: Vec<Statement>,
-    /**
-     * [`Pos`] of extra tokens after `end`.
+     * [`Pos`] of extra tokens if any appear on the same line after the
+     * keyword `func`, optional function name, optional type parameter list,
+     * optional parameter list, and optional return type.
      */
     pub extra_tokens_pos: Option<Pos>,
+    /**
+     * Body of the function.
+     */
+    pub body: Vec<WithExtraTokens<Statement>>,
 }
 
 /**
@@ -158,7 +175,7 @@ pub struct FunctionDefinition {
  */
 pub struct ReturnType {
     /**
-     * Position of `:`.
+     * [`Pos`] of `:`.
      */
     pub colon_pos: Pos,
     /**
@@ -201,20 +218,32 @@ pub enum Statement {
          */
         condition: Option<TermWithPos>,
         /**
+         * [`Pos`] of extra tokens if any appear on the same line after
+         * `while` and optional condition.
+         */
+        extra_tokens_pos: Option<Pos>,
+        /**
          * The body.
          */
-        do_block: Vec<Statement>,
+        do_block: Vec<WithExtraTokens<Statement>>,
     },
     If {
         keyword_if_pos: Pos,
+        condition: Option<TermWithPos>,
         /**
-         * [`Pos`] of extra tokens after `if`.
+         * [`Pos`] of extra tokens if any appear on the same line after `if`
+         * and optional condition.
          */
         extra_tokens_pos: Option<Pos>,
-        condition: Option<TermWithPos>,
-        then_block: Vec<Statement>,
-        else_block: Option<Vec<Statement>>,
+        then_block: Vec<WithExtraTokens<Statement>>,
+        else_block: Option<ElseBlock>,
     },
+}
+
+pub struct ElseBlock {
+    pub keyword_else_pos: Pos,
+    pub extra_tokens_pos: Option<Pos>,
+    pub block: Vec<WithExtraTokens<Statement>>,
 }
 
 /**
@@ -367,20 +396,30 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
     };
     while let Some(item_start_token) = &mut parser.current.token {
         if let Token::KeywordImport = item_start_token {
-            file.imports.push(parser.parse_import()?);
+            let import = parser.parse_import()?;
+            file.imports.push(WithExtraTokens {
+                content: import,
+                extra_tokens_pos: parser.consume_line()?,
+            });
         } else if let Token::KeywordStruct = item_start_token {
             let (name, definition) = parser.parse_structure_definition()?;
             file.structure_names.push(name);
-            file.top_level_statements
-                .push(TopLevelStatement::StructureDefinition(definition));
+            file.top_level_statements.push(WithExtraTokens {
+                content: TopLevelStatement::StructureDefinition(definition),
+                extra_tokens_pos: parser.consume_line()?,
+            });
         } else if let Token::KeywordFunc = item_start_token {
             let (name, definition) = parser.parse_function_definition()?;
             file.function_names.push(name);
-            file.top_level_statements
-                .push(TopLevelStatement::FunctionDefinition(definition));
+            file.top_level_statements.push(WithExtraTokens {
+                content: TopLevelStatement::FunctionDefinition(definition),
+                extra_tokens_pos: parser.consume_line()?,
+            });
         } else if let Some(statement) = parser.parse_statement(&mut Vec::new())? {
-            file.top_level_statements
-                .push(TopLevelStatement::Statement(statement));
+            file.top_level_statements.push(WithExtraTokens {
+                content: TopLevelStatement::Statement(statement),
+                extra_tokens_pos: parser.consume_line()?,
+            });
         } else {
             return Err(ParseError::UnexpectedToken(parser.current_pos()));
         }
@@ -527,12 +566,9 @@ impl Parser<'_, '_> {
             self.parse_factor(false)?
         };
 
-        let extra_tokens_pos = self.consume_line()?;
-
         Ok(Import {
             keyword_import_pos,
             target,
-            extra_tokens_pos,
         })
     }
 
@@ -597,8 +633,8 @@ impl Parser<'_, '_> {
                 break;
             } else if let Some(field) = self.parse_factor(false)? {
                 let extra_tokens_pos = self.consume_line()?;
-                fields.push(StructureField {
-                    field,
+                fields.push(WithExtraTokens {
+                    content: field,
                     extra_tokens_pos,
                 });
             } else if self.current.token.is_some() {
@@ -613,18 +649,15 @@ impl Parser<'_, '_> {
             }
         }
 
-        let extra_tokens_after_end = self.consume_line()?;
-
         Ok((
             StructureName {
                 name,
                 keyword_struct_pos,
-                extra_tokens_pos: extra_tokens_after_name_and_ty_parameters,
             },
             StructureDefinition {
                 ty_parameters,
                 fields,
-                extra_tokens_pos: extra_tokens_after_end,
+                extra_tokens_pos: extra_tokens_after_name_and_ty_parameters,
             },
         ))
     }
@@ -745,20 +778,17 @@ impl Parser<'_, '_> {
         // The function body follows.
         let body = self.parse_block(&mut vec![keyword_func_pos.line()])?;
 
-        let extra_tokens_after_end = self.consume_line()?;
-
         Ok((
             FunctionName {
                 keyword_func_pos,
                 name,
-                extra_tokens_pos: extra_tokens_after_signature,
             },
             FunctionDefinition {
                 parameters,
                 ty_parameters,
                 return_ty,
                 body,
-                extra_tokens_pos: extra_tokens_after_end,
+                extra_tokens_pos: extra_tokens_after_signature,
             },
         ))
     }
@@ -772,26 +802,23 @@ impl Parser<'_, '_> {
      *   [`ParseError::UnclosedBlock`]\: Invalid token / EOF encountered
      *   after zero or more statements: expected either `end` or a token
      *   that is valid as the beginning of a statement.
-     * - [`ParseError::ExtraTokenAfterLine`]\: An extra token after `end`.
      */
     fn parse_block(
         &mut self,
         start_line_indices: &mut Vec<usize>,
-    ) -> Result<Vec<Statement>, ParseError> {
+    ) -> Result<Vec<WithExtraTokens<Statement>>, ParseError> {
         let mut body = Vec::new();
         loop {
             if let Some(Token::KeywordEnd) = self.current.token {
-                let keyword_end_pos = self.current_pos();
+                self.current_pos();
                 self.consume_token()?;
-                if !self.current.is_on_new_line && self.current.token.is_some() {
-                    return Err(ParseError::ExtraTokenAfterLine {
-                        extra_token_pos: self.current_pos(),
-                        line_pos: keyword_end_pos,
-                    });
-                }
                 return Ok(body);
             } else if let Some(statement) = self.parse_statement(start_line_indices)? {
-                body.push(statement);
+                let extra_tokens_pos = self.consume_line()?;
+                body.push(WithExtraTokens {
+                    content: statement,
+                    extra_tokens_pos,
+                });
             } else if self.current.token.is_some() {
                 return Err(ParseError::UnexpectedTokenInBlock {
                     unexpected_token_pos: self.current_pos(),
@@ -807,10 +834,6 @@ impl Parser<'_, '_> {
 
     /**
      * Parses a [`Statement`].
-     *
-     * # Errors
-     * - [`ParseError::ExtraTokenAfterLine`]\: An extra token after a term
-     *   statement ([`Statement::Term`]).
      */
     fn parse_statement(
         &mut self,
@@ -825,13 +848,6 @@ impl Parser<'_, '_> {
             self.parse_while_statement(start_line_indices)
                 .map(Option::Some)
         } else if let Some(term) = self.parse_assign(false)? {
-            // A term immediately followed by a line break can be a statement.
-            if !self.current.is_on_new_line && self.current.token.is_some() {
-                return Err(ParseError::ExtraTokenAfterLine {
-                    extra_token_pos: self.current_pos(),
-                    line_pos: term.pos,
-                });
-            }
             Ok(Some(Statement::Term(term)))
         } else {
             Ok(None)
@@ -840,21 +856,11 @@ impl Parser<'_, '_> {
 
     /**
      * Parses a [`Statement::VariableDeclaration`].
-     *
-     * # Errors
-     * - [`ParseError::ExtraTokenAfterLine`]\: An extra token after the
-     *   declaration.
      */
     fn parse_variable_declaration(&mut self) -> Result<Statement, ParseError> {
         let keyword_var_pos = self.current_pos();
         self.consume_token()?;
         let term = self.parse_assign(false)?;
-        if !self.current.is_on_new_line && self.current.token.is_some() {
-            return Err(ParseError::ExtraTokenAfterLine {
-                extra_token_pos: self.current_pos(),
-                line_pos: self.range_from(keyword_var_pos.start),
-            });
-        }
         Ok(Statement::VariableDeclaration {
             keyword_var_pos,
             term,
@@ -875,7 +881,7 @@ impl Parser<'_, '_> {
             self.parse_disjunction(false)?
         };
 
-        let extra_tokens_pos = self.consume_line()?;
+        let extra_tokens_pos_after_keyword_if = self.consume_line()?;
 
         start_line_indices.push(keyword_if_pos.line());
         let then_block = self.parse_block(start_line_indices)?;
@@ -884,7 +890,15 @@ impl Parser<'_, '_> {
         let else_block;
         if let Some(Token::KeywordElse) = self.current.token {
             start_line_indices.push(keyword_if_pos.line());
-            else_block = Some(self.parse_block(start_line_indices)?);
+            let keyword_else_pos = self.current_pos();
+            self.consume_token()?;
+            let extra_tokens_pos_after_keyword_else = self.consume_line()?;
+            let block = self.parse_block(start_line_indices)?;
+            else_block = Some(ElseBlock {
+                keyword_else_pos,
+                extra_tokens_pos: extra_tokens_pos_after_keyword_else,
+                block,
+            });
             start_line_indices.pop();
         } else {
             else_block = None;
@@ -892,7 +906,7 @@ impl Parser<'_, '_> {
 
         Ok(Statement::If {
             keyword_if_pos,
-            extra_tokens_pos,
+            extra_tokens_pos: extra_tokens_pos_after_keyword_if,
             condition,
             then_block,
             else_block,
@@ -901,10 +915,6 @@ impl Parser<'_, '_> {
 
     /**
      * Parses a while statement ([`Statement::While`]).
-     *
-     * # Errors
-     * - [`ParseError::ExtraTokenAfterLine`]\: An extra token after `while`
-     *   or the condition.
      */
     fn parse_while_statement(
         &mut self,
@@ -921,19 +931,16 @@ impl Parser<'_, '_> {
         };
 
         // A line break is required right after the condition.
-        if !self.current.is_on_new_line && self.current.token.is_some() {
-            return Err(ParseError::ExtraTokenAfterLine {
-                extra_token_pos: self.current_pos(),
-                line_pos: self.range_from(keyword_while_pos.start),
-            });
-        }
+        let extra_tokens_pos = self.consume_line()?;
 
         start_line_indices.push(keyword_while_pos.line());
         let do_block = self.parse_block(start_line_indices)?;
         start_line_indices.pop();
+
         Ok(Statement::While {
             keyword_while_pos,
             condition,
+            extra_tokens_pos,
             do_block,
         })
     }
