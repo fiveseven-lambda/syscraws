@@ -23,12 +23,17 @@ use std::fmt::{self, Debug, Formatter};
 
 impl Debug for backend::Definitions {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut f = f.debug_struct("Definitions");
         for (i, (kind, definition)) in self.structures.iter().enumerate() {
-            f.field(&format!("S{i}Kind"), kind);
-            f.field(&format!("S{i}Definition"), definition);
+            writeln!(f, "S{i}: {kind:?}")?;
+            for (j, field_ty) in definition.fields_ty.iter().enumerate() {
+                writeln!(f, "S{i}.{j}: {field_ty:?}")?;
+            }
         }
-        f.finish()
+        for (i, (ty, definition)) in self.functions.iter().enumerate() {
+            writeln!(f, "F{i}{ty:?}")?;
+            writeln!(f, "{definition:?}")?;
+        }
+        Ok(())
     }
 }
 
@@ -53,16 +58,6 @@ impl Debug for backend::TyListKind {
             },
             backend::TyListKind::Rest => write!(f, ".."),
         }
-    }
-}
-
-impl Debug for backend::Structure {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut f = f.debug_struct("Structure");
-        for (i, field_ty) in self.fields_ty.iter().enumerate() {
-            f.field(&format!("Field{i}"), field_ty);
-        }
-        f.finish()
     }
 }
 
@@ -102,12 +97,132 @@ impl Debug for backend::TyConstructor {
     }
 }
 
+impl Debug for backend::FunctionTy {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "({}): {:?}",
+            self.parameters_ty
+                .iter()
+                .map(|parameter_ty| format!("{parameter_ty:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.return_ty
+        )
+    }
+}
+
+impl Debug for backend::FunctionDefinition {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#?}", self.body)
+    }
+}
+
+impl Debug for backend::Block {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut f = f.debug_struct("Block");
+        f.field("size", &self.size);
+        for (i, statement) in self.statements.iter().enumerate() {
+            f.field(&format!("{i}"), statement);
+        }
+        f.finish()
+    }
+}
+
+impl Debug for backend::Statement {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            backend::Statement::Expr(expr) => {
+                let mut f = f.debug_struct("Expr");
+                for (i, expr) in expr.iter().enumerate() {
+                    f.field(&format!("{i}"), expr);
+                }
+                f.finish()
+            }
+            backend::Statement::If {
+                antecedents,
+                condition,
+                then_block,
+                else_block,
+            } => {
+                let mut f = f.debug_struct("If");
+                for (i, expr) in antecedents.iter().enumerate() {
+                    f.field(&format!("{i}"), expr);
+                }
+                f.field("condition", condition);
+                f.field("then", then_block);
+                f.field("else", else_block);
+                f.finish()
+            }
+            backend::Statement::While {
+                condition,
+                do_block,
+            } => {
+                let mut f = f.debug_struct("While");
+                f.field("condition", condition);
+                f.field("do", do_block);
+                f.finish()
+            }
+        }
+    }
+}
+
+impl Debug for backend::Expression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            backend::Expression::GlobalVariable(index) => write!(f, "G{index}"),
+            backend::Expression::LocalVariable(index) => write!(f, "L{index}"),
+            backend::Expression::Function { candidates, calls } => {
+                write!(
+                    f,
+                    "<{}>",
+                    candidates
+                        .iter()
+                        .map(|candidate| format!("{candidate:?}"))
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                )?;
+                for backend::Call { arguments } in calls {
+                    write!(
+                        f,
+                        "({})",
+                        arguments
+                            .iter()
+                            .map(|argument| format!("{argument:?}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Debug for backend::Function {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            backend::Function::IAdd => write!(f, "IAdd"),
+            backend::Function::Deref => write!(f, "Deref"),
+            backend::Function::UserDefined(index) => write!(f, "F{index}"),
+            backend::Function::Field {
+                structure_index,
+                field_index,
+            } => write!(f, "S{structure_index}.{field_index}"),
+            backend::Function::FieldRef {
+                structure_index,
+                field_index,
+            } => write!(f, "S{structure_index}.{field_index}"),
+        }
+    }
+}
+
 #[test]
 fn test() {
-    for &dir_name in &["struct"] {
+    for &dir_name in &["struct", "if_else"] {
         let dir = Path::new("tests/frontend").join(dir_name);
         let definitions = read_input(&dir.join("input")).unwrap();
-        let output = format!("{definitions:#?}");
+        let output = format!("{definitions:?}");
         let expected = std::fs::read_to_string(dir.join("expected.txt")).unwrap();
         if output != expected {
             panic!("{output}\n{expected}")

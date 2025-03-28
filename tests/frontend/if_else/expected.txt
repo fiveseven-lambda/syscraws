@@ -1,0 +1,32 @@
+F0(Integer, Integer, Integer): Tuple[]
+Block {
+    size: 5,
+    0: If {
+        0: <Deref>(L0),
+        condition: <Deref>(L1),
+        then: Block {
+            size: 1,
+            0: Expr {
+                0: <Deref>(L2),
+            },
+        },
+        else: Block {
+            size: 0,
+        },
+    },
+    1: If {
+        condition: <Deref>(L0),
+        then: Block {
+            size: 1,
+            0: Expr {
+                0: <Deref>(L1),
+            },
+        },
+        else: Block {
+            size: 1,
+            0: Expr {
+                0: <Deref>(L2),
+            },
+        },
+    },
+}
