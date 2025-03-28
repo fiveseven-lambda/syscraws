@@ -18,6 +18,7 @@
 
 mod ast;
 mod chars_peekable;
+mod tests;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;

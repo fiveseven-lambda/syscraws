@@ -1,0 +1,12 @@
+Definitions {
+    S0Kind: *,
+    S0Definition: Structure {
+        Field0: Integer,
+        Field1: S1[Integer],
+    },
+    S1Kind: (*): *,
+    S1Definition: Structure {
+        Field0: Float,
+        Field1: S0,
+    },
+}
