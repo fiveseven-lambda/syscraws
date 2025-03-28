@@ -567,7 +567,10 @@ fn translate_function_definition(
                     match ast_parameter_name.term {
                         ast::Term::Identifier(name) => match local_variables.entry(name.clone()) {
                             std::collections::hash_map::Entry::Occupied(_) => {
-                                eprintln!("Duplicate parameter name at {}.", ast_parameter_name.pos);
+                                eprintln!(
+                                    "Duplicate parameter name at {}.",
+                                    ast_parameter_name.pos
+                                );
                                 file.quote_pos(ast_parameter_name.pos);
                             }
                             std::collections::hash_map::Entry::Vacant(entry) => {

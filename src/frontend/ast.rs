@@ -637,13 +637,9 @@ impl Parser<'_, '_> {
                     content: field,
                     extra_tokens_pos,
                 });
-            } else if self.current.token.is_some() {
-                return Err(ParseError::UnexpectedTokenInBlock {
-                    unexpected_token_pos: self.current_pos(),
-                    start_line_indices: vec![keyword_struct_pos.line()],
-                });
             } else {
                 return Err(ParseError::UnclosedBlock {
+                    pos: self.current_pos(),
                     start_line_indices: vec![keyword_struct_pos.line()],
                 });
             }
@@ -776,7 +772,15 @@ impl Parser<'_, '_> {
         let extra_tokens_after_signature = self.consume_line()?;
 
         // The function body follows.
-        let body = self.parse_block(&mut vec![keyword_func_pos.line()])?;
+        let mut start_line_indices = vec![keyword_func_pos.line()];
+        let body = self.parse_block(&mut start_line_indices)?;
+        if !matches!(self.current.token, Some(Token::KeywordEnd)) {
+            return Err(ParseError::UnclosedBlock {
+                pos: self.current_pos(),
+                start_line_indices,
+            });
+        }
+        self.consume_token()?;
 
         Ok((
             FunctionName {
@@ -796,12 +800,6 @@ impl Parser<'_, '_> {
     /**
      * Parses a block consisting of zero or more statements and a keyword
      * `end`.
-     *
-     * # Errors
-     * - [`ParseError::UnexpectedTokenInBlock`] /
-     *   [`ParseError::UnclosedBlock`]\: Invalid token / EOF encountered
-     *   after zero or more statements: expected either `end` or a token
-     *   that is valid as the beginning of a statement.
      */
     fn parse_block(
         &mut self,
@@ -809,25 +807,12 @@ impl Parser<'_, '_> {
     ) -> Result<Vec<WithExtraTokens<Statement>>, ParseError> {
         let mut body = Vec::new();
         loop {
-            if let Some(Token::KeywordEnd) = self.current.token {
-                self.current_pos();
-                self.consume_token()?;
-                return Ok(body);
-            } else if let Some(statement) = self.parse_statement(start_line_indices)? {
-                let extra_tokens_pos = self.consume_line()?;
-                body.push(WithExtraTokens {
+            match self.parse_statement(start_line_indices)? {
+                Some(statement) => body.push(WithExtraTokens {
                     content: statement,
-                    extra_tokens_pos,
-                });
-            } else if self.current.token.is_some() {
-                return Err(ParseError::UnexpectedTokenInBlock {
-                    unexpected_token_pos: self.current_pos(),
-                    start_line_indices: std::mem::take(start_line_indices),
-                });
-            } else {
-                return Err(ParseError::UnclosedBlock {
-                    start_line_indices: std::mem::take(start_line_indices),
-                });
+                    extra_tokens_pos: self.consume_line()?,
+                }),
+                None => return Ok(body),
             }
         }
     }
@@ -885,24 +870,39 @@ impl Parser<'_, '_> {
 
         start_line_indices.push(keyword_if_pos.line());
         let then_block = self.parse_block(start_line_indices)?;
-        start_line_indices.pop();
-
-        let else_block;
-        if let Some(Token::KeywordElse) = self.current.token {
-            start_line_indices.push(keyword_if_pos.line());
-            let keyword_else_pos = self.current_pos();
-            self.consume_token()?;
-            let extra_tokens_pos_after_keyword_else = self.consume_line()?;
-            let block = self.parse_block(start_line_indices)?;
-            else_block = Some(ElseBlock {
-                keyword_else_pos,
-                extra_tokens_pos: extra_tokens_pos_after_keyword_else,
-                block,
-            });
-            start_line_indices.pop();
-        } else {
-            else_block = None;
-        }
+        let else_block = match self.current.token {
+            Some(Token::KeywordEnd) => {
+                self.consume_token()?;
+                start_line_indices.pop();
+                None
+            }
+            Some(Token::KeywordElse) => {
+                start_line_indices.push(keyword_if_pos.line());
+                let keyword_else_pos = self.current_pos();
+                self.consume_token()?;
+                let extra_tokens_pos_after_keyword_else = self.consume_line()?;
+                let block = self.parse_block(start_line_indices)?;
+                if !matches!(self.current.token, Some(Token::KeywordEnd)) {
+                    return Err(ParseError::UnclosedBlock {
+                        pos: self.current_pos(),
+                        start_line_indices: std::mem::take(start_line_indices),
+                    });
+                }
+                self.consume_token()?;
+                start_line_indices.pop();
+                Some(ElseBlock {
+                    keyword_else_pos,
+                    extra_tokens_pos: extra_tokens_pos_after_keyword_else,
+                    block,
+                })
+            }
+            _ => {
+                return Err(ParseError::UnclosedBlock {
+                    pos: self.current_pos(),
+                    start_line_indices: std::mem::take(start_line_indices),
+                })
+            }
+        };
 
         Ok(Statement::If {
             keyword_if_pos,
@@ -935,6 +935,13 @@ impl Parser<'_, '_> {
 
         start_line_indices.push(keyword_while_pos.line());
         let do_block = self.parse_block(start_line_indices)?;
+        if !matches!(self.current.token, Some(Token::KeywordEnd)) {
+            return Err(ParseError::UnclosedBlock {
+                pos: self.current_pos(),
+                start_line_indices: std::mem::take(start_line_indices),
+            });
+        }
+        self.consume_token()?;
         start_line_indices.pop();
 
         Ok(Statement::While {
