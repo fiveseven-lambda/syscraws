@@ -446,16 +446,15 @@ impl<'str, 'iter> Parser<'str, 'iter> {
     /**
      * Creates a new [`Parser`] from the given [`CharsPeekable`].
      *
-     * It calls [`read_token`] and sets [`Self::current`] to point to the
-     * first token.
+     * It calls [`read_token`] once and sets [`Self::current`] to point to
+     * the first token.
      */
     fn new(iter: &'iter mut CharsPeekable<'str>) -> Result<Parser<'str, 'iter>, ParseError> {
-        let start = iter.index();
-        let first_token = read_token(iter, false)?;
+        let first_token = read_token(iter, true)?;
         Ok(Parser {
             iter,
             current: first_token,
-            prev_end: start,
+            prev_end: Index { line: 0, column: 0 },
         })
     }
 }
@@ -1538,7 +1537,15 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
                                 ch => format.push(ch),
                             }
                         }
-                        let mut parser = Parser::new(iter)?;
+                        let mut parser = {
+                            let start = iter.index();
+                            let first_token = read_token(iter, false)?;
+                            Parser {
+                                iter,
+                                current: first_token,
+                                prev_end: start,
+                            }
+                        };
                         let value = parser.parse_disjunction(true)?;
                         match parser.current.token {
                             Some(Token::ClosingBrace) => {

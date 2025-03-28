@@ -148,6 +148,34 @@ fn skip_comments() {
 }
 
 #[test]
+fn invalid_block_comments_in_string_literal() {
+    let input = r#"
+        "${ //
+            | comment
+            \\
+        }"
+    "#;
+    let mut chars_peekable = CharsPeekable::new(input);
+    assert!(Parser::new(&mut chars_peekable).is_err());
+}
+
+#[test]
+fn block_comment_at_beginning() {
+    let input = r"//
+                  | comment
+                  \\
+    foo";
+    let mut chars_peekable = CharsPeekable::new(input);
+    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    assert_eq!(
+        parser.current.token,
+        Some(Token::Identifier(String::from("foo")))
+    );
+    parser.consume_token().unwrap();
+    assert!(parser.current.token.is_none());
+}
+
+#[test]
 fn parse_numeric_literal() {
     for input in ["12", "1.2", "12.", ".12", "6.02e23", "6.02e+23", "1.6e-19"] {
         let mut chars_peekable = CharsPeekable::new(&input);
