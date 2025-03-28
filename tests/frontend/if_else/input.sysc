@@ -1,0 +1,11 @@
+func foo(x: int, y: int, z: int)
+  x
+  if y
+    z
+  end
+  if x
+    y
+  else
+    z
+  end
+end
