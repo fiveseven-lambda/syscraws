@@ -170,6 +170,8 @@ impl Debug for backend::Statement {
 impl Debug for backend::Expression {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            backend::Expression::Integer(value) => write!(f, "{value}i"),
+            backend::Expression::Float(value) => write!(f, "{value}f"),
             backend::Expression::GlobalVariable(index) => write!(f, "G{index}"),
             backend::Expression::LocalVariable(index) => write!(f, "L{index}"),
             backend::Expression::Function { candidates, calls } => {
@@ -204,6 +206,8 @@ impl Debug for backend::Function {
         match self {
             backend::Function::IAdd => write!(f, "IAdd"),
             backend::Function::Deref => write!(f, "Deref"),
+            backend::Function::Identity => write!(f, "Identity"),
+            backend::Function::IAssign => write!(f, "IAssign"),
             backend::Function::UserDefined(index) => write!(f, "F{index}"),
             backend::Function::Field {
                 structure_index,
@@ -219,13 +223,16 @@ impl Debug for backend::Function {
 
 #[test]
 fn test() {
-    for &dir_name in &["struct", "if_else"] {
+    for &dir_name in &["struct", "if_else", "variables"] {
         let dir = Path::new("tests/frontend").join(dir_name);
         let definitions = read_input(&dir.join("input")).unwrap();
         let output = format!("{definitions:?}");
         let expected = std::fs::read_to_string(dir.join("expected.txt")).unwrap();
         if output != expected {
-            panic!("{output}\n{expected}")
+            panic!(
+                "Failed: {}.\n\nOutput:\n{output}\nExpected:\n{expected}",
+                dir.display()
+            )
         }
     }
 }

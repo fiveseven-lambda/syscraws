@@ -39,6 +39,8 @@ pub struct FunctionTy {
 pub enum Function {
     IAdd,
     Deref,
+    Identity,
+    IAssign,
     UserDefined(usize),
     Field {
         structure_index: usize,
@@ -207,6 +209,8 @@ pub enum Statement {
 }
 
 pub enum Expression {
+    Integer(i32),
+    Float(f64),
     GlobalVariable(usize),
     LocalVariable(usize),
     Function {

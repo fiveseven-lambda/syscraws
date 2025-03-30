@@ -1,0 +1,12 @@
+F0(): Tuple[]
+Block {
+    size: 1,
+    0: Expr {
+        0: <IAssign>(G0, 1i),
+        1: <IAssign>(L0, 2i),
+    },
+}
+F1(): Tuple[]
+Block {
+    size: 0,
+}

@@ -279,7 +279,8 @@ fn parse_addition() {
     assert_eq!(factor.pos, pos!(0:0-0:9));
     let Term::BinaryOperation {
         left_operand,
-        operator,
+        operator_name,
+        operator_pos,
         right_operand,
     } = factor.term
     else {
@@ -288,8 +289,8 @@ fn parse_addition() {
     let left_operand = left_operand.unwrap();
     assert_eq!(left_operand.term, Term::Identifier(String::from("foo")));
     assert_eq!(left_operand.pos, pos!(0:0-0:3));
-    assert_eq!(operator.term, Term::MethodName(String::from("add")));
-    assert_eq!(operator.pos, pos!(0:4-0:5));
+    assert_eq!(operator_name, "add");
+    assert_eq!(operator_pos, pos!(0:4-0:5));
     let right_operand = right_operand.unwrap();
     assert_eq!(right_operand.term, Term::Identifier(String::from("bar")));
     assert_eq!(right_operand.pos, pos!(0:6-0:9));
@@ -304,7 +305,7 @@ fn parse_function_definition() {
     ";
     let mut chars_peekable = CharsPeekable::new(&input);
     let mut parser = Parser::new(&mut chars_peekable).unwrap();
-    let (name, definition) = parser.parse_function_definition().unwrap();
+    let (name, definition) = parser.parse_function_definition(false).unwrap();
     assert_eq!(name.name, Some(String::from("foo")));
     for (parameter, expected_parameter_name) in
         definition.parameters.unwrap().iter().zip(["x", "y"])

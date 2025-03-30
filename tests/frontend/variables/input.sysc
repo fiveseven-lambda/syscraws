@@ -1,0 +1,6 @@
+var global
+func f()
+  var local
+  global = 1
+  local = 2
+end

@@ -164,9 +164,9 @@ pub enum ParseError {
         start_index: Index,
     },
     UnexpectedToken(Pos),
-    UnexpectedTokenAfterKeywordFunc {
+    UnexpectedTokenAfterKeywordFuncOrMethod {
         unexpected_token_pos: Pos,
-        keyword_func_pos: Pos,
+        keyword_pos: Pos,
     },
     UnexpectedTokenAfterKeywordStruct {
         unexpected_token_pos: Pos,
@@ -254,17 +254,14 @@ impl ParseError {
                 );
                 file.quote_pos(keyword_struct_pos);
             }
-            ParseError::UnexpectedTokenAfterKeywordFunc {
+            ParseError::UnexpectedTokenAfterKeywordFuncOrMethod {
                 unexpected_token_pos,
-                keyword_func_pos,
+                keyword_pos,
             } => {
                 eprintln!("Unexpected token at {}.", unexpected_token_pos);
                 file.quote_pos(unexpected_token_pos);
-                eprintln!(
-                    "Expected an identifier after `func` at {}.",
-                    keyword_func_pos
-                );
-                file.quote_pos(keyword_func_pos);
+                eprintln!("Expected an identifier after keyword at {}.", keyword_pos);
+                file.quote_pos(keyword_pos);
             }
             ParseError::UnclosedBlock {
                 pos,

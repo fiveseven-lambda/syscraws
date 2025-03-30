@@ -92,13 +92,14 @@ pub struct StructureName {
  */
 pub struct FunctionName {
     /**
-     * [`Pos`] of the keyword `func`.
+     * [`Pos`] of the keyword `func` or `method`.
      */
-    pub keyword_func_pos: Pos,
+    pub keyword_pos: Pos,
     /**
      * The function name.
      */
     pub name: Option<String>,
+    pub is_method: bool,
 }
 
 /**
@@ -238,6 +239,8 @@ pub enum Statement {
         then_block: Vec<WithExtraTokens<Statement>>,
         else_block: Option<ElseBlock>,
     },
+    Break,
+    Continue,
 }
 
 pub struct ElseBlock {
@@ -285,10 +288,6 @@ pub enum Term {
      */
     Identifier(String),
     /**
-     * A method name.
-     */
-    MethodName(String),
-    /**
      * A term followed by `.` and field name.
      */
     FieldByName {
@@ -314,7 +313,8 @@ pub enum Term {
      * Unary operation.
      */
     UnaryOperation {
-        operator: Box<TermWithPos>,
+        operator_name: &'static str,
+        operator_pos: Pos,
         operand: Option<Box<TermWithPos>>,
     },
     /**
@@ -322,7 +322,8 @@ pub enum Term {
      */
     BinaryOperation {
         left_operand: Option<Box<TermWithPos>>,
-        operator: Box<TermWithPos>,
+        operator_name: &'static str,
+        operator_pos: Pos,
         right_operand: Option<Box<TermWithPos>>,
     },
     /**
@@ -330,7 +331,8 @@ pub enum Term {
      */
     Assignment {
         left_hand_side: Option<Box<TermWithPos>>,
-        operator: Box<TermWithPos>,
+        operator_name: &'static str,
+        operator_pos: Pos,
         right_hand_side: Option<Box<TermWithPos>>,
     },
     Conjunction {
@@ -408,8 +410,9 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
                 content: TopLevelStatement::StructureDefinition(definition),
                 extra_tokens_pos: parser.consume_line()?,
             });
-        } else if let Token::KeywordFunc = item_start_token {
-            let (name, definition) = parser.parse_function_definition()?;
+        } else if let Token::KeywordFunc | Token::KeywordMethod = item_start_token {
+            let is_method = *item_start_token == Token::KeywordMethod;
+            let (name, definition) = parser.parse_function_definition(is_method)?;
             file.function_names.push(name);
             file.top_level_statements.push(WithExtraTokens {
                 content: TopLevelStatement::FunctionDefinition(definition),
@@ -659,8 +662,9 @@ impl Parser<'_, '_> {
 
     fn parse_function_definition(
         &mut self,
+        is_method: bool,
     ) -> Result<(FunctionName, FunctionDefinition), ParseError> {
-        let keyword_func_pos = self.current_pos();
+        let keyword_pos = self.current_pos();
         self.consume_token()?;
 
         // The function name should immediately follow `func`, without a line break.
@@ -674,9 +678,9 @@ impl Parser<'_, '_> {
                     Some(name)
                 }
                 _ => {
-                    return Err(ParseError::UnexpectedTokenAfterKeywordFunc {
+                    return Err(ParseError::UnexpectedTokenAfterKeywordFuncOrMethod {
                         unexpected_token_pos: self.current_pos(),
-                        keyword_func_pos,
+                        keyword_pos,
                     })
                 }
             }
@@ -771,7 +775,7 @@ impl Parser<'_, '_> {
         let extra_tokens_after_signature = self.consume_line()?;
 
         // The function body follows.
-        let mut start_line_indices = vec![keyword_func_pos.line()];
+        let mut start_line_indices = vec![keyword_pos.line()];
         let body = self.parse_block(&mut start_line_indices)?;
         if !matches!(self.current.token, Some(Token::KeywordEnd)) {
             return Err(ParseError::UnclosedBlock {
@@ -783,8 +787,9 @@ impl Parser<'_, '_> {
 
         Ok((
             FunctionName {
-                keyword_func_pos,
+                keyword_pos,
                 name,
+                is_method,
             },
             FunctionDefinition {
                 parameters,
@@ -831,6 +836,11 @@ impl Parser<'_, '_> {
         } else if let Some(Token::KeywordWhile) = self.current.token {
             self.parse_while_statement(start_line_indices)
                 .map(Option::Some)
+        } else if let Some(Token::KeywordBreak) = self.current.token {
+            self.consume_token()?;
+            Ok(Some(Statement::Break))
+        } else if let Some(Token::KeywordContinue) = self.current.token {
+            Ok(Some(Statement::Continue))
         } else if let Some(term) = self.parse_assign(false)? {
             Ok(Some(Statement::Term(term)))
         } else {
@@ -970,17 +980,15 @@ impl Parser<'_, '_> {
     fn parse_assign(&mut self, allow_line_break: bool) -> Result<Option<TermWithPos>, ParseError> {
         let start = self.current.start;
         let left_hand_side = self.parse_disjunction(allow_line_break)?;
-        if let Some(operator) = self.current.token.as_ref().and_then(assignment_operator) {
+        if let Some(operator_name) = self.current.token.as_ref().and_then(assignment_operator) {
             let operator_pos = self.current_pos();
             self.consume_token()?;
             let right_hand_side = self.parse_assign(allow_line_break)?;
             Ok(Some(TermWithPos {
                 pos: self.range_from(start),
                 term: Term::Assignment {
-                    operator: Box::new(TermWithPos {
-                        term: Term::MethodName(operator.to_string()),
-                        pos: operator_pos,
-                    }),
+                    operator_name,
+                    operator_pos,
                     left_hand_side: left_hand_side.map(Box::new),
                     right_hand_side: right_hand_side.map(Box::new),
                 },
@@ -1064,7 +1072,7 @@ impl Parser<'_, '_> {
             let Some(ref token) = self.current.token else {
                 break;
             };
-            if let Some(operator) = infix_operator(token, precedence) {
+            if let Some(operator_name) = infix_operator(token, precedence) {
                 let operator_pos = self.current_pos();
                 self.consume_token()?;
                 let right_operand =
@@ -1072,11 +1080,8 @@ impl Parser<'_, '_> {
                 left_operand = Some(TermWithPos {
                     term: Term::BinaryOperation {
                         left_operand: left_operand.map(Box::new),
-                        operator: Box::new(TermWithPos {
-                            // TODO: remove `.to_string()`
-                            term: Term::MethodName(operator.to_string()),
-                            pos: operator_pos,
-                        }),
+                        operator_name,
+                        operator_pos,
                         right_operand: right_operand.map(Box::new),
                     },
                     pos: self.range_from(start),
@@ -1308,16 +1313,14 @@ impl Parser<'_, '_> {
             } else {
                 Term::Tuple { elements }
             }
-        } else if let Some(operator) = prefix_operator(&first_token) {
+        } else if let Some(operator_name) = prefix_operator(&first_token) {
             let operator_pos = self.current_pos();
             self.consume_token()?;
             let opt_operand = self.parse_factor(allow_line_break)?;
             Term::UnaryOperation {
                 operand: opt_operand.map(Box::new),
-                operator: Box::new(TermWithPos {
-                    term: Term::MethodName(operator.to_string()),
-                    pos: operator_pos,
-                }),
+                operator_name,
+                operator_pos,
             }
         } else {
             return Ok(None);
