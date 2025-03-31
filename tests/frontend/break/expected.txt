@@ -1,0 +1,42 @@
+F0(): Tuple[]
+Block {
+    size: 7,
+    0: While {
+        condition: <Deref>(G0),
+        do: Block {
+            size: 5,
+            0: If {
+                condition: <Deref>(G1),
+                then: Block {
+                    size: 1,
+                    0: Break {
+                        0: <Delete>(G1),
+                    },
+                },
+                else: Block {
+                    size: 0,
+                },
+            },
+            1: If {
+                condition: <Deref>(G2),
+                then: Block {
+                    size: 1,
+                    0: Break {
+                        0: <Delete>(G2),
+                        1: <Delete>(G1),
+                    },
+                },
+                else: Block {
+                    size: 0,
+                },
+            },
+            2: Expr {
+                0: <Delete>(G2),
+                1: <Delete>(G1),
+            },
+        },
+    },
+    1: Expr {
+        0: <Delete>(G0),
+    },
+}

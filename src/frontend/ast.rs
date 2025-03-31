@@ -84,7 +84,7 @@ pub struct StructureName {
     /**
      * The structure name.
      */
-    pub name: Option<String>,
+    pub name: Option<(String, Pos)>,
 }
 
 /**
@@ -98,7 +98,7 @@ pub struct FunctionName {
     /**
      * The function name.
      */
-    pub name: Option<String>,
+    pub name: Option<(String, Pos)>,
     pub is_method: bool,
 }
 
@@ -252,7 +252,7 @@ pub struct ElseBlock {
 /**
  * Pair of a [`Term`] and its [`Pos`].
  */
-#[derive(PartialEq, Eq, Debug)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct TermWithPos {
     pub term: Term,
     pub pos: Pos,
@@ -261,7 +261,7 @@ pub struct TermWithPos {
 /**
  * A term in the AST, representing an expression, a type, or an import name.
  */
-#[derive(PartialEq, Eq, Debug)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub enum Term {
     /**
      * A numeric literal, either integer or floating-point number.
@@ -367,7 +367,7 @@ pub enum Term {
 /**
  * A component of a string literal in the AST.
  */
-#[derive(PartialEq, Eq, Debug)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub enum StringLiteralComponent {
     String(String),
     PlaceHolder {
@@ -379,7 +379,7 @@ pub enum StringLiteralComponent {
 /**
  * An element of a list in the AST.
  */
-#[derive(PartialEq, Eq, Debug)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub enum ListElement {
     NonEmpty(TermWithPos),
     Empty { comma_pos: Pos },
@@ -411,7 +411,7 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
                 extra_tokens_pos: parser.consume_line()?,
             });
         } else if let Token::KeywordFunc | Token::KeywordMethod = item_start_token {
-            let is_method = *item_start_token == Token::KeywordMethod;
+            let is_method = matches!(item_start_token, Token::KeywordMethod);
             let (name, definition) = parser.parse_function_definition(is_method)?;
             file.function_names.push(name);
             file.top_level_statements.push(WithExtraTokens {
@@ -484,7 +484,7 @@ struct TokenInfo {
 /**
  * A token.
  */
-#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 enum Token {
     Digits(String),
     StringLiteral(Vec<StringLiteralComponent>),
@@ -586,8 +586,9 @@ impl Parser<'_, '_> {
             match name {
                 Token::Identifier(name) => {
                     let name = std::mem::take(name);
+                    let pos = self.current_pos();
                     self.consume_token()?;
-                    Some(name)
+                    Some((name, pos))
                 }
                 _ => {
                     return Err(ParseError::UnexpectedTokenAfterKeywordStruct {
@@ -674,8 +675,9 @@ impl Parser<'_, '_> {
             match name {
                 Token::Identifier(name) => {
                     let name = std::mem::take(name);
+                    let pos = self.current_pos();
                     self.consume_token()?;
-                    Some(name)
+                    Some((name, pos))
                 }
                 _ => {
                     return Err(ParseError::UnexpectedTokenAfterKeywordFuncOrMethod {

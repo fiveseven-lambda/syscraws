@@ -35,12 +35,13 @@ pub struct FunctionTy {
     pub return_ty: TyBuilder,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Function {
     IAdd,
     Deref,
     Identity,
     IAssign,
+    Delete,
     UserDefined(usize),
     Field {
         structure_index: usize,
@@ -206,17 +207,24 @@ pub enum Statement {
         condition: Expression,
         do_block: Block,
     },
+    Break(Vec<Expression>),
+    Continue(Vec<Expression>),
 }
 
 pub enum Expression {
     Integer(i32),
     Float(f64),
-    GlobalVariable(usize),
-    LocalVariable(usize),
+    Variable(LocalOrGlobal, usize),
     Function {
         candidates: Vec<Function>,
         calls: Vec<Call>,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LocalOrGlobal {
+    Local,
+    Global,
 }
 
 fn translate_function() {}

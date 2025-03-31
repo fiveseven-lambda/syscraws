@@ -163,6 +163,20 @@ impl Debug for backend::Statement {
                 f.field("do", do_block);
                 f.finish()
             }
+            backend::Statement::Break(expr) => {
+                let mut f = f.debug_struct("Break");
+                for (i, expr) in expr.iter().enumerate() {
+                    f.field(&format!("{i}"), expr);
+                }
+                f.finish()
+            }
+            backend::Statement::Continue(expr) => {
+                let mut f = f.debug_struct("Continue");
+                for (i, expr) in expr.iter().enumerate() {
+                    f.field(&format!("{i}"), expr);
+                }
+                f.finish()
+            }
         }
     }
 }
@@ -172,8 +186,12 @@ impl Debug for backend::Expression {
         match self {
             backend::Expression::Integer(value) => write!(f, "{value}i"),
             backend::Expression::Float(value) => write!(f, "{value}f"),
-            backend::Expression::GlobalVariable(index) => write!(f, "G{index}"),
-            backend::Expression::LocalVariable(index) => write!(f, "L{index}"),
+            backend::Expression::Variable(backend::LocalOrGlobal::Global, index) => {
+                write!(f, "G{index}")
+            }
+            backend::Expression::Variable(backend::LocalOrGlobal::Local, index) => {
+                write!(f, "L{index}")
+            }
             backend::Expression::Function { candidates, calls } => {
                 write!(
                     f,
@@ -208,6 +226,7 @@ impl Debug for backend::Function {
             backend::Function::Deref => write!(f, "Deref"),
             backend::Function::Identity => write!(f, "Identity"),
             backend::Function::IAssign => write!(f, "IAssign"),
+            backend::Function::Delete => write!(f, "Delete"),
             backend::Function::UserDefined(index) => write!(f, "F{index}"),
             backend::Function::Field {
                 structure_index,
@@ -223,7 +242,7 @@ impl Debug for backend::Function {
 
 #[test]
 fn test() {
-    for &dir_name in &["struct", "if_else", "variables", "operator_overload"] {
+    for &dir_name in &["struct", "if_else", "variables", "operator_overload", "break"] {
         let dir = Path::new("tests/frontend").join(dir_name);
         let definitions = read_input(&dir.join("input")).unwrap();
         let output = format!("{definitions:?}");
