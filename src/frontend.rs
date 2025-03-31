@@ -43,6 +43,7 @@ pub fn read_input(root_file_path: &Path) -> Result<backend::Definitions, ()> {
     let mut reader = Reader {
         num_structures: 0,
         num_functions: 0,
+        num_global_variables: 0,
         definitions: backend::Definitions {
             structures: Vec::new(),
             functions: Vec::new(),
@@ -115,6 +116,7 @@ struct Reader {
      * [`register_function_name`].
      */
     num_functions: usize,
+    num_global_variables: usize,
     /**
      * The target which [`Reader::read_file`] stores the results in.
      */
@@ -134,7 +136,7 @@ struct Reader {
      * Used in [`Reader::read_file`] to avoid reading the same file multiple
      * times.
      */
-    file_indices: HashMap<PathBuf, usize>,
+    file_indices: HashMap<PathBuf, Option<usize>>,
     /**
      * Used in [`Reader::import_file`] to detect circular imports.
      */
@@ -152,11 +154,14 @@ struct Method {
 }
 
 impl Reader {
-    fn read_file(&mut self, path: &Path) -> Result<usize, std::io::Error> {
+    /**
+     * Reads the file specified by `path`.
+     */
+    fn read_file(&mut self, path: &Path) -> Result<Option<usize>, std::io::Error> {
         if let Some(&index) = self.file_indices.get(path) {
-            // The file specified by `path` was already read.
-            // Since circular imports should have been detected in `parse_imports`,
-            // this is not circular imports but diamond imports.
+            /* The file specified by `path` was already read. Since circular imports
+             * should have been detected in `parse_imports`, this is not circular imports
+             * but diamond imports. */
             return Ok(index);
         }
         let mut file = std::fs::File::open(path)?;
@@ -172,10 +177,9 @@ impl Reader {
         match ast_file {
             Ok(ast_file) => {
                 let mut named_items = HashMap::new();
-                let current_file_index = self.imported_file_indices.len();
-                let mut imported_file_indices = HashSet::from([current_file_index]);
+                let mut imported_file_indices = HashSet::new();
                 for ast::WithExtraTokens {
-                    content: import,
+                    content: ast_import,
                     extra_tokens_pos,
                 } in ast_file.imports
                 {
@@ -183,8 +187,8 @@ impl Reader {
                         log::extra_tokens(extra_tokens_pos, &file);
                         self.num_errors += 1;
                     }
-                    if let Ok((name, index)) =
-                        self.import_file(import, path.parent().unwrap(), &file)
+                    if let Ok((name, Some(index))) =
+                        self.import_file(ast_import, path.parent().unwrap(), &file)
                     {
                         named_items.insert(name, Item::Import(index));
                         for &imported_file_index in &self.imported_file_indices[index] {
@@ -192,6 +196,10 @@ impl Reader {
                         }
                     }
                 }
+                let current_file_index = self.files.len();
+                assert_eq!(self.exported_items.len(), current_file_index);
+                assert_eq!(self.imported_file_indices.len(), current_file_index);
+                imported_file_indices.insert(current_file_index);
                 for name in ast_file.structure_names {
                     register_structure_name(
                         name,
@@ -213,7 +221,6 @@ impl Reader {
                     );
                 }
                 let mut global_variables = HashMap::new();
-                let mut num_global_variables = 0;
                 let mut global_scope = Vec::new();
                 let global_ty_parameters = HashMap::new();
                 for ast::WithExtraTokens {
@@ -256,7 +263,7 @@ impl Reader {
                                 &mut self.global_block,
                                 &mut self.global_expressions,
                                 &mut global_variables,
-                                &mut num_global_variables,
+                                &mut self.num_global_variables,
                                 &mut global_scope,
                                 &global_ty_parameters,
                                 None,
@@ -273,17 +280,21 @@ impl Reader {
                 for (name, index) in global_variables {
                     named_items.insert(name, Item::GlobalVariable(index));
                 }
-                self.exported_items.push(named_items);
+                assert_eq!(self.files.len(), current_file_index);
                 self.files.push(file);
+                assert_eq!(self.exported_items.len(), current_file_index);
+                self.exported_items.push(named_items);
+                assert_eq!(self.imported_file_indices.len(), current_file_index);
+                self.imported_file_indices.push(imported_file_indices);
+                Ok(Some(current_file_index))
             }
             Err(err) => {
                 err.eprint(&file);
                 self.num_errors += 1;
+                self.file_indices.insert(path.to_path_buf(), None);
+                Ok(None)
             }
-        };
-        let new_index = self.file_indices.len();
-        self.file_indices.insert(path.to_path_buf(), new_index);
-        Ok(new_index)
+        }
     }
 
     fn import_file(
@@ -294,7 +305,7 @@ impl Reader {
         }: ast::Import,
         parent_directory: &Path,
         file: &log::File,
-    ) -> Result<(String, usize), ()> {
+    ) -> Result<(String, Option<usize>), ()> {
         let Some(target) = target else {
             eprintln!("Missing import target after `import` at {keyword_import_pos}.");
             file.quote_pos(keyword_import_pos);
@@ -479,8 +490,8 @@ fn register_function_name(
 
 fn translate_structure_definition(
     ast::StructureDefinition {
-        ty_parameters,
-        fields,
+        ty_parameters: ast_ty_parameters,
+        fields: ast_fields,
         extra_tokens_pos,
     }: ast::StructureDefinition,
     named_items: &HashMap<String, Item>,
@@ -489,23 +500,25 @@ fn translate_structure_definition(
     num_errors: &mut u32,
 ) -> (backend::TyKind, backend::Structure) {
     let mut ty_parameters_name = HashMap::new();
-    let kind = if let Some(ty_parameters) = ty_parameters {
-        for ty_parameter in ty_parameters {
-            match ty_parameter {
-                ast::ListElement::NonEmpty(name) => match name.term {
-                    ast::Term::Identifier(name) => {
-                        let new_index = ty_parameters_name.len();
-                        ty_parameters_name.insert(name, new_index);
-                    }
-                    _ => {
-                        eprintln!("Invalid type parameter at {}.", name.pos);
-                        file.quote_pos(name.pos);
-                        *num_errors += 1;
-                    }
-                },
+    let kind = if let Some(ast_ty_parameters) = ast_ty_parameters {
+        for ast_ty_parameter in ast_ty_parameters {
+            let ast_ty_parameter = match ast_ty_parameter {
                 ast::ListElement::Empty { comma_pos } => {
                     eprintln!("Empty type parameter before comma at {}.", comma_pos);
                     file.quote_pos(comma_pos);
+                    *num_errors += 1;
+                    continue;
+                }
+                ast::ListElement::NonEmpty(ast_ty_parameter) => ast_ty_parameter,
+            };
+            match ast_ty_parameter.term {
+                ast::Term::Identifier(name) => {
+                    let new_index = ty_parameters_name.len();
+                    ty_parameters_name.insert(name, new_index);
+                }
+                _ => {
+                    eprintln!("Invalid type parameter at {}.", ast_ty_parameter.pos);
+                    file.quote_pos(ast_ty_parameter.pos);
                     *num_errors += 1;
                 }
             }
@@ -523,32 +536,32 @@ fn translate_structure_definition(
         log::extra_tokens(extra_tokens_pos, file);
         *num_errors += 1;
     }
-    let mut translated_fields_ty = Vec::new();
+    let mut fields_ty = Vec::new();
     for ast::WithExtraTokens {
-        content: field,
+        content: ast_field,
         extra_tokens_pos,
-    } in fields
+    } in ast_fields
     {
-        match field.term {
+        match ast_field.term {
             ast::Term::TypeAnnotation {
                 term_left: _,
                 colon_pos: _,
-                term_right: Some(field_ty),
+                term_right: Some(ast_field_ty),
             } => {
-                if let Some(ty) = translate_ty(
-                    *field_ty,
+                if let Ok(ty) = translate_ty(
+                    *ast_field_ty,
                     named_items,
                     &ty_parameters_name,
                     &exported_items,
                     file,
                     num_errors,
                 ) {
-                    translated_fields_ty.push(ty);
+                    fields_ty.push(ty);
                 }
             }
             _ => {
-                eprintln!("Invalid structure field at {}.", field.pos);
-                file.quote_pos(field.pos);
+                eprintln!("Invalid structure field at {}.", ast_field.pos);
+                file.quote_pos(ast_field.pos);
             }
         }
         if let Some(extra_tokens_pos) = extra_tokens_pos {
@@ -560,7 +573,7 @@ fn translate_structure_definition(
         kind,
         backend::Structure {
             num_ty_parameters: ty_parameters_name.len(),
-            fields_ty: translated_fields_ty,
+            fields_ty,
         },
     )
 }
@@ -645,7 +658,7 @@ fn translate_function_definition(
                         }
                     }
                     if let Some(ast_parameter_ty) = ast_parameter_ty {
-                        if let Some(parameter_ty) = translate_ty(
+                        if let Ok(parameter_ty) = translate_ty(
                             *ast_parameter_ty,
                             named_items,
                             &ty_parameters_name,
@@ -682,8 +695,8 @@ fn translate_function_definition(
                 file,
                 num_errors,
             ) {
-                Some(return_ty) => return_ty,
-                None => return None,
+                Ok(return_ty) => return_ty,
+                Err(()) => return None,
             }
         } else {
             eprintln!(
@@ -773,7 +786,7 @@ fn translate_statement(
     match statement {
         ast::Statement::Term(term) => {
             let term_pos = term.pos.clone();
-            let Some(term) = translate_expression_or_import(
+            let Ok(term) = translate_expression_or_import(
                 term,
                 false,
                 named_items,
@@ -840,17 +853,17 @@ fn translate_statement(
                     num_errors,
                 )
                 .and_then(|term| match term {
-                    ImportOrExpression::Expression(condition) => Some(condition),
+                    ImportOrExpression::Expression(condition) => Ok(condition),
                     _ => {
                         eprintln!("Not an expression");
                         *num_errors += 1;
-                        None
+                        Err(())
                     }
                 })
             } else {
                 eprintln!("Empty condition");
                 *num_errors += 1;
-                None
+                Err(())
             };
             let mut then_scope = Vec::new();
             let mut then_block = backend::Block {
@@ -955,17 +968,17 @@ fn translate_statement(
                     num_errors,
                 )
                 .and_then(|term| match term {
-                    ImportOrExpression::Expression(condition) => Some(condition),
+                    ImportOrExpression::Expression(condition) => Ok(condition),
                     _ => {
                         eprintln!("Not an expression");
                         *num_errors += 1;
-                        None
+                        Err(())
                     }
                 })
             } else {
                 eprintln!("Missing condition after `while` at {}", keyword_while_pos);
                 file.quote_pos(keyword_while_pos);
-                None
+                Err(())
             };
             let mut body_scope = Vec::new();
             let mut translated_body = backend::Block {
@@ -1038,25 +1051,25 @@ fn translate_import(
     exported_items: &Vec<HashMap<String, Item>>,
     file: &log::File,
     num_errors: &mut u32,
-) -> Option<usize> {
+) -> Result<usize, ()> {
     let item = match import.term {
         ast::Term::Identifier(name) => match named_items.get(&name) {
             Some(item) => item,
-            None => return None,
+            None => return Err(()),
         },
         ast::Term::FieldByName { term_left, name } => {
             let file_index =
                 translate_import(*term_left, named_items, exported_items, file, num_errors)?;
             match exported_items[file_index].get(&name) {
                 Some(item) => item,
-                None => return None,
+                None => return Err(()),
             }
         }
-        _ => return None,
+        _ => return Err(()),
     };
     match *item {
-        Item::Import(n) => Some(n),
-        _ => None,
+        Item::Import(n) => Ok(n),
+        _ => Err(()),
     }
 }
 
@@ -1067,25 +1080,25 @@ fn translate_ty(
     exported_items: &Vec<HashMap<String, Item>>,
     file: &log::File,
     num_errors: &mut u32,
-) -> Option<backend::TyBuilder> {
+) -> Result<backend::TyBuilder, ()> {
     let item = match ty.term {
         ast::Term::IntegerTy => {
-            return Some(backend::TyBuilder::Constructor(
+            return Ok(backend::TyBuilder::Constructor(
                 backend::TyConstructor::Integer,
             ))
         }
         ast::Term::FloatTy => {
-            return Some(backend::TyBuilder::Constructor(
+            return Ok(backend::TyBuilder::Constructor(
                 backend::TyConstructor::Float,
             ))
         }
         ast::Term::Identifier(name) => {
             if let Some(&index) = ty_parameters.get(&name) {
-                return Some(backend::TyBuilder::Parameter(index));
+                return Ok(backend::TyBuilder::Parameter(index));
             }
             match named_items.get(&name) {
                 Some(item) => item,
-                None => return None,
+                None => return Err(()),
             }
         }
         ast::Term::FieldByName { term_left, name } => {
@@ -1093,58 +1106,56 @@ fn translate_ty(
                 translate_import(*term_left, named_items, exported_items, file, num_errors)?;
             match exported_items[file_index].get(&name) {
                 Some(item) => item,
-                None => return None,
+                None => return Err(()),
             }
         }
         ast::Term::TypeParameters {
-            term_left,
-            parameters,
+            term_left: ast_term_left,
+            parameters: ast_parameters,
         } => {
             let term_left = translate_ty(
-                *term_left,
+                *ast_term_left,
                 named_items,
                 ty_parameters,
                 exported_items,
                 file,
                 num_errors,
             );
-            let mut translated_parameters = Some(Vec::new());
-            for parameter in parameters {
-                let translated_parameter = match parameter {
-                    ast::ListElement::NonEmpty(parameter) => translate_ty(
-                        parameter,
-                        named_items,
-                        ty_parameters,
-                        exported_items,
-                        file,
-                        num_errors,
-                    ),
+            let mut parameters = Vec::new();
+            for ast_parameter in ast_parameters {
+                let ast_parameter = match ast_parameter {
                     ast::ListElement::Empty { comma_pos } => {
                         eprintln!("Empty type parameter before comma at {comma_pos}");
-                        None
+                        continue;
                     }
+                    ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
                 };
-                match translated_parameter {
-                    Some(parameter) => {
-                        if let Some(translated_parameters) = &mut translated_parameters {
-                            translated_parameters.push(parameter);
-                        };
-                    }
-                    None => translated_parameters = None,
+                let parameter = translate_ty(
+                    ast_parameter,
+                    named_items,
+                    ty_parameters,
+                    exported_items,
+                    file,
+                    num_errors,
+                );
+                if *num_errors == 0 {
+                    parameters.push(parameter?);
                 }
             }
-            return (|| {
-                Some(backend::TyBuilder::Application {
+            return if *num_errors == 0 {
+                Ok(backend::TyBuilder::Application {
                     constructor: Box::new(term_left?),
-                    arguments: translated_parameters?,
+                    arguments: parameters,
                 })
-            })();
+            } else {
+                Err(())
+            };
         }
-        _ => return None,
+        _ => return Err(()),
     };
     match item {
-        Item::Ty(ty) => Some(ty.clone()),
-        _ => None,
+        Item::Ty(ty) => Ok(ty.clone()),
+        _ => Err(()),
     }
 }
 
@@ -1163,7 +1174,7 @@ fn translate_expression_or_import(
     exported_items: &Vec<HashMap<String, Item>>,
     file: &log::File,
     num_errors: &mut u32,
-) -> Option<ImportOrExpression> {
+) -> Result<ImportOrExpression, ()> {
     match ast_term {
         ast::Term::NumericLiteral(value) => {
             if value.chars().all(|ch| matches!(ch, '0'..='9')) {
@@ -1172,9 +1183,9 @@ fn translate_expression_or_import(
                         if reference {
                             eprintln!("Cannot dereference literal");
                             *num_errors += 1;
-                            None
+                            Err(())
                         } else {
-                            Some(ImportOrExpression::Expression(
+                            Ok(ImportOrExpression::Expression(
                                 backend::Expression::Integer(value),
                             ))
                         }
@@ -1182,7 +1193,7 @@ fn translate_expression_or_import(
                     Err(err) => {
                         eprintln!("{err}");
                         *num_errors += 1;
-                        None
+                        Err(())
                     }
                 }
             } else {
@@ -1191,9 +1202,9 @@ fn translate_expression_or_import(
                         if reference {
                             eprintln!("Cannot dereference literal");
                             *num_errors += 1;
-                            None
+                            Err(())
                         } else {
-                            Some(ImportOrExpression::Expression(backend::Expression::Float(
+                            Ok(ImportOrExpression::Expression(backend::Expression::Float(
                                 value,
                             )))
                         }
@@ -1201,12 +1212,12 @@ fn translate_expression_or_import(
                     Err(err) => {
                         eprintln!("{err}");
                         *num_errors += 1;
-                        None
+                        Err(())
                     }
                 }
             }
         }
-        ast::Term::Identity => Some(ImportOrExpression::Expression(
+        ast::Term::Identity => Ok(ImportOrExpression::Expression(
             backend::Expression::Function {
                 candidates: vec![backend::Function::Identity],
                 calls: vec![],
@@ -1216,7 +1227,7 @@ fn translate_expression_or_import(
             if let Some(local_variables) = local_variables {
                 if let Some(&index) = local_variables.get(&name) {
                     let expr = backend::Expression::LocalVariable(index);
-                    return Some(ImportOrExpression::Expression(if reference {
+                    return Ok(ImportOrExpression::Expression(if reference {
                         expr
                     } else {
                         backend::Expression::Function {
@@ -1230,7 +1241,7 @@ fn translate_expression_or_import(
             }
             if let Some(&index) = global_variables.get(&name) {
                 let expr = backend::Expression::GlobalVariable(index);
-                return Some(ImportOrExpression::Expression(if reference {
+                return Ok(ImportOrExpression::Expression(if reference {
                     expr
                 } else {
                     backend::Expression::Function {
@@ -1246,9 +1257,9 @@ fn translate_expression_or_import(
                     if reference {
                         eprintln!("Cannot dereference a function");
                         *num_errors += 1;
-                        None
+                        Err(())
                     } else {
-                        Some(ImportOrExpression::Expression(
+                        Ok(ImportOrExpression::Expression(
                             backend::Expression::Function {
                                 candidates: candidates.clone(),
                                 calls: vec![],
@@ -1258,7 +1269,7 @@ fn translate_expression_or_import(
                 }
                 Some(Item::GlobalVariable(index)) => {
                     let expr = backend::Expression::GlobalVariable(*index);
-                    Some(ImportOrExpression::Expression(if reference {
+                    Ok(ImportOrExpression::Expression(if reference {
                         expr
                     } else {
                         backend::Expression::Function {
@@ -1269,16 +1280,16 @@ fn translate_expression_or_import(
                         }
                     }))
                 }
-                Some(Item::Import(index)) => Some(ImportOrExpression::Import(*index)),
+                Some(Item::Import(index)) => Ok(ImportOrExpression::Import(*index)),
                 Some(Item::Ty(_)) => {
                     eprintln!("Note an expression");
                     *num_errors += 1;
-                    None
+                    Err(())
                 }
                 None => {
                     eprintln!("Undefined variable at {pos}");
                     *num_errors += 1;
-                    None
+                    Err(())
                 }
             }
         }
@@ -1299,7 +1310,7 @@ fn translate_expression_or_import(
                 file,
                 num_errors,
             )? {
-                ImportOrExpression::Expression(expr) => Some(ImportOrExpression::Expression(
+                ImportOrExpression::Expression(expr) => Ok(ImportOrExpression::Expression(
                     backend::Expression::Function {
                         candidates: vec![],
                         calls: vec![backend::Call {
@@ -1313,9 +1324,9 @@ fn translate_expression_or_import(
                             if reference {
                                 eprintln!("Cannot dereference a function");
                                 *num_errors += 1;
-                                None
+                                Err(())
                             } else {
-                                Some(ImportOrExpression::Expression(
+                                Ok(ImportOrExpression::Expression(
                                     backend::Expression::Function {
                                         candidates: candidates.clone(),
                                         calls: vec![],
@@ -1325,7 +1336,7 @@ fn translate_expression_or_import(
                         }
                         Some(Item::GlobalVariable(index)) => {
                             let expr = backend::Expression::GlobalVariable(*index);
-                            Some(ImportOrExpression::Expression(if reference {
+                            Ok(ImportOrExpression::Expression(if reference {
                                 expr
                             } else {
                                 backend::Expression::Function {
@@ -1336,13 +1347,13 @@ fn translate_expression_or_import(
                                 }
                             }))
                         }
-                        Some(Item::Import(index)) => Some(ImportOrExpression::Import(*index)),
+                        Some(Item::Import(index)) => Ok(ImportOrExpression::Import(*index)),
                         Some(Item::Ty(_)) => {
                             eprintln!("Note an expression");
                             *num_errors += 1;
-                            None
+                            Err(())
                         }
-                        None => None,
+                        None => Err(()),
                     }
                 }
             }
@@ -1367,19 +1378,17 @@ fn translate_expression_or_import(
             )
             .and_then(|term| match term {
                 ImportOrExpression::Expression(function) => match function {
-                    backend::Expression::Function { candidates, calls } => {
-                        Some((candidates, calls))
-                    }
+                    backend::Expression::Function { candidates, calls } => Ok((candidates, calls)),
                     _ => {
                         eprintln!("Not a function");
                         *num_errors += 1;
-                        None
+                        Err(())
                     }
                 },
                 _ => {
                     eprintln!("Not an expression");
                     *num_errors += 1;
-                    None
+                    Err(())
                 }
             });
             let mut arguments = Vec::new();
@@ -1392,7 +1401,7 @@ fn translate_expression_or_import(
                     }
                     ast::ListElement::NonEmpty(ast_argument) => ast_argument,
                 };
-                let Some(argument) = translate_expression_or_import(
+                let Ok(argument) = translate_expression_or_import(
                     ast_argument,
                     false,
                     named_items,
@@ -1419,7 +1428,7 @@ fn translate_expression_or_import(
             }
             let (candidates, mut calls) = function?;
             calls.push(backend::Call { arguments });
-            Some(ImportOrExpression::Expression(
+            Ok(ImportOrExpression::Expression(
                 backend::Expression::Function { candidates, calls },
             ))
         }
@@ -1444,16 +1453,16 @@ fn translate_expression_or_import(
                     num_errors,
                 )
                 .and_then(|expression_or_import| match expression_or_import {
-                    ImportOrExpression::Expression(expr) => Some(expr),
+                    ImportOrExpression::Expression(expr) => Ok(expr),
                     ImportOrExpression::Import(import) => {
                         eprintln!("Not an expression ");
-                        None
+                        Err(())
                     }
                 }),
                 None => {
                     eprintln!("Empty left hand side");
                     *num_errors += 1;
-                    None
+                    Err(())
                 }
             };
             let right_hand_side = match ast_right_hand_side {
@@ -1471,16 +1480,16 @@ fn translate_expression_or_import(
                     num_errors,
                 )
                 .and_then(|expression_or_import| match expression_or_import {
-                    ImportOrExpression::Expression(expr) => Some(expr),
+                    ImportOrExpression::Expression(expr) => Ok(expr),
                     ImportOrExpression::Import(import) => {
                         eprintln!("Not an expression ");
-                        None
+                        Err(())
                     }
                 }),
                 None => {
                     eprintln!("Empty right hand side");
                     *num_errors += 1;
-                    None
+                    Err(())
                 }
             };
             let candidates: Vec<_> = methods
@@ -1498,7 +1507,7 @@ fn translate_expression_or_import(
                     },
                 )
                 .collect();
-            Some(ImportOrExpression::Expression(
+            Ok(ImportOrExpression::Expression(
                 backend::Expression::Function {
                     candidates,
                     calls: vec![backend::Call {

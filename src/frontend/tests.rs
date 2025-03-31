@@ -223,7 +223,7 @@ impl Debug for backend::Function {
 
 #[test]
 fn test() {
-    for &dir_name in &["struct", "if_else", "variables"] {
+    for &dir_name in &["struct", "if_else", "variables", "operator_overload"] {
         let dir = Path::new("tests/frontend").join(dir_name);
         let definitions = read_input(&dir.join("input")).unwrap();
         let output = format!("{definitions:?}");

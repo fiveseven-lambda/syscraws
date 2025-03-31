@@ -1,0 +1,32 @@
+F0(): Tuple[]
+Block {
+    size: 1,
+    0: Expr {
+        0: 0i,
+    },
+}
+F1(): Tuple[]
+Block {
+    size: 1,
+    0: Expr {
+        0: 1i,
+    },
+}
+F2(): Tuple[]
+Block {
+    size: 1,
+    0: Expr {
+        0: 2i,
+    },
+}
+F3(): Tuple[]
+Block {
+    size: 1,
+    0: Expr {
+        0: <IAssign/F0>(G0, 0i),
+        1: <IAssign/F1>(G1, 1i),
+        2: <IAssign/F0/F1/F2>(G0, 0i),
+        3: <IAssign/F0/F1/F2>(G1, 1i),
+        4: <IAssign/F0/F1/F2>(G2, 2i),
+    },
+}

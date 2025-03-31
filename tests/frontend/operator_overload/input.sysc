@@ -1,0 +1,11 @@
+import foo
+import bar
+
+var x
+foo.x = 0
+bar.x = 1
+x = 2
+
+method assign()
+  2
+end
