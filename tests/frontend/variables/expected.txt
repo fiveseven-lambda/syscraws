@@ -1,0 +1,36 @@
+F0(): Tuple[]
+Block {
+    size: 3,
+    0: While {
+        condition: 1i,
+        do: Block {
+            size: 1,
+            0: Expr {
+                0: <>(G1, 1i),
+                1: <>(L0, 2i),
+                2: <>(L1, 3i),
+                3: <Delete>(L1),
+            },
+        },
+    },
+    1: Expr {
+        0: <Delete>(L0),
+    },
+}
+F1(): Tuple[]
+Block {
+    size: 3,
+    0: While {
+        condition: 1i,
+        do: Block {
+            size: 1,
+            0: Expr {
+                0: <>(G0, 1i),
+                1: <Delete>(G0),
+            },
+        },
+    },
+    1: Expr {
+        0: <Delete>(G1),
+    },
+}

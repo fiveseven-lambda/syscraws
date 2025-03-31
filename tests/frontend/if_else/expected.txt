@@ -1,13 +1,14 @@
-F0(Integer, Integer, Integer): Tuple[]
+F0(): Tuple[]
 Block {
     size: 5,
     0: If {
-        0: <Deref>(L0),
-        condition: <Deref>(L1),
+        0: 0i,
+        condition: 1i,
         then: Block {
             size: 1,
             0: Expr {
-                0: <Deref>(L2),
+                0: 2i,
+                1: 3i,
             },
         },
         else: Block {
@@ -15,17 +16,17 @@ Block {
         },
     },
     1: If {
-        condition: <Deref>(L0),
+        condition: 4i,
         then: Block {
             size: 1,
             0: Expr {
-                0: <Deref>(L1),
+                0: 5i,
             },
         },
         else: Block {
             size: 1,
             0: Expr {
-                0: <Deref>(L2),
+                0: 6i,
             },
         },
     },

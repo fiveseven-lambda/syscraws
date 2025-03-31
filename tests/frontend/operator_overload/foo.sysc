@@ -1,0 +1,6 @@
+var x
+x = 0
+
+method assign()
+  0
+end

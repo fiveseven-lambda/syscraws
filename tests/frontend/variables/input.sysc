@@ -1,0 +1,15 @@
+while 1
+  var one
+  one = 1
+end
+
+var one
+func f()
+  var two
+  while 1
+    var three
+    one = 1
+    two = 2
+    three = 3
+  end
+end

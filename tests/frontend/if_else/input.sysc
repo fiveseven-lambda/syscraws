@@ -1,11 +1,10 @@
-func foo(x: int, y: int, z: int)
-  x
-  if y
-    z
-  end
-  if x
-    y
-  else
-    z
-  end
+0
+if 1
+  2
+  3
+end
+if 4
+  5
+else
+  6
 end
