@@ -329,6 +329,21 @@ pub fn extra_tokens(pos: Pos, file: &File) {
     file.quote_pos(pos);
 }
 
+pub fn not_lvalue(pos: Pos, file: &File) {
+    eprintln!("Expression at {} is not an lvalue", pos);
+    file.quote_pos(pos);
+}
+
+pub fn cannot_parse_integer(pos: Pos, err: std::num::ParseIntError, file: &File) {
+    eprintln!("Cannot parse integer literal at {}: {}", pos, err);
+    file.quote_pos(pos);
+}
+
+pub fn cannot_parse_float(pos: Pos, err: std::num::ParseFloatError, file: &File) {
+    eprintln!("Cannot parse float literal at {}: {}", pos, err);
+    file.quote_pos(pos);
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Pos {
     pub start: Index,

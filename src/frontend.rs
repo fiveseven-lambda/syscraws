@@ -25,7 +25,6 @@ use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use crate::log::Pos;
 use crate::{backend, log};
 use chars_peekable::CharsPeekable;
 
@@ -121,20 +120,29 @@ pub fn read_input(root_file_path: &Path) -> Result<backend::Definitions, ()> {
 struct Reader {
     /**
      * Total number of structures defined in all files. Used and updated by
-     * [`register_structure_name`].
+     * [`Reader::register_structure_name`].
      */
     num_structures: usize,
     /**
      * Total number of functions defined in all files. Used and updated by
-     * [`register_function_name`].
+     * [`Reader::register_function_name`].
      */
     num_functions: usize,
     /**
      * The target which [`Reader::read_file`] stores the results in.
      */
     definitions: backend::Definitions,
+    /**
+     * Block of global statements.
+     */
     global_block: Block,
+    /**
+     *
+     */
     global_variables: Variables,
+    /**
+     *
+     */
     files: Vec<File>,
     /**
      * Used in [`Reader::read_file`] to avoid reading the same file multiple
@@ -162,7 +170,7 @@ struct Variables {
 }
 
 struct File {
-    items: HashMap<String, Item>,
+    items: HashMap<String, NamedItem>,
     methods: HashMap<String, Vec<backend::Function>>,
     log: log::File,
 }
@@ -173,9 +181,9 @@ impl Reader {
      */
     fn read_file(&mut self, path: &Path) -> Result<Option<usize>, std::io::Error> {
         if let Some(&index) = self.file_indices.get(path) {
-            /* The file specified by `path` was already read. Since circular imports
-             * should have been detected in `parse_imports`, this is not circular imports
-             * but diamond imports. */
+            /* The file was already read. Since circular imports should have been
+             * detected in `Reader::import_file`, this is not circular imports but
+             * diamond imports. */
             return Ok(index);
         }
         let mut file = std::fs::File::open(path)?;
@@ -213,7 +221,7 @@ impl Reader {
                                 self.num_errors += 1;
                             }
                             std::collections::hash_map::Entry::Vacant(entry) => {
-                                entry.insert(Item::Import(pos, index));
+                                entry.insert(NamedItem::Import(pos, index));
                                 for (name, exported_candidates) in &self.files[index].methods {
                                     let candidates =
                                         file.methods.entry(name.clone()).or_insert_with(Vec::new);
@@ -289,7 +297,7 @@ impl Reader {
         }: ast::Import,
         parent_directory: &Path,
         file: &log::File,
-    ) -> Result<(String, Pos, Option<usize>), ()> {
+    ) -> Result<(String, log::Pos, Option<usize>), ()> {
         let Some(target) = target else {
             eprintln!("Missing import target after `import` at {keyword_import_pos}.");
             file.quote_pos(keyword_import_pos);
@@ -417,7 +425,7 @@ impl Reader {
                 self.num_errors += 1;
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(Item::Ty(
+                entry.insert(NamedItem::Ty(
                     pos,
                     backend::TyBuilder::Constructor(backend::TyConstructor::Structure(
                         self.num_structures,
@@ -451,7 +459,7 @@ impl Reader {
         } else {
             match file.items.entry(name) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
-                    if let Item::Function(functions) = entry.get_mut() {
+                    if let NamedItem::Function(functions) = entry.get_mut() {
                         functions.push((pos, backend::Function::UserDefined(self.num_functions)));
                     } else {
                         duplicate_definition(entry, pos, &file.log);
@@ -459,7 +467,7 @@ impl Reader {
                     }
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert(Item::Function(vec![(
+                    entry.insert(NamedItem::Function(vec![(
                         pos,
                         backend::Function::UserDefined(self.num_functions),
                     )]));
@@ -497,7 +505,7 @@ impl Reader {
                             self.num_errors += 1;
                         }
                         std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert(Item::Ty(
+                            entry.insert(NamedItem::Ty(
                                 ast_ty_parameter.pos,
                                 backend::TyBuilder::Parameter(ty_parameters_name.len()),
                             ));
@@ -597,7 +605,7 @@ impl Reader {
                             self.num_errors += 1;
                         }
                         std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert(Item::Ty(
+                            entry.insert(NamedItem::Ty(
                                 ast_ty_parameter.pos,
                                 backend::TyBuilder::Parameter(ty_parameters_name.len()),
                             ));
@@ -650,7 +658,7 @@ impl Reader {
                                     local_variables
                                         .name_and_indices
                                         .push((name, local_variables.num));
-                                    entry.insert(Item::Variable(
+                                    entry.insert(NamedItem::Variable(
                                         ast_parameter_name.pos,
                                         backend::LocalOrGlobal::Local,
                                         local_variables.num,
@@ -739,7 +747,7 @@ impl Reader {
             let item = file.items.remove(&name);
             assert!(matches!(
                     item,
-                    Some(Item::Variable(_, backend::LocalOrGlobal::Local, stored_index))
+                    Some(NamedItem::Variable(_, backend::LocalOrGlobal::Local, stored_index))
                     if stored_index == index
             ));
             body.expressions.push(backend::Expression::Function {
@@ -786,13 +794,11 @@ impl File {
         match statement {
             ast::Statement::Term(term) => {
                 let term_pos = term.pos.clone();
-                let Ok(term) =
-                    self.translate_expression_or_import(term, false, exported_items, num_errors)
-                else {
+                let Ok(term) = self.translate_term(term, false, exported_items, num_errors) else {
                     return;
                 };
                 match term {
-                    ImportOrExpression::Expression(expr) => target.expressions.push(expr),
+                    TranslatedTerm::Expression(expr) => target.expressions.push(expr),
                     _ => {
                         eprintln!("Not an expression");
                         *num_errors += 1;
@@ -816,7 +822,7 @@ impl File {
                         }
                         std::collections::hash_map::Entry::Vacant(entry) => {
                             variables.name_and_indices.push((name, variables.num));
-                            entry.insert(Item::Variable(
+                            entry.insert(NamedItem::Variable(
                                 ast_name.pos,
                                 local_or_global,
                                 variables.num,
@@ -839,9 +845,9 @@ impl File {
                 else_block: ast_else_block,
             } => {
                 let condition = if let Some(expr) = ast_condition {
-                    self.translate_expression_or_import(expr, false, exported_items, num_errors)
+                    self.translate_term(expr, false, exported_items, num_errors)
                         .and_then(|term| match term {
-                            ImportOrExpression::Expression(condition) => Ok(condition),
+                            TranslatedTerm::Expression(condition) => Ok(condition),
                             _ => {
                                 eprintln!("Not an expression");
                                 *num_errors += 1;
@@ -889,7 +895,7 @@ impl File {
                     let item = self.items.remove(&name);
                     assert!(matches!(
                         item,
-                        Some(Item::Variable(_, stored_local_or_global, stored_index))
+                        Some(NamedItem::Variable(_, stored_local_or_global, stored_index))
                         if stored_index == index
                         && stored_local_or_global == local_or_global
                     ));
@@ -944,7 +950,7 @@ impl File {
                         let item = self.items.remove(&name);
                         assert!(matches!(
                             item,
-                            Some(Item::Variable(_, stored_local_or_global, stored_index))
+                            Some(NamedItem::Variable(_, stored_local_or_global, stored_index))
                             if stored_index == index
                             && stored_local_or_global == local_or_global
                         ));
@@ -981,20 +987,15 @@ impl File {
                 do_block: ast_do_block,
             } => {
                 let condition = if let Some(condition) = condition {
-                    self.translate_expression_or_import(
-                        condition,
-                        false,
-                        exported_items,
-                        num_errors,
-                    )
-                    .and_then(|term| match term {
-                        ImportOrExpression::Expression(condition) => Ok(condition),
-                        _ => {
-                            eprintln!("Not an expression");
-                            *num_errors += 1;
-                            Err(())
-                        }
-                    })
+                    self.translate_term(condition, false, exported_items, num_errors)
+                        .and_then(|term| match term {
+                            TranslatedTerm::Expression(condition) => Ok(condition),
+                            _ => {
+                                eprintln!("Not an expression");
+                                *num_errors += 1;
+                                Err(())
+                            }
+                        })
                 } else {
                     eprintln!("Missing condition after `while` at {}", keyword_while_pos);
                     self.log.quote_pos(keyword_while_pos);
@@ -1036,7 +1037,7 @@ impl File {
                     let item = self.items.remove(&name);
                     assert!(matches!(
                         item,
-                        Some(Item::Variable(_, stored_local_or_global, stored_index))
+                        Some(NamedItem::Variable(_, stored_local_or_global, stored_index))
                         if stored_index == index
                         && stored_local_or_global == local_or_global
                     ));
@@ -1112,123 +1113,59 @@ impl File {
         }
     }
 
-    fn translate_import(
-        &self,
-        import: ast::TermWithPos,
-        exported_items: &Vec<File>,
-        num_errors: &mut u32,
-    ) -> Result<usize, ()> {
-        let item = match import.term {
-            ast::Term::Identifier(name) => match self.items.get(&name) {
-                Some(item) => item,
-                None => return Err(()),
-            },
-            ast::Term::FieldByName { term_left, name } => {
-                let file_index = self.translate_import(*term_left, exported_items, num_errors)?;
-                match exported_items[file_index].items.get(&name) {
-                    Some(item) => item,
-                    None => return Err(()),
-                }
-            }
-            _ => return Err(()),
-        };
-        match *item {
-            Item::Import(_, n) => Ok(n),
-            _ => Err(()),
-        }
-    }
-
     fn translate_ty(
-        &mut self,
-        ty: ast::TermWithPos,
+        &self,
+        term_with_pos: ast::TermWithPos,
         exported_items: &Vec<File>,
         num_errors: &mut u32,
     ) -> Result<backend::TyBuilder, ()> {
-        let item = match ty.term {
-            ast::Term::IntegerTy => {
-                return Ok(backend::TyBuilder::Constructor(
-                    backend::TyConstructor::Integer,
-                ))
+        match self.translate_term(term_with_pos, false, exported_items, num_errors)? {
+            TranslatedTerm::Ty(ty) => Ok(ty),
+            _ => {
+                eprintln!("Not a type");
+                *num_errors += 1;
+                Err(())
             }
-            ast::Term::FloatTy => {
-                return Ok(backend::TyBuilder::Constructor(
-                    backend::TyConstructor::Float,
-                ))
-            }
-            ast::Term::Identifier(name) => match self.items.get(&name) {
-                Some(item) => item,
-                None => return Err(()),
-            },
-            ast::Term::FieldByName { term_left, name } => {
-                let file_index = self.translate_import(*term_left, exported_items, num_errors)?;
-                match exported_items[file_index].items.get(&name) {
-                    Some(item) => item,
-                    None => return Err(()),
-                }
-            }
-            ast::Term::TypeParameters {
-                term_left: ast_term_left,
-                parameters: ast_parameters,
-            } => {
-                let term_left = self.translate_ty(*ast_term_left, exported_items, num_errors);
-                let mut parameters = Vec::new();
-                for ast_parameter in ast_parameters {
-                    let ast_parameter = match ast_parameter {
-                        ast::ListElement::Empty { comma_pos } => {
-                            eprintln!("Empty type parameter before comma at {comma_pos}");
-                            continue;
-                        }
-                        ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
-                    };
-                    let parameter = self.translate_ty(ast_parameter, exported_items, num_errors);
-                    if *num_errors == 0 {
-                        parameters.push(parameter?);
-                    }
-                }
-                return if *num_errors == 0 {
-                    Ok(backend::TyBuilder::Application {
-                        constructor: Box::new(term_left?),
-                        arguments: parameters,
-                    })
-                } else {
-                    Err(())
-                };
-            }
-            _ => return Err(()),
-        };
-        match item {
-            Item::Ty(_, ty) => Ok(ty.clone()),
-            _ => Err(()),
         }
     }
 
-    fn translate_expression_or_import(
-        &mut self,
+    fn translate_term(
+        &self,
         ast::TermWithPos {
             term: ast_term,
             pos,
         }: ast::TermWithPos,
         reference: bool,
-        exported_items: &Vec<File>,
+        files: &Vec<File>,
         num_errors: &mut u32,
-    ) -> Result<ImportOrExpression, ()> {
+    ) -> Result<TranslatedTerm, ()> {
         match ast_term {
+            ast::Term::IntegerTy => {
+                return Ok(TranslatedTerm::Ty(backend::TyBuilder::Constructor(
+                    backend::TyConstructor::Integer,
+                )))
+            }
+            ast::Term::FloatTy => {
+                return Ok(TranslatedTerm::Ty(backend::TyBuilder::Constructor(
+                    backend::TyConstructor::Float,
+                )))
+            }
             ast::Term::NumericLiteral(value) => {
                 if value.chars().all(|ch| matches!(ch, '0'..='9')) {
                     match value.parse() {
                         Ok(value) => {
                             if reference {
-                                eprintln!("Cannot dereference literal");
+                                log::not_lvalue(pos, &self.log);
                                 *num_errors += 1;
                                 Err(())
                             } else {
-                                Ok(ImportOrExpression::Expression(
-                                    backend::Expression::Integer(value),
-                                ))
+                                Ok(TranslatedTerm::Expression(backend::Expression::Integer(
+                                    value,
+                                )))
                             }
                         }
                         Err(err) => {
-                            eprintln!("{err}");
+                            log::cannot_parse_integer(pos, err, &self.log);
                             *num_errors += 1;
                             Err(())
                         }
@@ -1237,65 +1174,30 @@ impl File {
                     match value.parse() {
                         Ok(value) => {
                             if reference {
-                                eprintln!("Cannot dereference literal");
+                                log::not_lvalue(pos, &self.log);
                                 *num_errors += 1;
                                 Err(())
                             } else {
-                                Ok(ImportOrExpression::Expression(backend::Expression::Float(
+                                Ok(TranslatedTerm::Expression(backend::Expression::Float(
                                     value,
                                 )))
                             }
                         }
                         Err(err) => {
-                            eprintln!("{err}");
+                            log::cannot_parse_float(pos, err, &self.log);
                             *num_errors += 1;
                             Err(())
                         }
                     }
                 }
             }
-            ast::Term::Identity => Ok(ImportOrExpression::Expression(
-                backend::Expression::Function {
-                    candidates: vec![backend::Function::Identity],
-                    calls: vec![],
-                },
-            )),
+            ast::Term::Identity => Ok(TranslatedTerm::Expression(backend::Expression::Function {
+                candidates: vec![backend::Function::Identity],
+                calls: vec![],
+            })),
             ast::Term::Identifier(name) => match self.items.get(&name) {
-                Some(Item::Function(candidates)) => {
-                    if reference {
-                        eprintln!("Cannot dereference a function");
-                        *num_errors += 1;
-                        Err(())
-                    } else {
-                        Ok(ImportOrExpression::Expression(
-                            backend::Expression::Function {
-                                candidates: candidates
-                                    .iter()
-                                    .map(|(_, candidate)| candidate.clone())
-                                    .collect(),
-                                calls: vec![],
-                            },
-                        ))
-                    }
-                }
-                Some(&Item::Variable(_, local_or_global, index)) => {
-                    let expr = backend::Expression::Variable(local_or_global, index);
-                    Ok(ImportOrExpression::Expression(if reference {
-                        expr
-                    } else {
-                        backend::Expression::Function {
-                            candidates: vec![backend::Function::Deref],
-                            calls: vec![backend::Call {
-                                arguments: vec![expr],
-                            }],
-                        }
-                    }))
-                }
-                Some(Item::Import(_, index)) => Ok(ImportOrExpression::Import(*index)),
-                Some(Item::Ty(_, _)) => {
-                    eprintln!("Not an expression");
-                    *num_errors += 1;
-                    Err(())
+                Some(named_item) => {
+                    self.translate_named_item(named_item, reference, pos, num_errors)
                 }
                 None => {
                     eprintln!("Undefined variable at {pos}");
@@ -1307,78 +1209,42 @@ impl File {
             ast::Term::FieldByName {
                 term_left: ast_term_left,
                 name,
-            } => {
-                match self.translate_expression_or_import(
-                    *ast_term_left,
-                    reference,
-                    exported_items,
-                    num_errors,
-                )? {
-                    ImportOrExpression::Expression(expr) => Ok(ImportOrExpression::Expression(
-                        backend::Expression::Function {
-                            candidates: vec![],
-                            calls: vec![backend::Call {
-                                arguments: vec![expr],
-                            }],
-                        },
-                    )),
-                    ImportOrExpression::Import(file_index) => {
-                        match exported_items[file_index].items.get(&name) {
-                            Some(Item::Function(candidates)) => {
-                                if reference {
-                                    eprintln!("Cannot dereference a function");
-                                    *num_errors += 1;
-                                    Err(())
-                                } else {
-                                    Ok(ImportOrExpression::Expression(
-                                        backend::Expression::Function {
-                                            candidates: candidates
-                                                .iter()
-                                                .map(|(_, candidate)| candidate.clone())
-                                                .collect(),
-                                            calls: vec![],
-                                        },
-                                    ))
-                                }
-                            }
-                            Some(&Item::Variable(_, local_or_global, index)) => {
-                                let expr = backend::Expression::Variable(local_or_global, index);
-                                Ok(ImportOrExpression::Expression(if reference {
-                                    expr
-                                } else {
-                                    backend::Expression::Function {
-                                        candidates: vec![backend::Function::Deref],
-                                        calls: vec![backend::Call {
-                                            arguments: vec![expr],
-                                        }],
-                                    }
-                                }))
-                            }
-                            Some(Item::Import(_, index)) => Ok(ImportOrExpression::Import(*index)),
-                            Some(Item::Ty(_, _)) => {
-                                eprintln!("Not an expression");
-                                *num_errors += 1;
-                                Err(())
-                            }
-                            None => Err(()),
-                        }
-                    }
+            } => match self.translate_term(*ast_term_left, reference, files, num_errors)? {
+                TranslatedTerm::Expression(expr) => {
+                    Ok(TranslatedTerm::Expression(backend::Expression::Function {
+                        candidates: vec![],
+                        calls: vec![backend::Call {
+                            arguments: vec![expr],
+                        }],
+                    }))
                 }
-            }
+                TranslatedTerm::Ty(_) => {
+                    todo!();
+                }
+                TranslatedTerm::Import(file_index) => match files[file_index].items.get(&name) {
+                    Some(named_item) => {
+                        self.translate_named_item(named_item, reference, pos, num_errors)
+                    }
+                    None => {
+                        eprintln!(
+                            "`{name}` is not defined in {}",
+                            files[file_index].log.path.display()
+                        );
+                        self.log.quote_pos(pos);
+                        *num_errors += 1;
+                        Err(())
+                    }
+                },
+            },
             ast::Term::FunctionCall {
                 function: ast_function,
                 arguments: ast_arguments,
             } => {
                 let function_pos = ast_function.pos.clone();
                 let function = self
-                    .translate_expression_or_import(
-                        *ast_function,
-                        false,
-                        exported_items,
-                        num_errors,
-                    )
+                    .translate_term(*ast_function, false, files, num_errors)
                     .and_then(|term| match term {
-                        ImportOrExpression::Expression(function) => match function {
+                        TranslatedTerm::Expression(function) => match function {
                             backend::Expression::Function { candidates, calls } => {
                                 Ok((candidates, calls))
                             }
@@ -1404,19 +1270,15 @@ impl File {
                         }
                         ast::ListElement::NonEmpty(ast_argument) => ast_argument,
                     };
-                    let Ok(argument) = self.translate_expression_or_import(
-                        ast_argument,
-                        false,
-                        exported_items,
-                        num_errors,
-                    ) else {
+                    let Ok(argument) = self.translate_term(ast_argument, false, files, num_errors)
+                    else {
                         continue;
                     };
                     match argument {
-                        ImportOrExpression::Expression(argument) => {
+                        TranslatedTerm::Expression(argument) => {
                             arguments.push(argument);
                         }
-                        ImportOrExpression::Import(_) => {
+                        _ => {
                             eprintln!("Not an expression");
                             *num_errors += 1;
                         }
@@ -1424,9 +1286,10 @@ impl File {
                 }
                 let (candidates, mut calls) = function?;
                 calls.push(backend::Call { arguments });
-                Ok(ImportOrExpression::Expression(
-                    backend::Expression::Function { candidates, calls },
-                ))
+                Ok(TranslatedTerm::Expression(backend::Expression::Function {
+                    candidates,
+                    calls,
+                }))
             }
             ast::Term::Assignment {
                 left_hand_side: ast_left_hand_side,
@@ -1436,15 +1299,10 @@ impl File {
             } => {
                 let left_hand_side = match ast_left_hand_side {
                     Some(ast_left_hand_side) => self
-                        .translate_expression_or_import(
-                            *ast_left_hand_side,
-                            true,
-                            exported_items,
-                            num_errors,
-                        )
-                        .and_then(|expression_or_import| match expression_or_import {
-                            ImportOrExpression::Expression(expr) => Ok(expr),
-                            ImportOrExpression::Import(import) => {
+                        .translate_term(*ast_left_hand_side, true, files, num_errors)
+                        .and_then(|term| match term {
+                            TranslatedTerm::Expression(expr) => Ok(expr),
+                            _ => {
                                 eprintln!("Not an expression ");
                                 Err(())
                             }
@@ -1457,15 +1315,10 @@ impl File {
                 };
                 let right_hand_side = match ast_right_hand_side {
                     Some(ast_right_hand_side) => self
-                        .translate_expression_or_import(
-                            *ast_right_hand_side,
-                            false,
-                            exported_items,
-                            num_errors,
-                        )
-                        .and_then(|expression_or_import| match expression_or_import {
-                            ImportOrExpression::Expression(expr) => Ok(expr),
-                            ImportOrExpression::Import(import) => {
+                        .translate_term(*ast_right_hand_side, false, files, num_errors)
+                        .and_then(|term| match term {
+                            TranslatedTerm::Expression(expr) => Ok(expr),
+                            _ => {
                                 eprintln!("Not an expression ");
                                 Err(())
                             }
@@ -1481,50 +1334,140 @@ impl File {
                     .get(operator_name)
                     .cloned()
                     .unwrap_or_else(Vec::new);
-                Ok(ImportOrExpression::Expression(
-                    backend::Expression::Function {
-                        candidates,
-                        calls: vec![backend::Call {
-                            arguments: vec![left_hand_side?, right_hand_side?],
-                        }],
-                    },
-                ))
+                Ok(TranslatedTerm::Expression(backend::Expression::Function {
+                    candidates,
+                    calls: vec![backend::Call {
+                        arguments: vec![left_hand_side?, right_hand_side?],
+                    }],
+                }))
+            }
+            ast::Term::TypeParameters {
+                term_left: ast_term_left,
+                parameters: ast_parameters,
+            } => {
+                let term_left = self
+                    .translate_term(*ast_term_left, false, files, num_errors)
+                    .and_then(|term_left| match term_left {
+                        TranslatedTerm::Ty(ty) => Ok(ty),
+                        _ => {
+                            eprintln!("Not a type");
+                            *num_errors += 1;
+                            Err(())
+                        }
+                    });
+                let mut parameters = Vec::new();
+                for ast_parameter in ast_parameters {
+                    let ast_parameter = match ast_parameter {
+                        ast::ListElement::Empty { comma_pos } => {
+                            eprintln!("Empty type parameter before comma at {comma_pos}");
+                            continue;
+                        }
+                        ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
+                    };
+                    let parameter = self
+                        .translate_term(ast_parameter, false, files, num_errors)
+                        .and_then(|term_left| match term_left {
+                            TranslatedTerm::Ty(ty) => Ok(ty),
+                            _ => {
+                                eprintln!("Not a type");
+                                *num_errors += 1;
+                                Err(())
+                            }
+                        });
+                    if *num_errors == 0 {
+                        parameters.push(parameter.unwrap());
+                    }
+                }
+                return if *num_errors == 0 {
+                    Ok(TranslatedTerm::Ty(backend::TyBuilder::Application {
+                        constructor: Box::new(term_left?),
+                        arguments: parameters,
+                    }))
+                } else {
+                    Err(())
+                };
             }
             _ => todo!(),
         }
     }
+
+    fn translate_named_item(
+        &self,
+        named_item: &NamedItem,
+        reference: bool,
+        pos: log::Pos,
+        num_errors: &mut u32,
+    ) -> Result<TranslatedTerm, ()> {
+        match *named_item {
+            NamedItem::Function(ref candidates) => {
+                if reference {
+                    log::not_lvalue(pos, &self.log);
+                    *num_errors += 1;
+                    Err(())
+                } else {
+                    Ok(TranslatedTerm::Expression(backend::Expression::Function {
+                        candidates: candidates
+                            .iter()
+                            .map(|(_, candidate)| candidate.clone())
+                            .collect(),
+                        calls: vec![],
+                    }))
+                }
+            }
+            NamedItem::Variable(_, local_or_global, index) => {
+                let expr = backend::Expression::Variable(local_or_global, index);
+                Ok(TranslatedTerm::Expression(if reference {
+                    expr
+                } else {
+                    backend::Expression::Function {
+                        candidates: vec![backend::Function::Deref],
+                        calls: vec![backend::Call {
+                            arguments: vec![expr],
+                        }],
+                    }
+                }))
+            }
+            NamedItem::Import(_, index) => Ok(TranslatedTerm::Import(index)),
+            NamedItem::Ty(_, ref ty) => Ok(TranslatedTerm::Ty(ty.clone())),
+        }
+    }
 }
 
-enum ImportOrExpression {
+enum TranslatedTerm {
     Import(usize),
+    Ty(backend::TyBuilder),
     Expression(backend::Expression),
 }
 
 #[derive(Clone)]
-enum Item {
-    Import(Pos, usize),
-    Ty(Pos, backend::TyBuilder),
-    Function(Vec<(Pos, backend::Function)>),
-    Variable(Pos, backend::LocalOrGlobal, usize),
+enum NamedItem {
+    Import(log::Pos, usize),
+    Ty(log::Pos, backend::TyBuilder),
+    Function(Vec<(log::Pos, backend::Function)>),
+    Variable(log::Pos, backend::LocalOrGlobal, usize),
 }
 
-fn duplicate_definition(entry: hash_map::OccupiedEntry<String, Item>, pos: Pos, file: &log::File) {
+fn duplicate_definition(
+    entry: hash_map::OccupiedEntry<String, NamedItem>,
+    pos: log::Pos,
+    file: &log::File,
+) {
     eprintln!("Duplicate definition of `{}` at {}", entry.key(), pos);
     file.quote_pos(pos);
     match entry.get() {
-        Item::Import(pos, _) => {
+        NamedItem::Import(pos, _) => {
             eprintln!("Previously imported at {pos}");
             file.quote_pos(pos.clone());
         }
-        Item::Ty(pos, _) => {
+        NamedItem::Ty(pos, _) => {
             eprintln!("Previously defined at {pos}");
             file.quote_pos(pos.clone());
         }
-        Item::Variable(pos, _, _) => {
+        NamedItem::Variable(pos, _, _) => {
             eprintln!("Previously defined at {pos}");
             file.quote_pos(pos.clone());
         }
-        Item::Function(candidates) => {
+        NamedItem::Function(candidates) => {
             for (pos, _) in candidates {
                 eprintln!("Previously defined at {pos}");
                 file.quote_pos(pos.clone());
