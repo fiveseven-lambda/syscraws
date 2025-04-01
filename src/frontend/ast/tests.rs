@@ -33,7 +33,7 @@ macro_rules! index {
 fn get_pos_with_space() {
     let input = " foo  bar  baz\n";
     let mut chars_peekable = CharsPeekable::new(&input);
-    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
 
     for (prev, start, end) in [
         (index!(0:0), index!(0:1), index!(0:4)),
@@ -52,7 +52,7 @@ fn get_pos_with_space() {
 fn get_pos_without_space() {
     let input = "foo+bar";
     let mut chars_peekable = CharsPeekable::new(&input);
-    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
 
     for (prev, start, end) in [
         (index!(0:0), index!(0:0), index!(0:3)),
@@ -68,10 +68,11 @@ fn get_pos_without_space() {
 }
 
 macro_rules! pos {
-    ($start_line:tt : $start_column:tt - $end_line:tt : $end_column:tt) => {
+    ($start_line:tt : $start_column:tt - $end_line:tt : $end_column:tt in $file_index:expr) => {
         Pos {
             start: index!($start_line:$start_column),
             end: index!($end_line:$end_column),
+            file: $file_index,
         }
     };
 }
@@ -113,7 +114,7 @@ fn skip_comments() {
         ]))
     {
         let mut chars_peekable = CharsPeekable::new(&input);
-        let mut parser = Parser::new(&mut chars_peekable).unwrap();
+        let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
         assert_eq!(
             parser.current.token,
             Some(Token::Identifier(String::from("foo")))
@@ -142,7 +143,7 @@ fn skip_comments() {
     }
     for input in ["foo//\\\\", "foo/-\n-/ //\\\\"] {
         let mut chars_peekable = CharsPeekable::new(&input);
-        let mut parser = Parser::new(&mut chars_peekable).unwrap();
+        let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
         assert!(parser.consume_token().is_err());
     }
 }
@@ -156,7 +157,7 @@ fn invalid_block_comments_in_string_literal() {
         }"
     "#;
     let mut chars_peekable = CharsPeekable::new(input);
-    assert!(Parser::new(&mut chars_peekable).is_err());
+    assert!(Parser::new(&mut chars_peekable, 0).is_err());
 }
 
 #[test]
@@ -166,7 +167,7 @@ fn block_comment_at_beginning() {
                   \\
     foo";
     let mut chars_peekable = CharsPeekable::new(input);
-    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
     assert_eq!(
         parser.current.token,
         Some(Token::Identifier(String::from("foo")))
@@ -179,9 +180,9 @@ fn block_comment_at_beginning() {
 fn parse_numeric_literal() {
     for input in ["12", "1.2", "12.", ".12", "6.02e23", "6.02e+23", "1.6e-19"] {
         let mut chars_peekable = CharsPeekable::new(&input);
-        let mut parser = Parser::new(&mut chars_peekable).unwrap();
+        let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
         let factor = parser.parse_atom(false).unwrap().unwrap();
-        assert_eq!(factor.pos, pos!(0:0-0:(input.len())));
+        assert_eq!(factor.pos, pos!(0:0-0:(input.len()) in 0));
         assert_eq!(factor.term, Term::NumericLiteral(String::from(input)));
     }
 }
@@ -190,7 +191,7 @@ fn parse_numeric_literal() {
 fn parse_string_literal() {
     let input = r#""foo$x{10}${ bar }baz""#;
     let mut chars_peekable = CharsPeekable::new(&input);
-    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
     let factor = parser.parse_atom(false).unwrap().unwrap();
     let Term::StringLiteral(components) = factor.term else {
         panic!("Not a string literal");
@@ -205,7 +206,7 @@ fn parse_string_literal() {
             assert_eq!(format, "x");
             let value = value.as_ref().unwrap();
             assert_eq!(value.term, Term::NumericLiteral(String::from("10")));
-            assert_eq!(value.pos, pos!(0:7-0:9));
+            assert_eq!(value.pos, pos!(0:7-0:9 in 0));
         }
     }
     match &components[2] {
@@ -214,7 +215,7 @@ fn parse_string_literal() {
             assert_eq!(format, "");
             let value = value.as_ref().unwrap();
             assert_eq!(value.term, Term::Identifier(String::from("bar")));
-            assert_eq!(value.pos, pos!(0:13-0:16));
+            assert_eq!(value.pos, pos!(0:13-0:16 in 0));
         }
     }
     assert_eq!(
@@ -227,19 +228,19 @@ fn parse_string_literal() {
 fn parse_identifier() {
     let input = "foo";
     let mut chars_peekable = CharsPeekable::new(&input);
-    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
     let factor = parser.parse_atom(false).unwrap().unwrap();
     assert_eq!(factor.term, Term::Identifier(String::from("foo")));
-    assert_eq!(factor.pos, pos!(0:0-0:3));
+    assert_eq!(factor.pos, pos!(0:0-0:3 in 0));
 }
 
 #[test]
 fn parse_field() {
     let input = "10.foo.20.bar";
     let mut chars_peekable = CharsPeekable::new(&input);
-    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
     let term_10_foo_20_bar = parser.parse_factor(false).unwrap().unwrap();
-    assert_eq!(term_10_foo_20_bar.pos, pos!(0:0-0:13));
+    assert_eq!(term_10_foo_20_bar.pos, pos!(0:0-0:13 in 0));
     let Term::FieldByName {
         term_left: term_10_foo_20,
         name: field_bar,
@@ -248,7 +249,7 @@ fn parse_field() {
         panic!("Not a field by name");
     };
     assert_eq!(field_bar, "bar");
-    assert_eq!(term_10_foo_20.pos, pos!(0:0-0:9));
+    assert_eq!(term_10_foo_20.pos, pos!(0:0-0:9 in 0));
     let Term::FieldByNumber {
         term_left: term_10_foo,
         number: field_20,
@@ -257,7 +258,7 @@ fn parse_field() {
         panic!("Not a field by number");
     };
     assert_eq!(field_20, "20");
-    assert_eq!(term_10_foo.pos, pos!(0:0-0:6));
+    assert_eq!(term_10_foo.pos, pos!(0:0-0:6 in 0));
     let Term::FieldByName {
         term_left: term_10,
         name: field_foo,
@@ -266,7 +267,7 @@ fn parse_field() {
         panic!("Not a field by name");
     };
     assert_eq!(field_foo, "foo");
-    assert_eq!(term_10.pos, pos!(0:0-0:2));
+    assert_eq!(term_10.pos, pos!(0:0-0:2 in 0));
     assert_eq!(term_10.term, Term::NumericLiteral(String::from("10")));
 }
 
@@ -274,9 +275,9 @@ fn parse_field() {
 fn parse_addition() {
     let input = "foo + bar";
     let mut chars_peekable = CharsPeekable::new(&input);
-    let mut parser = Parser::new(&mut chars_peekable).unwrap();
+    let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
     let factor = parser.parse_binary_operation(false).unwrap().unwrap();
-    assert_eq!(factor.pos, pos!(0:0-0:9));
+    assert_eq!(factor.pos, pos!(0:0-0:9 in 0));
     let Term::BinaryOperation {
         left_operand,
         operator_name,
@@ -288,12 +289,12 @@ fn parse_addition() {
     };
     let left_operand = left_operand.unwrap();
     assert_eq!(left_operand.term, Term::Identifier(String::from("foo")));
-    assert_eq!(left_operand.pos, pos!(0:0-0:3));
+    assert_eq!(left_operand.pos, pos!(0:0-0:3 in 0));
     assert_eq!(operator_name, "add");
-    assert_eq!(operator_pos, pos!(0:4-0:5));
+    assert_eq!(operator_pos, pos!(0:4-0:5 in 0));
     let right_operand = right_operand.unwrap();
     assert_eq!(right_operand.term, Term::Identifier(String::from("bar")));
-    assert_eq!(right_operand.pos, pos!(0:6-0:9));
+    assert_eq!(right_operand.pos, pos!(0:6-0:9 in 0));
 }
 
 #[test]
@@ -304,9 +305,9 @@ fn parse_function_definition() {
     end
     ";
     let mut chars_peekable = CharsPeekable::new(&input);
-    let mut parser = Parser::new(&mut chars_peekable).unwrap();
-    let (name, definition) = parser.parse_function_definition(false).unwrap();
-    assert_eq!(name.name.unwrap().0, (String::from("foo")));
+    let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
+    let (name, definition) = parser.parse_function_definition().unwrap();
+    assert_eq!(name.name_and_pos.unwrap().0, (String::from("foo")));
     for (parameter, expected_parameter_name) in
         definition.parameters.unwrap().iter().zip(["x", "y"])
     {
