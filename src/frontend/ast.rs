@@ -163,7 +163,7 @@ pub struct FunctionDefinition {
     /**
      * List of parameters.
      */
-    pub parameters: Option<Vec<ListElement>>,
+    pub parameters: Result<Vec<ListElement>, Pos>,
     /**
      * Return type of the function.
      */
@@ -715,7 +715,7 @@ impl Parser<'_, '_> {
         self.consume_token()?;
 
         // The function name should immediately follow `func`, without a line break.
-        let name = if self.current.is_on_new_line {
+        let name_and_pos = if self.current.is_on_new_line {
             None
         } else if let Some(name) = &mut self.current.token {
             match name {
@@ -807,6 +807,7 @@ impl Parser<'_, '_> {
         } else {
             None
         };
+        let parameters = parameters.ok_or_else(|| self.range_from(keyword_pos.start));
 
         // The return type can be written after `:`.
         let return_ty = if let Some(Token::Colon) = self.current.token {
@@ -836,7 +837,7 @@ impl Parser<'_, '_> {
         Ok((
             FunctionName {
                 keyword_pos,
-                name_and_pos: name,
+                name_and_pos,
                 is_method,
             },
             FunctionDefinition {

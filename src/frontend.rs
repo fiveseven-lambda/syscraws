@@ -544,7 +544,7 @@ impl Reader {
                         logger,
                     ) {
                         Ok(TranslatedTerm::Ty(field_ty)) => fields_ty.push(field_ty),
-                        Ok(_) => logger.not_ty(field_ty_pos, &self.files),
+                        Ok(_) => logger.expected_ty(field_ty_pos, &self.files),
                         Err(()) => {}
                     }
                 }
@@ -626,76 +626,79 @@ impl Reader {
             name_and_indices: Vec::new(),
         };
         let mut parameters_ty = Vec::new();
-        if let Some(ast_parameters) = ast_parameters {
-            for ast_parameter in ast_parameters {
-                let ast_parameter = match ast_parameter {
-                    ast::ListElement::Empty { comma_pos } => {
-                        logger.empty_parameter(comma_pos, &self.files);
-                        continue;
-                    }
-                    ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
-                };
-                match ast_parameter.term {
-                    ast::Term::TypeAnnotation {
-                        term_left: ast_parameter_name,
-                        colon_pos,
-                        term_right: ast_parameter_ty,
-                    } => {
-                        match ast_parameter_name.term {
-                            ast::Term::Identifier(name) => {
-                                match context.items.entry(name.clone()) {
-                                    std::collections::hash_map::Entry::Occupied(entry) => {
-                                        logger.duplicate_definition(
-                                            ast_parameter.pos,
-                                            entry.get().0.clone(),
-                                            &self.files,
-                                        );
-                                    }
-                                    std::collections::hash_map::Entry::Vacant(entry) => {
-                                        local_variables
-                                            .name_and_indices
-                                            .push((name, local_variables.num));
-                                        entry.insert((
-                                            ast_parameter_name.pos,
-                                            NamedItem::Variable(
-                                                backend::LocalOrGlobal::Local,
-                                                local_variables.num,
-                                            ),
-                                        ));
-                                        local_variables.num += 1;
+        match ast_parameters {
+            Ok(ast_parameters) => {
+                for ast_parameter in ast_parameters {
+                    let ast_parameter = match ast_parameter {
+                        ast::ListElement::Empty { comma_pos } => {
+                            logger.empty_parameter(comma_pos, &self.files);
+                            continue;
+                        }
+                        ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
+                    };
+                    match ast_parameter.term {
+                        ast::Term::TypeAnnotation {
+                            term_left: ast_parameter_name,
+                            colon_pos,
+                            term_right: ast_parameter_ty,
+                        } => {
+                            match ast_parameter_name.term {
+                                ast::Term::Identifier(name) => {
+                                    match context.items.entry(name.clone()) {
+                                        std::collections::hash_map::Entry::Occupied(entry) => {
+                                            logger.duplicate_definition(
+                                                ast_parameter.pos,
+                                                entry.get().0.clone(),
+                                                &self.files,
+                                            );
+                                        }
+                                        std::collections::hash_map::Entry::Vacant(entry) => {
+                                            local_variables
+                                                .name_and_indices
+                                                .push((name, local_variables.num));
+                                            entry.insert((
+                                                ast_parameter_name.pos,
+                                                NamedItem::Variable(
+                                                    backend::LocalOrGlobal::Local,
+                                                    local_variables.num,
+                                                ),
+                                            ));
+                                            local_variables.num += 1;
+                                        }
                                     }
                                 }
-                            }
-                            _ => {
-                                logger.invalid_parameter(ast_parameter.pos, &self.files);
-                            }
-                        }
-                        if let Some(ast_parameter_ty) = ast_parameter_ty {
-                            let parameter_pos = ast_parameter_ty.pos.clone();
-                            match context.translate_term(
-                                *ast_parameter_ty,
-                                false,
-                                &self.exports,
-                                &self.files,
-                                logger,
-                            ) {
-                                Ok(TranslatedTerm::Ty(parameter_ty)) => {
-                                    parameters_ty.push(parameter_ty)
+                                _ => {
+                                    logger.invalid_parameter(ast_parameter.pos, &self.files);
                                 }
-                                Ok(_) => logger.not_ty(parameter_pos, &self.files),
-                                Err(()) => {}
                             }
-                        } else {
-                            logger.missing_ty(colon_pos, &self.files);
+                            if let Some(ast_parameter_ty) = ast_parameter_ty {
+                                let parameter_pos = ast_parameter_ty.pos.clone();
+                                match context.translate_term(
+                                    *ast_parameter_ty,
+                                    false,
+                                    &self.exports,
+                                    &self.files,
+                                    logger,
+                                ) {
+                                    Ok(TranslatedTerm::Ty(parameter_ty)) => {
+                                        parameters_ty.push(parameter_ty)
+                                    }
+                                    Ok(_) => logger.expected_ty(parameter_pos, &self.files),
+                                    Err(()) => {}
+                                }
+                            } else {
+                                logger.missing_ty(colon_pos, &self.files);
+                            }
                         }
-                    }
-                    _ => {
-                        logger.invalid_parameter(ast_parameter.pos, &self.files);
+                        _ => {
+                            logger.invalid_parameter(ast_parameter.pos, &self.files);
+                        }
                     }
                 }
             }
-        } else {
-            logger.missing_parameter_list(&self.files);
+            Err(signature_pos) => {
+                logger.missing_parameter_list(signature_pos, &self.files);
+            }
         }
         let return_ty = if let Some(ast_return_ty) = ast_return_ty {
             if let Some(ast_return_ty) = ast_return_ty.ty {
@@ -709,7 +712,7 @@ impl Reader {
                 ) {
                     Ok(TranslatedTerm::Ty(return_ty)) => return_ty,
                     Ok(_) => {
-                        logger.not_ty(return_ty_pos, &self.files);
+                        logger.expected_ty(return_ty_pos, &self.files);
                         return None;
                     }
                     Err(()) => return None,
@@ -769,6 +772,9 @@ impl Reader {
                 .push(backend::Statement::Expr(body.expressions));
             body.block.size += 1;
         }
+        for ty_parameter_name in &ty_parameters_name {
+            context.items.remove(ty_parameter_name);
+        }
         Some((
             backend::FunctionTy {
                 num_ty_parameters: ty_parameters_name.len(),
@@ -803,7 +809,7 @@ impl Context {
                 };
                 match term {
                     TranslatedTerm::Expression(expr) => target.expressions.push(expr),
-                    _ => logger.not_expression(term_pos, files),
+                    _ => logger.expected_expression(term_pos, files),
                 }
             }
             ast::Statement::VariableDeclaration {
@@ -847,7 +853,7 @@ impl Context {
                         .and_then(|term| match term {
                             TranslatedTerm::Expression(condition) => Ok(condition),
                             _ => {
-                                logger.not_expression(condition_pos, files);
+                                logger.expected_expression(condition_pos, files);
                                 Err(())
                             }
                         })
@@ -989,7 +995,7 @@ impl Context {
                         .and_then(|term| match term {
                             TranslatedTerm::Expression(condition) => Ok(condition),
                             _ => {
-                                logger.not_expression(condition_pos, files);
+                                logger.expected_expression(condition_pos, files);
                                 Err(())
                             }
                         })
@@ -1136,7 +1142,7 @@ impl Context {
                     match value.parse() {
                         Ok(value) => {
                             if reference {
-                                logger.not_lvalue(pos, files);
+                                logger.expected_lvalue(pos, files);
                                 Err(())
                             } else {
                                 Ok(TranslatedTerm::Expression(backend::Expression::Integer(
@@ -1153,7 +1159,7 @@ impl Context {
                     match value.parse() {
                         Ok(value) => {
                             if reference {
-                                logger.not_lvalue(pos, files);
+                                logger.expected_lvalue(pos, files);
                                 Err(())
                             } else {
                                 Ok(TranslatedTerm::Expression(backend::Expression::Float(
@@ -1219,12 +1225,12 @@ impl Context {
                                 Ok((candidates, calls))
                             }
                             _ => {
-                                logger.not_function(function_pos, files);
+                                logger.expected_function(function_pos, files);
                                 Err(())
                             }
                         },
                         _ => {
-                            logger.not_expression(function_pos, files);
+                            logger.expected_expression(function_pos, files);
                             Err(())
                         }
                     });
@@ -1248,7 +1254,7 @@ impl Context {
                             arguments.push(argument);
                         }
                         _ => {
-                            logger.not_expression(argument_pos, files);
+                            logger.expected_expression(argument_pos, files);
                         }
                     }
                 }
@@ -1272,7 +1278,7 @@ impl Context {
                             .and_then(|term| match term {
                                 TranslatedTerm::Expression(expr) => Ok(expr),
                                 _ => {
-                                    logger.not_expression(left_hand_side_pos, files);
+                                    logger.expected_expression(left_hand_side_pos, files);
                                     Err(())
                                 }
                             })
@@ -1289,7 +1295,7 @@ impl Context {
                             .and_then(|term| match term {
                                 TranslatedTerm::Expression(expr) => Ok(expr),
                                 _ => {
-                                    logger.not_expression(right_hand_side_pos, files);
+                                    logger.expected_expression(right_hand_side_pos, files);
                                     Err(())
                                 }
                             })
@@ -1321,7 +1327,7 @@ impl Context {
                     .and_then(|term_left| match term_left {
                         TranslatedTerm::Ty(ty) => Ok(ty),
                         _ => {
-                            logger.not_ty(term_left_pos, files);
+                            logger.expected_ty(term_left_pos, files);
                             Err(())
                         }
                     });
@@ -1340,7 +1346,7 @@ impl Context {
                         .and_then(|term_left| match term_left {
                             TranslatedTerm::Ty(ty) => Ok(ty),
                             _ => {
-                                logger.not_ty(parameter_pos, files);
+                                logger.expected_ty(parameter_pos, files);
                                 Err(())
                             }
                         });
@@ -1372,7 +1378,7 @@ impl Context {
         match *named_item {
             NamedItem::Function(ref candidates) => {
                 if reference {
-                    logger.not_lvalue(pos, files);
+                    logger.expected_lvalue(pos, files);
                     Err(())
                 } else {
                     Ok(TranslatedTerm::Expression(backend::Expression::Function {

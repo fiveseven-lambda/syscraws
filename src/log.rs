@@ -405,8 +405,8 @@ impl Logger {
         self.num_errors += 1;
     }
 
-    pub fn not_lvalue(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Expression at {} is not an lvalue", pos).unwrap();
+    pub fn expected_lvalue(&mut self, pos: Pos, files: &[File]) {
+        writeln!(self.err, "Expression at {} is not a lvalue", pos).unwrap();
         self.quote(pos, files);
         self.num_errors += 1;
     }
@@ -529,8 +529,13 @@ impl Logger {
         self.num_errors += 1;
     }
 
-    pub fn missing_parameter_list(&mut self, files: &[File]) {
-        writeln!(self.err, "Missing parameter list").unwrap();
+    pub fn missing_parameter_list(&mut self, signature_pos: Pos, files: &[File]) {
+        writeln!(
+            self.err,
+            "Missing parameter list in function signature at {signature_pos}"
+        )
+        .unwrap();
+        self.quote(signature_pos, files);
         self.num_errors += 1;
     }
 
@@ -549,19 +554,19 @@ impl Logger {
         self.quote(pos, files);
     }
 
-    pub fn not_expression(&mut self, pos: Pos, files: &[File]) {
+    pub fn expected_expression(&mut self, pos: Pos, files: &[File]) {
         writeln!(self.err, "Expected an expression at {pos}").unwrap();
         self.quote(pos, files);
         self.num_errors += 1;
     }
 
-    pub fn not_ty(&mut self, pos: Pos, files: &[File]) {
+    pub fn expected_ty(&mut self, pos: Pos, files: &[File]) {
         writeln!(self.err, "Expected a type at {pos}").unwrap();
         self.quote(pos, files);
         self.num_errors += 1;
     }
 
-    pub fn not_function(&mut self, pos: Pos, files: &[File]) {
+    pub fn expected_function(&mut self, pos: Pos, files: &[File]) {
         writeln!(self.err, "The expression at {pos} is not a function").unwrap();
         self.quote(pos, files);
         self.num_errors += 1;
