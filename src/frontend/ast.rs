@@ -52,6 +52,9 @@ pub struct File {
  * on the same line.
  */
 pub struct WithExtraTokens<T> {
+    /**
+     * The valid construct parsed successfully.
+     */
     pub content: T,
     /**
      * [`Pos`] of extra tokens, if any. `None` if there are no extra tokens.
@@ -82,9 +85,9 @@ pub struct StructureName {
      */
     pub keyword_struct_pos: Pos,
     /**
-     * The structure name.
+     * The structure name and its [`Pos`].
      */
-    pub name: Option<(String, Pos)>,
+    pub name_and_pos: Option<(String, Pos)>,
 }
 
 /**
@@ -96,9 +99,12 @@ pub struct FunctionName {
      */
     pub keyword_pos: Pos,
     /**
-     * The function name.
+     * The function name and its [`Pos`].
      */
-    pub name: Option<(String, Pos)>,
+    pub name_and_pos: Option<(String, Pos)>,
+    /**
+     * whether the function is a method.
+     */
     pub is_method: bool,
 }
 
@@ -122,6 +128,9 @@ pub enum TopLevelStatement {
 
 /**
  * A structure definition in the AST.
+ *
+ * The structure name is stored in [`File::structure_names`], so it is not
+ * included here.
  */
 pub struct StructureDefinition {
     /**
@@ -154,11 +163,11 @@ pub struct FunctionDefinition {
     /**
      * List of parameters.
      */
-    pub parameters: Option<Vec<ListElement>>,
+    pub parameters: Result<Vec<ListElement>, Pos>,
     /**
      * Return type of the function.
      */
-    pub return_ty: Option<ReturnType>,
+    pub return_ty: Option<ReturnTy>,
     /**
      * [`Pos`] of extra tokens if any appear on the same line after the
      * keyword `func`, optional function name, optional type parameter list,
@@ -174,7 +183,7 @@ pub struct FunctionDefinition {
 /**
  * Return type of a function in the AST.
  */
-pub struct ReturnType {
+pub struct ReturnTy {
     /**
      * [`Pos`] of `:`.
      */
@@ -207,7 +216,7 @@ pub enum Statement {
      */
     Term(TermWithPos),
     /**
-     * While loop.
+     * `while` statement.
      */
     While {
         /**
@@ -228,8 +237,17 @@ pub enum Statement {
          */
         do_block: Vec<WithExtraTokens<Statement>>,
     },
+    /**
+     * `if` statement.
+     */
     If {
+        /**
+         * Position of the keyword `if`.
+         */
         keyword_if_pos: Pos,
+        /**
+         * The condition.
+         */
         condition: Option<TermWithPos>,
         /**
          * [`Pos`] of extra tokens if any appear on the same line after `if`
@@ -243,8 +261,17 @@ pub enum Statement {
     Continue,
 }
 
+/**
+ * `else` block of an if statement.
+ */
 pub struct ElseBlock {
+    /**
+     * Position of the keyword `else`.
+     */
     pub keyword_else_pos: Pos,
+    /**
+     * [`Pos`] of extra tokens if any appear on the same line after `else`.
+     */
     pub extra_tokens_pos: Option<Pos>,
     pub block: Vec<WithExtraTokens<Statement>>,
 }
@@ -386,10 +413,13 @@ pub enum ListElement {
 }
 
 /**
- * Parses a file.
+ * Parses an entire file.
  */
-pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError> {
-    let mut parser = Parser::new(chars_peekable)?;
+pub fn parse_file(
+    chars_peekable: &mut CharsPeekable,
+    file_index: usize,
+) -> Result<File, ParseError> {
+    let mut parser = Parser::new(chars_peekable, file_index)?;
     let mut file = File {
         imports: Vec::new(),
         structure_names: Vec::new(),
@@ -411,8 +441,7 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
                 extra_tokens_pos: parser.consume_line()?,
             });
         } else if let Token::KeywordFunc | Token::KeywordMethod = item_start_token {
-            let is_method = matches!(item_start_token, Token::KeywordMethod);
-            let (name, definition) = parser.parse_function_definition(is_method)?;
+            let (name, definition) = parser.parse_function_definition()?;
             file.function_names.push(name);
             file.top_level_statements.push(WithExtraTokens {
                 content: TopLevelStatement::FunctionDefinition(definition),
@@ -434,6 +463,9 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<File, ParseError
  * The parser used in [`parse_file`].
  */
 struct Parser<'str, 'iter> {
+    /**
+     * iterator over characters.
+     */
     iter: &'iter mut CharsPeekable<'str>,
     /**
      * Information on the current token.
@@ -443,6 +475,10 @@ struct Parser<'str, 'iter> {
      * End index of the previous token.
      */
     prev_end: Index,
+    /**
+     * The pre-order file index.
+     */
+    file_index: usize,
 }
 
 impl<'str, 'iter> Parser<'str, 'iter> {
@@ -452,12 +488,16 @@ impl<'str, 'iter> Parser<'str, 'iter> {
      * It calls [`read_token`] once and sets [`Self::current`] to point to
      * the first token.
      */
-    fn new(iter: &'iter mut CharsPeekable<'str>) -> Result<Parser<'str, 'iter>, ParseError> {
-        let first_token = read_token(iter, true)?;
+    fn new(
+        iter: &'iter mut CharsPeekable<'str>,
+        file_index: usize,
+    ) -> Result<Parser<'str, 'iter>, ParseError> {
+        let first_token = read_token(iter, true, file_index)?;
         Ok(Parser {
             iter,
             current: first_token,
             prev_end: Index { line: 0, column: 0 },
+            file_index,
         })
     }
 }
@@ -574,13 +614,17 @@ impl Parser<'_, '_> {
         })
     }
 
+    /**
+     * Parses a structure definition.
+     */
     fn parse_structure_definition(
         &mut self,
     ) -> Result<(StructureName, StructureDefinition), ParseError> {
         let keyword_struct_pos = self.current_pos();
         self.consume_token()?;
 
-        let name = if self.current.is_on_new_line {
+        // The structure name should immediately follow `struct`, without a line break.
+        let name_and_pos = if self.current.is_on_new_line {
             None
         } else if let Some(name) = &mut self.current.token {
             match name {
@@ -627,7 +671,7 @@ impl Parser<'_, '_> {
             None
         };
 
-        let extra_tokens_after_name_and_ty_parameters = self.consume_line()?;
+        let extra_tokens_pos = self.consume_line()?;
 
         let mut fields = Vec::new();
         loop {
@@ -635,41 +679,43 @@ impl Parser<'_, '_> {
                 self.consume_token()?;
                 break;
             } else if let Some(field) = self.parse_factor(false)? {
-                let extra_tokens_pos = self.consume_line()?;
                 fields.push(WithExtraTokens {
                     content: field,
-                    extra_tokens_pos,
+                    extra_tokens_pos: self.consume_line()?,
                 });
             } else {
                 return Err(ParseError::UnclosedBlock {
                     pos: self.current_pos(),
-                    start_line_indices: vec![keyword_struct_pos.line()],
+                    starts_pos: vec![keyword_struct_pos.clone()],
                 });
             }
         }
 
         Ok((
             StructureName {
-                name,
+                name_and_pos,
                 keyword_struct_pos,
             },
             StructureDefinition {
                 ty_parameters,
                 fields,
-                extra_tokens_pos: extra_tokens_after_name_and_ty_parameters,
+                extra_tokens_pos,
             },
         ))
     }
 
+    /**
+     * Parses a function definition.
+     */
     fn parse_function_definition(
         &mut self,
-        is_method: bool,
     ) -> Result<(FunctionName, FunctionDefinition), ParseError> {
+        let is_method = matches!(self.current.token, Some(Token::KeywordMethod));
         let keyword_pos = self.current_pos();
         self.consume_token()?;
 
         // The function name should immediately follow `func`, without a line break.
-        let name = if self.current.is_on_new_line {
+        let name_and_pos = if self.current.is_on_new_line {
             None
         } else if let Some(name) = &mut self.current.token {
             match name {
@@ -761,12 +807,13 @@ impl Parser<'_, '_> {
         } else {
             None
         };
+        let parameters = parameters.ok_or_else(|| self.range_from(keyword_pos.start));
 
-        // The return type can be written after `->` or `:` (undecided).
+        // The return type can be written after `:`.
         let return_ty = if let Some(Token::Colon) = self.current.token {
             let arrow_pos = self.current_pos();
             self.consume_token()?;
-            Some(ReturnType {
+            Some(ReturnTy {
                 colon_pos: arrow_pos,
                 ty: self.parse_disjunction(false)?,
             })
@@ -774,15 +821,15 @@ impl Parser<'_, '_> {
             None
         };
 
-        let extra_tokens_after_signature = self.consume_line()?;
+        let extra_tokens_pos = self.consume_line()?;
 
         // The function body follows.
-        let mut start_line_indices = vec![keyword_pos.line()];
-        let body = self.parse_block(&mut start_line_indices)?;
+        let mut starts_pos = vec![keyword_pos.clone()];
+        let body = self.parse_block(&mut starts_pos)?;
         if !matches!(self.current.token, Some(Token::KeywordEnd)) {
             return Err(ParseError::UnclosedBlock {
                 pos: self.current_pos(),
-                start_line_indices,
+                starts_pos,
             });
         }
         self.consume_token()?;
@@ -790,7 +837,7 @@ impl Parser<'_, '_> {
         Ok((
             FunctionName {
                 keyword_pos,
-                name,
+                name_and_pos,
                 is_method,
             },
             FunctionDefinition {
@@ -798,7 +845,7 @@ impl Parser<'_, '_> {
                 ty_parameters,
                 return_ty,
                 body,
-                extra_tokens_pos: extra_tokens_after_signature,
+                extra_tokens_pos,
             },
         ))
     }
@@ -809,11 +856,11 @@ impl Parser<'_, '_> {
      */
     fn parse_block(
         &mut self,
-        start_line_indices: &mut Vec<usize>,
+        starts_pos: &mut Vec<Pos>,
     ) -> Result<Vec<WithExtraTokens<Statement>>, ParseError> {
         let mut body = Vec::new();
         loop {
-            match self.parse_statement(start_line_indices)? {
+            match self.parse_statement(starts_pos)? {
                 Some(statement) => body.push(WithExtraTokens {
                     content: statement,
                     extra_tokens_pos: self.consume_line()?,
@@ -828,16 +875,14 @@ impl Parser<'_, '_> {
      */
     fn parse_statement(
         &mut self,
-        start_line_indices: &mut Vec<usize>,
+        starts_pos: &mut Vec<Pos>,
     ) -> Result<Option<Statement>, ParseError> {
         if let Some(Token::KeywordVar) = self.current.token {
             self.parse_variable_declaration().map(Option::Some)
         } else if let Some(Token::KeywordIf) = self.current.token {
-            self.parse_if_statement(start_line_indices)
-                .map(Option::Some)
+            self.parse_if_statement(starts_pos).map(Option::Some)
         } else if let Some(Token::KeywordWhile) = self.current.token {
-            self.parse_while_statement(start_line_indices)
-                .map(Option::Some)
+            self.parse_while_statement(starts_pos).map(Option::Some)
         } else if let Some(Token::KeywordBreak) = self.current.token {
             self.consume_token()?;
             Ok(Some(Statement::Break))
@@ -863,10 +908,7 @@ impl Parser<'_, '_> {
         })
     }
 
-    fn parse_if_statement(
-        &mut self,
-        start_line_indices: &mut Vec<usize>,
-    ) -> Result<Statement, ParseError> {
+    fn parse_if_statement(&mut self, starts_pos: &mut Vec<Pos>) -> Result<Statement, ParseError> {
         let keyword_if_pos = self.current_pos();
         self.consume_token()?;
 
@@ -877,50 +919,65 @@ impl Parser<'_, '_> {
             self.parse_disjunction(false)?
         };
 
-        let extra_tokens_pos_after_keyword_if = self.consume_line()?;
+        let extra_tokens_pos = self.consume_line()?;
 
-        start_line_indices.push(keyword_if_pos.line());
-        let then_block = self.parse_block(start_line_indices)?;
+        starts_pos.push(keyword_if_pos.clone());
+        let then_block = self.parse_block(starts_pos)?;
         let else_block = match self.current.token {
             Some(Token::KeywordEnd) => {
                 self.consume_token()?;
-                start_line_indices.pop();
+                starts_pos.pop();
                 None
             }
-            Some(Token::KeywordElse) => {
-                start_line_indices.push(keyword_if_pos.line());
-                let keyword_else_pos = self.current_pos();
-                self.consume_token()?;
-                let extra_tokens_pos_after_keyword_else = self.consume_line()?;
-                let block = self.parse_block(start_line_indices)?;
-                if !matches!(self.current.token, Some(Token::KeywordEnd)) {
-                    return Err(ParseError::UnclosedBlock {
-                        pos: self.current_pos(),
-                        start_line_indices: std::mem::take(start_line_indices),
-                    });
-                }
-                self.consume_token()?;
-                start_line_indices.pop();
-                Some(ElseBlock {
-                    keyword_else_pos,
-                    extra_tokens_pos: extra_tokens_pos_after_keyword_else,
-                    block,
-                })
-            }
+            Some(Token::KeywordElse) => Some(self.parse_else_block(starts_pos)?),
             _ => {
                 return Err(ParseError::UnclosedBlock {
                     pos: self.current_pos(),
-                    start_line_indices: std::mem::take(start_line_indices),
+                    starts_pos: std::mem::take(starts_pos),
                 })
             }
         };
 
         Ok(Statement::If {
             keyword_if_pos,
-            extra_tokens_pos: extra_tokens_pos_after_keyword_if,
+            extra_tokens_pos,
             condition,
             then_block,
             else_block,
+        })
+    }
+
+    fn parse_else_block(&mut self, starts_pos: &mut Vec<Pos>) -> Result<ElseBlock, ParseError> {
+        let keyword_else_pos = self.current_pos();
+        self.consume_token()?;
+        if !self.current.is_on_new_line {
+            if let Some(Token::KeywordIf) = self.current.token {
+                let statement = self.parse_if_statement(starts_pos)?;
+                let extra_tokens_pos = self.consume_line()?;
+                return Ok(ElseBlock {
+                    keyword_else_pos,
+                    extra_tokens_pos: None,
+                    block: vec![WithExtraTokens {
+                        content: statement,
+                        extra_tokens_pos,
+                    }],
+                });
+            }
+        }
+        let extra_tokens_pos = self.consume_line()?;
+        let block = self.parse_block(starts_pos)?;
+        if !matches!(self.current.token, Some(Token::KeywordEnd)) {
+            return Err(ParseError::UnclosedBlock {
+                pos: self.current_pos(),
+                starts_pos: std::mem::take(starts_pos),
+            });
+        }
+        self.consume_token()?;
+        starts_pos.pop();
+        Ok(ElseBlock {
+            keyword_else_pos,
+            extra_tokens_pos,
+            block,
         })
     }
 
@@ -929,7 +986,7 @@ impl Parser<'_, '_> {
      */
     fn parse_while_statement(
         &mut self,
-        start_line_indices: &mut Vec<usize>,
+        starts_pos: &mut Vec<Pos>,
     ) -> Result<Statement, ParseError> {
         let keyword_while_pos = self.current_pos();
         self.consume_token()?;
@@ -944,16 +1001,16 @@ impl Parser<'_, '_> {
         // A line break is required right after the condition.
         let extra_tokens_pos = self.consume_line()?;
 
-        start_line_indices.push(keyword_while_pos.line());
-        let do_block = self.parse_block(start_line_indices)?;
+        starts_pos.push(keyword_while_pos.clone());
+        let do_block = self.parse_block(starts_pos)?;
         if !matches!(self.current.token, Some(Token::KeywordEnd)) {
             return Err(ParseError::UnclosedBlock {
                 pos: self.current_pos(),
-                start_line_indices: std::mem::take(start_line_indices),
+                starts_pos: std::mem::take(starts_pos),
             });
         }
         self.consume_token()?;
-        start_line_indices.pop();
+        starts_pos.pop();
 
         Ok(Statement::While {
             keyword_while_pos,
@@ -1436,6 +1493,7 @@ impl Parser<'_, '_> {
      */
     fn current_pos(&self) -> Pos {
         Pos {
+            file: self.file_index,
             start: self.current.start,
             end: self.iter.index(),
         }
@@ -1446,6 +1504,7 @@ impl Parser<'_, '_> {
      */
     fn range_from(&self, start: Index) -> Pos {
         Pos {
+            file: self.file_index,
             start,
             end: self.prev_end,
         }
@@ -1456,7 +1515,7 @@ impl Parser<'_, '_> {
      */
     fn consume_token(&mut self) -> Result<(), ParseError> {
         self.prev_end = self.iter.index();
-        self.current = read_token(&mut self.iter, false)?;
+        self.current = read_token(&mut self.iter, false, self.file_index)?;
         Ok(())
     }
 }
@@ -1476,7 +1535,11 @@ impl Parser<'_, '_> {
  * - [`ParseError::InvalidBlockComment`]: `is_on_new_line` is `false` when a
  *   block comment starts.
  */
-fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<TokenInfo, ParseError> {
+fn read_token(
+    iter: &mut CharsPeekable,
+    mut is_on_new_line: bool,
+    file_index: usize,
+) -> Result<TokenInfo, ParseError> {
     let (start_index, first_ch) = loop {
         let Some(ch) = iter.peek() else {
             return Ok(TokenInfo {
@@ -1518,12 +1581,17 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
             let mut string = String::new();
             loop {
                 let Some(ch1) = iter.peek() else {
-                    return Err(ParseError::UnterminatedStringLiteral { start_index });
+                    return Err(ParseError::UnterminatedStringLiteral(Pos {
+                        file: file_index,
+                        start: start_index,
+                        end: iter.index(),
+                    }));
                 };
                 let index1 = iter.index();
                 iter.consume();
                 match ch1 {
                     '$' => {
+                        let index2 = iter.index();
                         if !string.is_empty() {
                             components
                                 .push(StringLiteralComponent::String(std::mem::take(&mut string)));
@@ -1533,7 +1601,11 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
                         let mut format = String::new();
                         loop {
                             let Some(ch2) = iter.peek() else {
-                                return Err(ParseError::UnterminatedStringLiteral { start_index });
+                                return Err(ParseError::UnterminatedStringLiteral(Pos {
+                                    file: file_index,
+                                    start: start_index,
+                                    end: iter.index(),
+                                }));
                             };
                             iter.consume();
                             match ch2 {
@@ -1544,11 +1616,12 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
                         }
                         let mut parser = {
                             let start = iter.index();
-                            let first_token = read_token(iter, false)?;
+                            let first_token = read_token(iter, false, file_index)?;
                             Parser {
                                 iter,
                                 current: first_token,
                                 prev_end: start,
+                                file_index,
                             }
                         };
                         let value = parser.parse_disjunction(true)?;
@@ -1560,17 +1633,29 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
                             Some(_) => {
                                 return Err(ParseError::UnexpectedTokenInStringLiteral {
                                     unexpected_token_pos: parser.current_pos(),
-                                    dollar_index: index1,
+                                    dollar_pos: Pos {
+                                        file: file_index,
+                                        start: index1,
+                                        end: iter.index(),
+                                    },
                                 });
                             }
                             None => {
-                                return Err(ParseError::UnterminatedStringLiteral { start_index });
+                                return Err(ParseError::UnterminatedStringLiteral(Pos {
+                                    file: file_index,
+                                    start: start_index,
+                                    end: iter.index(),
+                                }));
                             }
                         }
                     }
                     '\\' => {
                         let Some(ch) = iter.peek() else {
-                            return Err(ParseError::UnterminatedStringLiteral { start_index });
+                            return Err(ParseError::UnterminatedStringLiteral(Pos {
+                                file: file_index,
+                                start: start_index,
+                                end: iter.index(),
+                            }));
                         };
                         iter.consume();
                         string.push(match ch {
@@ -1582,9 +1667,11 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
                             '0' => '\0',
                             '\'' => '\'',
                             _ => {
-                                return Err(ParseError::InvalidEscapeSequence {
-                                    backslash_index: index1,
-                                })
+                                return Err(ParseError::InvalidEscapeSequence(Pos {
+                                    file: file_index,
+                                    start: index1,
+                                    end: iter.index(),
+                                }))
                             }
                         });
                     }
@@ -1639,7 +1726,7 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
         '-' => {
             if iter.consume_if('-') {
                 skip_line_comment(iter);
-                return read_token(iter, true);
+                return read_token(iter, true, file_index);
             } else if iter.consume_if('=') {
                 Token::HyphenEqual
             } else if iter.consume_if('>') {
@@ -1657,15 +1744,21 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
         }
         '/' => {
             if iter.consume_if('-') {
-                skip_block_comment(iter, start_index, '/', '-', '-', '/')?;
-                return read_token(iter, is_on_new_line);
+                skip_block_comment(iter, '/', '-', '-', '/', start_index, file_index)?;
+                return read_token(iter, is_on_new_line, file_index);
             } else if iter.consume_if('/') {
                 if !is_on_new_line {
-                    return Err(ParseError::InvalidBlockComment { start_index });
+                    return Err(ParseError::InvalidBlockComment {
+                        start_pos: Pos {
+                            file: file_index,
+                            start: start_index,
+                            end: iter.index(),
+                        },
+                    });
                 }
-                skip_block_comment(iter, start_index, '/', '/', '\\', '\\')?;
+                skip_block_comment(iter, '/', '/', '\\', '\\', start_index, file_index)?;
                 skip_line_comment(iter);
-                return read_token(iter, true);
+                return read_token(iter, true, file_index);
             } else if iter.consume_if('=') {
                 Token::SlashEqual
             } else {
@@ -1759,7 +1852,13 @@ fn read_token(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<Toke
         '}' => Token::ClosingBrace,
         '.' => Token::Dot,
         '$' => Token::Dollar,
-        _ => return Err(ParseError::UnexpectedCharacter(start_index)),
+        _ => {
+            return Err(ParseError::UnexpectedCharacter(Pos {
+                file: file_index,
+                start: start_index,
+                end: iter.index(),
+            }))
+        }
     };
     Ok(TokenInfo {
         token: Some(token),
@@ -1794,16 +1893,26 @@ fn skip_line_comment(iter: &mut CharsPeekable) {
  */
 fn skip_block_comment(
     iter: &mut CharsPeekable,
-    start_index: Index,
     start0: char,
     start1: char,
     end0: char,
     end1: char,
+    start_index: Index,
+    file_index: usize,
 ) -> Result<(), ParseError> {
     let mut start_indices = vec![start_index];
     loop {
         let Some(ch) = iter.peek() else {
-            return Err(ParseError::UnterminatedComment { start_indices });
+            return Err(ParseError::UnterminatedComment(
+                start_indices
+                    .into_iter()
+                    .map(|start_index| Pos {
+                        file: file_index,
+                        start: start_index,
+                        end: iter.index(),
+                    })
+                    .collect(),
+            ));
         };
         let index = iter.index();
         iter.consume();

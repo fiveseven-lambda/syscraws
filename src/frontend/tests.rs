@@ -242,6 +242,7 @@ impl Debug for backend::Function {
 
 #[test]
 fn test() {
+    let mut logger = log::Logger::new(Box::new(std::io::sink()));
     for &dir_name in &[
         "struct",
         "if_else",
@@ -250,7 +251,8 @@ fn test() {
         "break",
     ] {
         let dir = Path::new("tests/frontend").join(dir_name);
-        let definitions = read_input(&dir.join("input")).unwrap();
+        eprintln!("{}", dir.display());
+        let definitions = read_input(&dir.join("input"), &mut logger).unwrap();
         let output = format!("{definitions:?}");
         let expected = std::fs::read_to_string(dir.join("expected.txt")).unwrap();
         if output != expected {
