@@ -48,7 +48,8 @@ pub fn read_input(
         num_functions: 0,
         definitions: backend::Definitions {
             structures: Vec::new(),
-            functions: Vec::new(),
+            functions_ty: Vec::new(),
+            function_definitions: Vec::new(),
             num_global_variables: 0,
         },
         global_block: Block {
@@ -96,22 +97,23 @@ pub fn read_input(
             .push(backend::Statement::Expr(reader.global_block.expressions));
         reader.global_block.block.size += 1;
     }
-    reader.definitions.functions.push((
-        backend::FunctionTy {
-            num_ty_parameters: 0,
-            parameters_ty: Vec::new(),
-            return_ty: backend::TyBuilder::Application {
-                constructor: Box::new(backend::TyBuilder::Constructor(
-                    backend::TyConstructor::Tuple,
-                )),
-                arguments: vec![],
-            },
+    reader.definitions.functions_ty.push(backend::FunctionTy {
+        num_ty_parameters: 0,
+        parameters_ty: Vec::new(),
+        return_ty: backend::TyBuilder::Application {
+            constructor: Box::new(backend::TyBuilder::Constructor(
+                backend::TyConstructor::Tuple,
+            )),
+            arguments: vec![],
         },
-        backend::FunctionDefinition {
+    });
+    reader
+        .definitions
+        .function_definitions
+        .push(backend::FunctionDefinition {
             num_local_variables: 0,
             body: reader.global_block.block,
-        },
-    ));
+        });
     Ok(reader.definitions)
 }
 
@@ -273,7 +275,8 @@ impl Reader {
                         &mut context,
                         logger,
                     ) {
-                        self.definitions.functions.push((ty, definition));
+                        self.definitions.functions_ty.push(ty);
+                        self.definitions.function_definitions.push(definition);
                     }
                     assert_eq!(context.items.len(), num_current_items);
                 }

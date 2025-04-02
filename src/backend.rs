@@ -16,11 +16,14 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+mod ir;
+
 use std::{cell::RefCell, rc::Rc};
 
 pub struct Definitions {
     pub structures: Vec<(TyKind, Structure)>,
-    pub functions: Vec<(FunctionTy, FunctionDefinition)>,
+    pub functions_ty: Vec<FunctionTy>,
+    pub function_definitions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
 }
 
@@ -227,8 +230,6 @@ pub enum LocalOrGlobal {
     Global,
 }
 
-fn translate_function() {}
-
 pub struct Call {
     pub arguments: Vec<Expression>,
 }
@@ -298,34 +299,146 @@ impl TyBuilder {
     }
 }
 
-fn get_function_ty(
-    function: &Function,
-    function_definition: &[(FunctionTy, FunctionDefinition)],
-) -> Ty {
+impl Definitions {
+    pub fn translate(self) {
+        for definition in self.function_definitions {
+            let mut num_blocks = 0;
+            translate_block(definition.body, &mut num_blocks, &self.functions_ty);
+        }
+    }
+}
+
+fn translate_block(block: Block, num_blocks: &mut usize, functions_ty: &[FunctionTy]) {
+    for statement in block.statements {
+        translate_statement(statement, num_blocks, functions_ty);
+    }
+}
+
+fn translate_statement(statement: Statement, num_blocks: &mut usize, functions_ty: &[FunctionTy]) {
+    match statement {
+        Statement::Expr(exprs) => {
+            for expr in exprs {
+                translate_expression(expr, functions_ty);
+            }
+            println!("{num_blocks}: Jump");
+            *num_blocks += 1;
+        }
+        Statement::If {
+            antecedents,
+            condition,
+            then_block,
+            else_block,
+        } => {
+            for expr in antecedents {
+                translate_expression(expr, functions_ty);
+            }
+            translate_expression(condition, functions_ty);
+            println!("{num_blocks}: Br");
+            *num_blocks += 1;
+            translate_block(then_block, num_blocks, functions_ty);
+            translate_block(else_block, num_blocks, functions_ty);
+        }
+        Statement::While {
+            condition,
+            do_block,
+        } => {
+            translate_expression(condition, functions_ty);
+            println!("{num_blocks}: Br");
+            *num_blocks += 1;
+            translate_block(do_block, num_blocks, functions_ty);
+        }
+        Statement::Break(exprs) => {
+            for expr in exprs {
+                translate_expression(expr, functions_ty);
+            }
+            println!("{num_blocks}: break");
+        }
+        Statement::Continue(exprs) => {
+            for expr in exprs {
+                translate_expression(expr, functions_ty);
+            }
+            println!("{num_blocks}: continue");
+        }
+    }
+}
+
+fn get_function_ty(function: &Function, functions_ty: &[FunctionTy]) -> Ty {
     match *function {
-        Function::UserDefined(index) => function_definition[index].0.build(),
+        Function::UserDefined(index) => functions_ty[index].build(),
         _ => todo!(),
     }
 }
 
-fn get_ty(expression: &Expression, function_definition: &[(FunctionTy, FunctionDefinition)]) {
-    match expression {
+fn translate_expression(expr: Expression, functions_ty: &[FunctionTy]) -> (Ty, ir::Expression) {
+    match expr {
+        Expression::Integer(value) => (
+            Ty {
+                inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Integer))),
+            },
+            ir::Expression::Integer(value),
+        ),
+        Expression::Float(value) => (
+            Ty {
+                inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Float))),
+            },
+            ir::Expression::Float(value),
+        ),
         Expression::Function { candidates, calls } => {
-            for candidate in candidates {
-                let ty = get_function_ty(candidate, function_definition);
-                for call in calls {
-                    match *ty.inner.borrow() {
-                        TyInner::Application {
-                            ref constructor,
-                            ref arguments,
-                        } => match *constructor.inner.borrow() {
-                            TyInner::Constructor(TyConstructor::Function) => {}
+            let calls: Vec<Vec<_>> = calls
+                .into_iter()
+                .map(|Call { arguments }| {
+                    arguments
+                        .into_iter()
+                        .map(|argument| translate_expression(argument, functions_ty))
+                        .collect()
+                })
+                .collect();
+            let candidates: Vec<_> = candidates
+                .iter()
+                .filter(|candidate| {
+                    let ty = get_function_ty(candidate, functions_ty);
+                    let mut history = Vec::new();
+                    let mut flag = true;
+                    for call in &calls {
+                        match *ty.inner.borrow() {
+                            TyInner::Application {
+                                ref constructor,
+                                ref arguments,
+                            } => match (&*constructor.inner.borrow(), &*arguments.inner.borrow()) {
+                                (
+                                    TyInner::Constructor(TyConstructor::Function),
+                                    TyInner::Cons(ref ret, ref arguments),
+                                ) => {
+                                    if call
+                                        .iter()
+                                        .rfold(
+                                            Ty {
+                                                inner: Rc::new(RefCell::new(TyInner::Nil)),
+                                            },
+                                            |tail, (head, _)| Ty {
+                                                inner: Rc::new(RefCell::new(TyInner::Cons(
+                                                    head.clone(),
+                                                    tail,
+                                                ))),
+                                            },
+                                        )
+                                        .unify(arguments, &mut history)
+                                    {
+                                    } else {
+                                        flag = false;
+                                        break;
+                                    }
+                                }
+                                _ => todo!(),
+                            },
                             _ => todo!(),
-                        },
-                        _ => todo!(),
+                        }
                     }
-                }
-            }
+                    rollback(&history);
+                    flag
+                })
+                .collect();
+            todo!();
         }
         _ => todo!(),
     }
