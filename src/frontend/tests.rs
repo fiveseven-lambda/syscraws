@@ -29,7 +29,12 @@ impl Debug for backend::Definitions {
                 writeln!(f, "S{i}.{j}: {field_ty:?}")?;
             }
         }
-        for (i, (ty, definition)) in self.functions.iter().enumerate() {
+        for (i, (ty, definition)) in self
+            .functions_ty
+            .iter()
+            .zip(&self.function_definitions)
+            .enumerate()
+        {
             writeln!(f, "F{i}{ty:?}")?;
             writeln!(f, "{definition:?}")?;
         }
@@ -80,19 +85,6 @@ impl Debug for backend::TyBuilder {
                         .join(", ")
                 )
             }
-        }
-    }
-}
-
-impl Debug for backend::TyConstructor {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            backend::TyConstructor::Integer => write!(f, "Integer"),
-            backend::TyConstructor::Float => write!(f, "Float"),
-            backend::TyConstructor::Reference => write!(f, "Reference"),
-            backend::TyConstructor::Tuple => write!(f, "Tuple"),
-            backend::TyConstructor::Function => write!(f, "Function"),
-            backend::TyConstructor::Structure(i) => write!(f, "S{i}"),
         }
     }
 }
