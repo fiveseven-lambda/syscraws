@@ -146,69 +146,77 @@ impl Ty {
             TyInner::SameAs(this) => this.contains(other),
         }
     }
+}
 
-    fn unify(&self, other: &Ty, history: &mut Vec<Ty>) -> bool {
-        let self_binding = self.inner.borrow();
-        let other_binding = other.inner.borrow();
-        match (&*self_binding, &*other_binding) {
-            (TyInner::SameAs(self_), _) => {
-                drop(other_binding);
-                self_.unify(other, history)
+struct Unifications {
+    history: Vec<(Ty, Ty)>,
+}
+
+impl Unifications {
+    fn unify(&mut self, left: &Ty, right: &Ty) -> bool {
+        let left_binding = left.inner.borrow();
+        let right_binding = right.inner.borrow();
+        match (&*left_binding, &*right_binding) {
+            (TyInner::SameAs(left), _) => {
+                drop(right_binding);
+                self.unify(left, right)
             }
-            (_, TyInner::SameAs(other_)) => {
-                drop(self_binding);
-                self.unify(other_, history)
+            (_, TyInner::SameAs(right)) => {
+                drop(left_binding);
+                self.unify(left, right)
             }
             (TyInner::Undetermined, _) => {
-                if other.contains(self) {
+                if right.contains(left) {
                     return false;
                 }
-                drop(self_binding);
-                history.push(self.clone());
-                *self.inner.borrow_mut() = TyInner::SameAs(other.clone());
+                drop(left_binding);
+                self.history.push((left.clone(), right.clone()));
+                *left.inner.borrow_mut() = TyInner::SameAs(right.clone());
                 true
             }
             (_, TyInner::Undetermined) => {
-                if self.contains(other) {
+                if left.contains(right) {
                     return false;
                 }
-                drop(other_binding);
-                history.push(other.clone());
-                *other.inner.borrow_mut() = TyInner::SameAs(self.clone());
+                drop(right_binding);
+                self.history.push((right.clone(), left.clone()));
+                *right.inner.borrow_mut() = TyInner::SameAs(left.clone());
                 true
             }
-            (TyInner::Constructor(self_constructor), TyInner::Constructor(other_constructor)) => {
-                self_constructor == other_constructor
+            (TyInner::Constructor(left_constructor), TyInner::Constructor(right_constructor)) => {
+                left_constructor == right_constructor
             }
-            (TyInner::Parameter(self_index), TyInner::Parameter(other_index)) => {
-                self_index == other_index
+            (TyInner::Parameter(left_index), TyInner::Parameter(right_index)) => {
+                left_index == right_index
             }
             (
                 TyInner::Application {
-                    constructor: self_constructor,
-                    arguments: self_arguments,
+                    constructor: left_constructor,
+                    arguments: left_arguments,
                 },
                 TyInner::Application {
-                    constructor: other_constructor,
-                    arguments: other_arguments,
+                    constructor: right_constructor,
+                    arguments: right_arguments,
                 },
             ) => {
-                self_arguments.len() == other_arguments.len()
-                    && self_constructor.unify(other_constructor, history)
-                    && self_arguments.iter().zip(other_arguments).all(
-                        |(self_element, other_element)| self_element.unify(other_element, history),
+                left_arguments.len() == right_arguments.len()
+                    && self.unify(left_constructor, right_constructor)
+                    && left_arguments.iter().zip(right_arguments).all(
+                        |(self_element, other_element)| self.unify(self_element, other_element),
                     )
             }
             (TyInner::List(self_elements), TyInner::List(other_elements)) => {
                 self_elements.len() == other_elements.len()
                     && self_elements.iter().zip(other_elements).all(
-                        |(self_element, other_element)| self_element.unify(other_element, history),
+                        |(self_element, other_element)| self.unify(self_element, other_element),
                     )
             }
             _ => false,
         }
     }
+}
 
+impl Ty {
     fn extract_function_ty(&self) -> (Option<Ty>, i32) {
         match *self.inner.borrow() {
             TyInner::Application {
@@ -230,9 +238,16 @@ impl Ty {
     }
 }
 
-fn rollback(history: &[Ty]) {
-    for ty in history {
-        *ty.inner.borrow_mut() = TyInner::Undetermined
+impl Unifications {
+    fn undo(&self) {
+        for (ty, _) in &self.history {
+            *ty.inner.borrow_mut() = TyInner::Undetermined
+        }
+    }
+    fn redo(&self) {
+        for (left, right) in &self.history {
+            *left.inner.borrow_mut() = TyInner::SameAs(right.clone())
+        }
     }
 }
 
@@ -470,7 +485,9 @@ fn translate_expression(
             let candidates: Vec<_> = candidates
                 .iter()
                 .filter_map(|candidate| {
-                    let mut history = Vec::new();
+                    let mut unifications = Unifications {
+                        history: Vec::new(),
+                    };
                     let ret_ty = calls.iter().try_fold(
                         get_function_ty(candidate, functions_ty),
                         |function_ty, arguments| {
@@ -560,20 +577,24 @@ fn translate_expression(
                             for (((argument_ty, _), parameter_ty), num_extra_calls) in
                                 arguments.iter().zip(parameters_ty).zip(nums_extra_calls)
                             {
-                                if !extra_calls[..num_extra_calls]
-                                    .iter()
-                                    .fold(parameter_ty.clone(), |parameter_ty, extra_call| Ty {
-                                        inner: Rc::new(RefCell::new(TyInner::Application {
-                                            constructor: Ty {
-                                                inner: Rc::new(RefCell::new(TyInner::Constructor(
-                                                    TyConstructor::Function,
-                                                ))),
-                                            },
-                                            arguments: vec![parameter_ty, extra_call.clone()],
-                                        })),
-                                    })
-                                    .unify(argument_ty, &mut history)
-                                {
+                                if !unifications.unify(
+                                    &extra_calls[..num_extra_calls].iter().fold(
+                                        parameter_ty.clone(),
+                                        |parameter_ty, extra_call| Ty {
+                                            inner: Rc::new(RefCell::new(TyInner::Application {
+                                                constructor: Ty {
+                                                    inner: Rc::new(RefCell::new(
+                                                        TyInner::Constructor(
+                                                            TyConstructor::Function,
+                                                        ),
+                                                    )),
+                                                },
+                                                arguments: vec![parameter_ty, extra_call.clone()],
+                                            })),
+                                        },
+                                    ),
+                                    argument_ty,
+                                ) {
                                     return None;
                                 }
                             }
@@ -581,13 +602,16 @@ fn translate_expression(
                             Some(return_ty.clone())
                         },
                     );
-                    rollback(&history);
-                    ret_ty
+                    unifications.undo();
+                    ret_ty.map(|ret_ty| (ret_ty, unifications))
                 })
                 .collect();
             eprintln!("{} candidates found", candidates.len());
             match &candidates[..] {
-                [ty] => (ty.clone(), ir::Expression::Integer(0)),
+                [(ty, unifications)] => {
+                    unifications.redo();
+                    (ty.clone(), ir::Expression::Integer(0))
+                }
                 _ => todo!(),
             }
         }
