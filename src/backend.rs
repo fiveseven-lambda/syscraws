@@ -120,7 +120,7 @@ impl std::cmp::Eq for Ty {}
 enum TyInner {
     Constructor(TyConstructor),
     Parameter(usize),
-    Application { constructor: Ty, arguments: Ty },
+    Application { constructor: Ty, arguments: Vec<Ty> },
     List(Vec<Ty>),
     Undetermined,
     SameAs(Ty),
@@ -137,7 +137,10 @@ impl Ty {
             TyInner::Application {
                 constructor,
                 arguments,
-            } => constructor.contains(other) || arguments.contains(other),
+            } => {
+                constructor.contains(other)
+                    || arguments.iter().any(|argument| argument.contains(other))
+            }
             TyInner::List(elements) => elements.iter().any(|element| element.contains(other)),
             TyInner::Undetermined => false,
             TyInner::SameAs(this) => this.contains(other),
@@ -190,8 +193,11 @@ impl Ty {
                     arguments: other_arguments,
                 },
             ) => {
-                self_constructor.unify(other_constructor, history)
-                    && self_arguments.unify(other_arguments, history)
+                self_arguments.len() == other_arguments.len()
+                    && self_constructor.unify(other_constructor, history)
+                    && self_arguments.iter().zip(other_arguments).all(
+                        |(self_element, other_element)| self_element.unify(other_element, history),
+                    )
             }
             (TyInner::List(self_elements), TyInner::List(other_elements)) => {
                 self_elements.len() == other_elements.len()
@@ -209,14 +215,10 @@ impl Ty {
                 ref constructor,
                 ref arguments,
             } => match *constructor.inner.borrow() {
-                TyInner::Constructor(TyConstructor::Function) => match *arguments.inner.borrow() {
-                    TyInner::List(ref elements) => {
-                        let mut ret = elements[0].extract_function_ty();
-                        ret.1 += 1;
-                        ret
-                    }
-                    _ => todo!("Error"),
-                },
+                TyInner::Constructor(TyConstructor::Function) => {
+                    let (ty, depth) = arguments[0].extract_function_ty();
+                    (ty, depth + 1)
+                }
                 _ => (None, 0),
             },
             TyInner::Parameter(_) => (None, 0),
@@ -282,18 +284,21 @@ impl FunctionTy {
                 inner: Rc::new(RefCell::new(TyInner::Undetermined)),
             })
             .collect();
-        let return_and_parameters_ty = std::iter::once(&self.return_ty)
-            .chain(&self.parameters_ty)
-            .map(|ty| ty.build(&ty_parameters))
-            .collect();
+        let return_ty = self.return_ty.build(&ty_parameters);
+        let parameters_ty = Ty {
+            inner: Rc::new(RefCell::new(TyInner::List(
+                self.parameters_ty
+                    .iter()
+                    .map(|ty| ty.build(&ty_parameters))
+                    .collect(),
+            ))),
+        };
         Ty {
             inner: Rc::new(RefCell::new(TyInner::Application {
                 constructor: Ty {
                     inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Function))),
                 },
-                arguments: Ty {
-                    inner: Rc::new(RefCell::new(TyInner::List(return_and_parameters_ty))),
-                },
+                arguments: vec![return_ty, parameters_ty],
             })),
         }
     }
@@ -311,11 +316,7 @@ impl TyBuilder {
             } => Ty {
                 inner: Rc::new(RefCell::new(TyInner::Application {
                     constructor: constructor.build(parameters),
-                    arguments: Ty {
-                        inner: Rc::new(RefCell::new(TyInner::List(
-                            arguments.iter().map(|ty| ty.build(parameters)).collect(),
-                        ))),
-                    },
+                    arguments: arguments.iter().map(|ty| ty.build(parameters)).collect(),
                 })),
             },
             TyBuilder::Parameter(index) => parameters[index].clone(),
@@ -414,25 +415,23 @@ fn get_function_ty(function: &Function, functions_ty: &[FunctionTy]) -> Ty {
                 constructor: Ty {
                     inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Function))),
                 },
-                arguments: Ty {
-                    inner: Rc::new(RefCell::new(TyInner::List(vec![
-                        Ty {
-                            inner: Rc::new(RefCell::new(TyInner::Application {
-                                constructor: Ty {
-                                    inner: Rc::new(RefCell::new(TyInner::Constructor(
-                                        TyConstructor::Tuple,
-                                    ))),
-                                },
-                                arguments: Ty {
-                                    inner: Rc::new(RefCell::new(TyInner::List(Vec::new()))),
-                                },
-                            })),
-                        },
-                        Ty {
-                            inner: Rc::new(RefCell::new(TyInner::Undetermined)),
-                        },
-                    ]))),
-                },
+                arguments: vec![
+                    Ty {
+                        inner: Rc::new(RefCell::new(TyInner::Undetermined)),
+                    },
+                    Ty {
+                        inner: Rc::new(RefCell::new(TyInner::Application {
+                            constructor: Ty {
+                                inner: Rc::new(RefCell::new(TyInner::Constructor(
+                                    TyConstructor::Tuple,
+                                ))),
+                            },
+                            arguments: vec![Ty {
+                                inner: Rc::new(RefCell::new(TyInner::List(Vec::new()))),
+                            }],
+                        })),
+                    },
+                ],
             })),
         },
         _ => todo!(),
@@ -487,17 +486,17 @@ fn translate_expression(
                             else {
                                 return None;
                             };
-                            let TyInner::List(ref return_and_parameters_ty) =
-                                *return_and_parameters_ty.inner.borrow()
+                            let return_ty = &return_and_parameters_ty[0];
+                            let TyInner::List(ref parameters_ty) =
+                                *return_and_parameters_ty[1].inner.borrow()
                             else {
                                 return None;
                             };
-                            let return_ty = &return_and_parameters_ty[0];
-                            let parameters_ty = &return_and_parameters_ty[1..];
                             if arguments.len() != parameters_ty.len() {
                                 return None;
                             }
                             let mut depths = HashMap::new();
+                            depths.insert(None, Some(0));
                             let mut inequalities = Vec::new();
                             for ((argument_ty, _), parameter_ty) in
                                 arguments.iter().zip(parameters_ty)
@@ -507,10 +506,10 @@ fn translate_expression(
                                 let (parameter_return_ty, parameter_depth) =
                                     parameter_ty.extract_function_ty();
                                 if let Some(ref argument_return_ty) = argument_return_ty {
-                                    depths.insert(argument_return_ty.clone(), None);
+                                    depths.insert(Some(argument_return_ty.clone()), None);
                                 }
                                 if let Some(ref parameter_return_ty) = parameter_return_ty {
-                                    depths.insert(parameter_return_ty.clone(), None);
+                                    depths.insert(Some(parameter_return_ty.clone()), None);
                                 }
                                 inequalities.push((
                                     argument_return_ty,
@@ -518,29 +517,67 @@ fn translate_expression(
                                     argument_depth - parameter_depth,
                                 ));
                             }
-                            for _ in 0..depths.len() {
+                            for i in 0..depths.len() {
+                                let mut updated = false;
                                 for (argument, parameter, diff) in &inequalities {
-                                    let argument_depth = if let Some(argument) = argument {
-                                        if let Some(argument_depth) = depths[argument] {
-                                            argument_depth
-                                        } else {
-                                            continue;
-                                        }
-                                    } else {
-                                        0
-                                    };
-                                    let Some(parameter) = parameter else {
+                                    let Some(argument_depth) = depths[argument] else {
                                         continue;
                                     };
-                                    if depths[parameter]
-                                        .is_none_or(|depth| depth > argument_depth + diff)
+                                    let new_parameter_depth = argument_depth + diff;
+                                    let parameter_depth = depths.get_mut(parameter).unwrap();
+                                    if parameter_depth
+                                        .is_none_or(|depth| depth > new_parameter_depth)
                                     {
-                                        depths
-                                            .insert(parameter.clone(), Some(argument_depth + diff));
+                                        *parameter_depth = Some(new_parameter_depth);
+                                        updated = true;
                                     }
                                 }
+                                if i == depths.len() - 1 && updated {
+                                    return None;
+                                }
                             }
-                            // 得られたdepthに基づいてunify
+                            let nums_extra_calls: Option<Vec<_>> = inequalities
+                                .iter()
+                                .map(|(argument_ty, parameter_ty, diff)| {
+                                    let Some(argument_depth) = depths[argument_ty] else {
+                                        return None;
+                                    };
+                                    let Some(parameter_depth) = depths[parameter_ty] else {
+                                        return None;
+                                    };
+                                    (diff + argument_depth - parameter_depth).try_into().ok()
+                                })
+                                .collect();
+                            let Some(nums_extra_calls) = nums_extra_calls else {
+                                return None;
+                            };
+                            let extra_calls: Vec<_> =
+                                (0..nums_extra_calls.iter().cloned().max().unwrap_or(0))
+                                    .map(|_| Ty {
+                                        inner: Rc::new(RefCell::new(TyInner::Undetermined)),
+                                    })
+                                    .collect();
+                            for (((argument_ty, _), parameter_ty), num_extra_calls) in
+                                arguments.iter().zip(parameters_ty).zip(nums_extra_calls)
+                            {
+                                if !extra_calls[..num_extra_calls]
+                                    .iter()
+                                    .fold(parameter_ty.clone(), |parameter_ty, extra_call| Ty {
+                                        inner: Rc::new(RefCell::new(TyInner::Application {
+                                            constructor: Ty {
+                                                inner: Rc::new(RefCell::new(TyInner::Constructor(
+                                                    TyConstructor::Function,
+                                                ))),
+                                            },
+                                            arguments: vec![parameter_ty, extra_call.clone()],
+                                        })),
+                                    })
+                                    .unify(argument_ty, &mut history)
+                                {
+                                    return None;
+                                }
+                            }
+
                             Some(return_ty.clone())
                         },
                     );
