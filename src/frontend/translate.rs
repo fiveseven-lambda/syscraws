@@ -16,6 +16,10 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+/*!
+ * Translates ASTs into intermediate representations in backend.
+ */
+
 use std::collections::HashMap;
 
 use super::ast;

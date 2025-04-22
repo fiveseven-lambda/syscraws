@@ -16,6 +16,10 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+/*!
+ * Defines the parser functions.
+ */
+
 mod tests;
 
 use super::ast;
@@ -464,8 +468,7 @@ impl Parser<'_, '_> {
     }
 
     /**
-     * Parses a block consisting of zero or more statements and a keyword
-     * `end`.
+     * Parses a block consisting of zero or more statements.
      */
     fn parse_block(
         &mut self,
@@ -484,7 +487,7 @@ impl Parser<'_, '_> {
     }
 
     /**
-     * Parses a [`Statement`].
+     * Parses a statement.
      */
     fn parse_statement(
         &mut self,
@@ -509,7 +512,8 @@ impl Parser<'_, '_> {
     }
 
     /**
-     * Parses a [`Statement::VariableDeclaration`].
+     * Parses a variable declaration
+     * ([`ast::Statement::VariableDeclaration`]).
      */
     fn parse_variable_declaration(&mut self) -> Result<ast::Statement, ParseError> {
         let keyword_var_pos = self.current_pos();
@@ -521,6 +525,9 @@ impl Parser<'_, '_> {
         })
     }
 
+    /**
+     * Parses an if statement ([`ast::Statement::If`]).
+     */
     fn parse_if_statement(
         &mut self,
         starts_pos: &mut Vec<Pos>,
@@ -563,6 +570,9 @@ impl Parser<'_, '_> {
         })
     }
 
+    /**
+     * Parses an `else` block in the `if` statement.
+     */
     fn parse_else_block(
         &mut self,
         starts_pos: &mut Vec<Pos>,
@@ -601,7 +611,7 @@ impl Parser<'_, '_> {
     }
 
     /**
-     * Parses a while statement ([`Statement::While`]).
+     * Parses a while statement ([`ast::Statement::While`]).
      */
     fn parse_while_statement(
         &mut self,
@@ -653,7 +663,7 @@ impl Parser<'_, '_> {
     }
 
     /**
-     * Parses an assignment expression.
+     * Parses an assignment expression ([`ast::Term::Assignment`]).
      */
     fn parse_assign(
         &mut self,

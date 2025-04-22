@@ -17,7 +17,7 @@
  */
 
 /*!
- * Defines the Abstract Syntax Tree (AST) and its parser.
+ * Defines the Abstract Syntax Tree (AST).
  */
 
 use crate::log::Pos;
