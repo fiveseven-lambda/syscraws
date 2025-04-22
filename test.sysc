@@ -1,4 +1,0 @@
-func foo(x: int, y: int)
-end
-
-foo(10, 20)
