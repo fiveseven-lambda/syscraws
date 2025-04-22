@@ -183,7 +183,7 @@ fn parse_numeric_literal() {
         let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
         let factor = parser.parse_atom(false).unwrap().unwrap();
         assert_eq!(factor.pos, pos!(0:0-0:(input.len()) in 0));
-        assert_eq!(factor.term, Term::NumericLiteral(String::from(input)));
+        assert_eq!(factor.term, ast::Term::NumericLiteral(String::from(input)));
     }
 }
 
@@ -193,34 +193,34 @@ fn parse_string_literal() {
     let mut chars_peekable = CharsPeekable::new(&input);
     let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
     let factor = parser.parse_atom(false).unwrap().unwrap();
-    let Term::StringLiteral(components) = factor.term else {
+    let ast::Term::StringLiteral(components) = factor.term else {
         panic!("Not a string literal");
     };
     assert_eq!(
         components[0],
-        StringLiteralComponent::String(String::from("foo"))
+        ast::StringLiteralComponent::String(String::from("foo"))
     );
     match &components[1] {
-        StringLiteralComponent::String(s) => panic!("{}", s),
-        StringLiteralComponent::PlaceHolder { format, value } => {
+        ast::StringLiteralComponent::String(s) => panic!("{}", s),
+        ast::StringLiteralComponent::PlaceHolder { format, value } => {
             assert_eq!(format, "x");
             let value = value.as_ref().unwrap();
-            assert_eq!(value.term, Term::NumericLiteral(String::from("10")));
+            assert_eq!(value.term, ast::Term::NumericLiteral(String::from("10")));
             assert_eq!(value.pos, pos!(0:7-0:9 in 0));
         }
     }
     match &components[2] {
-        StringLiteralComponent::String(s) => panic!("{}", s),
-        StringLiteralComponent::PlaceHolder { format, value } => {
+        ast::StringLiteralComponent::String(s) => panic!("{}", s),
+        ast::StringLiteralComponent::PlaceHolder { format, value } => {
             assert_eq!(format, "");
             let value = value.as_ref().unwrap();
-            assert_eq!(value.term, Term::Identifier(String::from("bar")));
+            assert_eq!(value.term, ast::Term::Identifier(String::from("bar")));
             assert_eq!(value.pos, pos!(0:13-0:16 in 0));
         }
     }
     assert_eq!(
         components[3],
-        StringLiteralComponent::String(String::from("baz"))
+        ast::StringLiteralComponent::String(String::from("baz"))
     );
 }
 
@@ -230,7 +230,7 @@ fn parse_identifier() {
     let mut chars_peekable = CharsPeekable::new(&input);
     let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
     let factor = parser.parse_atom(false).unwrap().unwrap();
-    assert_eq!(factor.term, Term::Identifier(String::from("foo")));
+    assert_eq!(factor.term, ast::Term::Identifier(String::from("foo")));
     assert_eq!(factor.pos, pos!(0:0-0:3 in 0));
 }
 
@@ -241,7 +241,7 @@ fn parse_field() {
     let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
     let term_10_foo_20_bar = parser.parse_factor(false).unwrap().unwrap();
     assert_eq!(term_10_foo_20_bar.pos, pos!(0:0-0:13 in 0));
-    let Term::FieldByName {
+    let ast::Term::FieldByName {
         term_left: term_10_foo_20,
         name: field_bar,
     } = term_10_foo_20_bar.term
@@ -250,7 +250,7 @@ fn parse_field() {
     };
     assert_eq!(field_bar, "bar");
     assert_eq!(term_10_foo_20.pos, pos!(0:0-0:9 in 0));
-    let Term::FieldByNumber {
+    let ast::Term::FieldByNumber {
         term_left: term_10_foo,
         number: field_20,
     } = term_10_foo_20.term
@@ -259,7 +259,7 @@ fn parse_field() {
     };
     assert_eq!(field_20, "20");
     assert_eq!(term_10_foo.pos, pos!(0:0-0:6 in 0));
-    let Term::FieldByName {
+    let ast::Term::FieldByName {
         term_left: term_10,
         name: field_foo,
     } = term_10_foo.term
@@ -268,7 +268,7 @@ fn parse_field() {
     };
     assert_eq!(field_foo, "foo");
     assert_eq!(term_10.pos, pos!(0:0-0:2 in 0));
-    assert_eq!(term_10.term, Term::NumericLiteral(String::from("10")));
+    assert_eq!(term_10.term, ast::Term::NumericLiteral(String::from("10")));
 }
 
 #[test]
@@ -278,7 +278,7 @@ fn parse_addition() {
     let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
     let factor = parser.parse_binary_operation(false).unwrap().unwrap();
     assert_eq!(factor.pos, pos!(0:0-0:9 in 0));
-    let Term::BinaryOperation {
+    let ast::Term::BinaryOperation {
         left_operand,
         operator_name,
         operator_pos,
@@ -288,12 +288,18 @@ fn parse_addition() {
         panic!("Not a binary operation");
     };
     let left_operand = left_operand.unwrap();
-    assert_eq!(left_operand.term, Term::Identifier(String::from("foo")));
+    assert_eq!(
+        left_operand.term,
+        ast::Term::Identifier(String::from("foo"))
+    );
     assert_eq!(left_operand.pos, pos!(0:0-0:3 in 0));
     assert_eq!(operator_name, "add");
     assert_eq!(operator_pos, pos!(0:4-0:5 in 0));
     let right_operand = right_operand.unwrap();
-    assert_eq!(right_operand.term, Term::Identifier(String::from("bar")));
+    assert_eq!(
+        right_operand.term,
+        ast::Term::Identifier(String::from("bar"))
+    );
     assert_eq!(right_operand.pos, pos!(0:6-0:9 in 0));
 }
 
@@ -312,9 +318,9 @@ fn parse_function_definition() {
         definition.parameters.unwrap().iter().zip(["x", "y"])
     {
         match parameter {
-            ListElement::Empty { comma_pos } => panic!("{comma_pos}"),
-            ListElement::NonEmpty(parameter) => {
-                let Term::TypeAnnotation {
+            ast::ListElement::Empty { comma_pos } => panic!("{comma_pos}"),
+            ast::ListElement::NonEmpty(parameter) => {
+                let ast::Term::TypeAnnotation {
                     term_left,
                     colon_pos: _,
                     term_right,
@@ -322,11 +328,11 @@ fn parse_function_definition() {
                 else {
                     panic!("{}", parameter.pos);
                 };
-                let Term::Identifier(parameter_name) = &term_left.term else {
+                let ast::Term::Identifier(parameter_name) = &term_left.term else {
                     panic!("{}", term_left.pos);
                 };
                 assert_eq!(parameter_name, expected_parameter_name);
-                assert_eq!(Term::IntegerTy, term_right.as_ref().unwrap().term);
+                assert_eq!(ast::Term::IntegerTy, term_right.as_ref().unwrap().term);
             }
         }
     }
