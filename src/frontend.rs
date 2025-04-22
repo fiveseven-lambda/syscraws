@@ -55,13 +55,7 @@ pub fn read_input(
             function_definitions: Vec::new(),
             num_global_variables: 0,
         },
-        global_block: Block {
-            block: backend::Block {
-                statements: Vec::new(),
-                size: 0,
-            },
-            expressions: Vec::new(),
-        },
+        global_block: Block::new(),
         global_variables: Variables {
             num: 0,
             name_and_indices: Vec::new(),
@@ -79,27 +73,17 @@ pub fn read_input(
         return Err(());
     }
     for (_, index) in reader.global_variables.name_and_indices.into_iter().rev() {
-        reader
-            .global_block
-            .expressions
-            .push(backend::Expression::Function {
-                candidates: vec![backend::Function::Delete],
-                calls: vec![backend::Call {
-                    arguments: vec![backend::Expression::Variable(
-                        backend::LocalOrGlobal::Global,
-                        index,
-                    )],
-                }],
-            });
+        reader.global_block.add_expression(backend::Expression::Function {
+            candidates: vec![backend::Function::Delete],
+            calls: vec![backend::Call {
+                arguments: vec![backend::Expression::Variable(
+                    backend::LocalOrGlobal::Global,
+                    index,
+                )],
+            }],
+        });
     }
-    if !reader.global_block.expressions.is_empty() {
-        reader
-            .global_block
-            .block
-            .statements
-            .push(backend::Statement::Expr(reader.global_block.expressions));
-        reader.global_block.block.size += 1;
-    }
+    let body = reader.global_block.get();
     reader.definitions.functions_ty.push(backend::FunctionTy {
         num_ty_parameters: 0,
         parameters_ty: Vec::new(),
@@ -115,7 +99,7 @@ pub fn read_input(
         .function_definitions
         .push(backend::FunctionDefinition {
             num_local_variables: 0,
-            body: reader.global_block.block,
+            body,
         });
     Ok(reader.definitions)
 }

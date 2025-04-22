@@ -26,8 +26,32 @@ use super::ast;
 use crate::{backend, log};
 
 pub struct Block {
-    pub block: backend::Block,
-    pub expressions: Vec<backend::Expression>,
+    block: backend::Block,
+    expressions: Vec<backend::Expression>,
+}
+
+impl Block {
+    pub fn new() -> Block {
+        Block {
+            block: backend::Block {
+                statements: Vec::new(),
+                size: 0,
+            },
+            expressions: Vec::new(),
+        }
+    }
+    pub fn add_expression(&mut self, expression: backend::Expression) {
+        self.expressions.push(expression);
+    }
+    pub fn get(mut self) -> backend::Block {
+        if !self.expressions.is_empty() {
+            self.block
+                .statements
+                .push(backend::Statement::Expr(self.expressions));
+            self.block.size += 1;
+        }
+        self.block
+    }
 }
 
 pub struct Variables {
@@ -191,13 +215,7 @@ impl Context {
                 }
             }
         }
-        let mut body = Block {
-            block: backend::Block {
-                statements: Vec::new(),
-                size: 0,
-            },
-            expressions: Vec::new(),
-        };
+        let mut body = Block::new();
         let mut local_variables = Variables {
             num: 0,
             name_and_indices: Vec::new(),
@@ -335,12 +353,7 @@ impl Context {
                 }],
             });
         }
-        if !body.expressions.is_empty() {
-            body.block
-                .statements
-                .push(backend::Statement::Expr(body.expressions));
-            body.block.size += 1;
-        }
+        let body = body.get();
         for ty_parameter_name in &ty_parameters_name {
             self.items.remove(ty_parameter_name);
         }
@@ -352,7 +365,7 @@ impl Context {
             },
             backend::FunctionDefinition {
                 num_local_variables: local_variables.num,
-                body: body.block,
+                body,
             },
         ))
     }
@@ -428,13 +441,7 @@ impl Context {
                     logger.missing_if_condition(keyword_if_pos, files);
                     Err(())
                 };
-                let mut then_block = Block {
-                    block: backend::Block {
-                        statements: Vec::new(),
-                        size: 0,
-                    },
-                    expressions: Vec::new(),
-                };
+                let mut then_block = Block::new();
                 let num_alive_variables = variables.name_and_indices.len();
                 for ast::WithExtraTokens {
                     content: stmt,
@@ -468,7 +475,7 @@ impl Context {
                         if stored_index == index
                         && stored_local_or_global == local_or_global
                     ));
-                    then_block.expressions.push(backend::Expression::Function {
+                    then_block.add_expression(backend::Expression::Function {
                         candidates: vec![backend::Function::Delete],
                         calls: vec![backend::Call {
                             arguments: vec![backend::Expression::Variable(local_or_global, index)],
