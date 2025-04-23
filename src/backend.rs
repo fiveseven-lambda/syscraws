@@ -43,11 +43,12 @@ pub struct FunctionTy {
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Function {
-    IAdd,
-    Deref,
+    AddInteger,
+    IntegerToString,
+    DereferenceInteger,
     Identity,
-    IAssign,
-    Delete,
+    AssignInteger,
+    DeleteInteger,
     UserDefined(usize),
     Field {
         structure_index: usize,
@@ -256,6 +257,72 @@ pub struct Block {
     pub size: usize,
 }
 
+pub struct BlockBuilder {
+    block: Block,
+    expressions: Vec<Expression>,
+}
+
+impl BlockBuilder {
+    pub fn new() -> BlockBuilder {
+        BlockBuilder {
+            block: Block {
+                statements: Vec::new(),
+                size: 0,
+            },
+            expressions: Vec::new(),
+        }
+    }
+    pub fn add_expression(&mut self, expression: Expression) {
+        self.expressions.push(expression);
+    }
+    pub fn add_if_statement(
+        &mut self,
+        condition: Expression,
+        then_block: Block,
+        else_block: Block,
+    ) {
+        let antecedents = std::mem::take(&mut self.expressions);
+        self.block.size += then_block.size + else_block.size + 1;
+        self.block.statements.push(Statement::If {
+            antecedents,
+            condition,
+            then_block,
+            else_block,
+        });
+    }
+    pub fn add_while_statement(&mut self, condition: Expression, do_block: Block) {
+        if !self.expressions.is_empty() {
+            let expressions = std::mem::take(&mut self.expressions);
+            self.block.statements.push(Statement::Expr(expressions));
+            self.block.size += 1;
+        }
+        self.block.size += do_block.size + 1;
+        self.block.statements.push(Statement::While {
+            condition,
+            do_block,
+        });
+    }
+    pub fn add_break(&mut self) {
+        let antecedents = std::mem::take(&mut self.expressions);
+        self.block.size += 1;
+        self.block.statements.push(Statement::Break(antecedents));
+    }
+    pub fn add_continue(&mut self) {
+        let antecedents = std::mem::take(&mut self.expressions);
+        self.block.size += 1;
+        self.block.statements.push(Statement::Continue(antecedents));
+    }
+    pub fn finish(mut self) -> Block {
+        if !self.expressions.is_empty() {
+            self.block
+                .statements
+                .push(Statement::Expr(self.expressions));
+            self.block.size += 1;
+        }
+        self.block
+    }
+}
+
 pub enum Statement {
     Expr(Vec<Expression>),
     If {
@@ -275,7 +342,8 @@ pub enum Statement {
 pub enum Expression {
     Integer(i32),
     Float(f64),
-    Variable(LocalOrGlobal, usize),
+    GlobalVariable(usize),
+    LocalVariable(usize),
     Function {
         candidates: Vec<Function>,
         calls: Vec<Call>,
@@ -425,14 +493,14 @@ fn translate_statement(
 fn get_function_ty(function: &Function, functions_ty: &[FunctionTy]) -> Ty {
     match *function {
         Function::UserDefined(index) => functions_ty[index].build(),
-        Function::Delete => Ty {
+        Function::DeleteInteger => Ty {
             inner: Rc::new(RefCell::new(TyInner::Application {
                 constructor: Ty {
                     inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Function))),
                 },
                 arguments: vec![
                     Ty {
-                        inner: Rc::new(RefCell::new(TyInner::Undetermined)),
+                        inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Integer))),
                     },
                     Ty {
                         inner: Rc::new(RefCell::new(TyInner::Application {
@@ -615,9 +683,11 @@ fn translate_expression(
                 _ => todo!(),
             }
         }
-        Expression::Variable(local_or_global, index) => (
-            variables_ty[index].clone(),
-            ir::Expression::Variable(local_or_global, index),
-        ),
+        Expression::LocalVariable(index) => {
+            (variables_ty[index].clone(), ir::Expression::Variable(index))
+        }
+        Expression::GlobalVariable(index) => {
+            (variables_ty[index].clone(), ir::Expression::Variable(index))
+        }
     }
 }

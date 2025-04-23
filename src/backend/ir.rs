@@ -19,5 +19,5 @@
 pub enum Expression {
     Integer(i32),
     Float(f64),
-    Variable(super::LocalOrGlobal, usize),
+    Variable(usize),
 }

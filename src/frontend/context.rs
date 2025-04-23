@@ -22,54 +22,12 @@
 
 use std::collections::HashMap;
 
-use super::ast;
+use super::{ast, Item, Variables};
 use crate::{backend, log};
-
-pub struct Block {
-    block: backend::Block,
-    expressions: Vec<backend::Expression>,
-}
-
-impl Block {
-    pub fn new() -> Block {
-        Block {
-            block: backend::Block {
-                statements: Vec::new(),
-                size: 0,
-            },
-            expressions: Vec::new(),
-        }
-    }
-    pub fn add_expression(&mut self, expression: backend::Expression) {
-        self.expressions.push(expression);
-    }
-    pub fn get(mut self) -> backend::Block {
-        if !self.expressions.is_empty() {
-            self.block
-                .statements
-                .push(backend::Statement::Expr(self.expressions));
-            self.block.size += 1;
-        }
-        self.block
-    }
-}
-
-pub struct Variables {
-    pub num: usize,
-    pub name_and_indices: Vec<(String, usize)>,
-}
 
 pub struct Context {
     pub items: HashMap<String, (log::Pos, Item)>,
     pub methods: HashMap<String, Vec<backend::Function>>,
-}
-
-#[derive(Clone)]
-pub enum Item {
-    Import(usize),
-    Ty(backend::TyBuilder),
-    Function(Vec<backend::Function>),
-    Variable(backend::LocalOrGlobal, usize),
 }
 
 impl Context {
@@ -215,11 +173,8 @@ impl Context {
                 }
             }
         }
-        let mut body = Block::new();
-        let mut local_variables = Variables {
-            num: 0,
-            name_and_indices: Vec::new(),
-        };
+        let mut builder = backend::BlockBuilder::new();
+        let mut local_variables = Variables::new(true);
         let mut parameters_ty = Vec::new();
         match ast_parameters {
             Ok(ast_parameters) => {
@@ -248,17 +203,8 @@ impl Context {
                                             );
                                         }
                                         std::collections::hash_map::Entry::Vacant(entry) => {
-                                            local_variables
-                                                .name_and_indices
-                                                .push((name, local_variables.num));
-                                            entry.insert((
-                                                ast_parameter_name.pos,
-                                                Item::Variable(
-                                                    backend::LocalOrGlobal::Local,
-                                                    local_variables.num,
-                                                ),
-                                            ));
-                                            local_variables.num += 1;
+                                            let item = local_variables.add(name);
+                                            entry.insert((ast_parameter_name.pos, item));
                                         }
                                     }
                                 }
@@ -329,31 +275,15 @@ impl Context {
             }
             self.translate_statement(
                 ast_statement,
-                &mut body,
+                &mut builder,
                 &mut local_variables,
                 0,
-                backend::LocalOrGlobal::Local,
                 &exports,
                 &files,
                 logger,
             );
         }
-        for (name, index) in local_variables.name_and_indices.into_iter().rev() {
-            let item = self.items.remove(&name);
-            assert!(
-                matches!(item, Some((_, Item::Variable(backend::LocalOrGlobal::Local, stored_index))) if stored_index == index)
-            );
-            body.expressions.push(backend::Expression::Function {
-                candidates: vec![backend::Function::Delete],
-                calls: vec![backend::Call {
-                    arguments: vec![backend::Expression::Variable(
-                        backend::LocalOrGlobal::Local,
-                        index,
-                    )],
-                }],
-            });
-        }
-        let body = body.get();
+        let body = builder.finish();
         for ty_parameter_name in &ty_parameters_name {
             self.items.remove(ty_parameter_name);
         }
@@ -364,7 +294,7 @@ impl Context {
                 return_ty,
             },
             backend::FunctionDefinition {
-                num_local_variables: local_variables.num,
+                num_local_variables: local_variables.num(),
                 body,
             },
         ))
@@ -373,10 +303,9 @@ impl Context {
     pub fn translate_statement(
         &mut self,
         statement: ast::Statement,
-        target: &mut Block,
+        builder: &mut backend::BlockBuilder,
         variables: &mut Variables,
         num_outer_variables: usize,
-        local_or_global: backend::LocalOrGlobal,
         exports: &[Context],
         files: &[log::File],
         logger: &mut log::Logger,
@@ -388,7 +317,7 @@ impl Context {
                     return;
                 };
                 match term {
-                    Term::Expression(expr) => target.expressions.push(expr),
+                    Term::Expression(expr) => builder.add_expression(expr),
                     _ => logger.expected_expression(term_pos, files),
                 }
             }
@@ -406,12 +335,8 @@ impl Context {
                             logger.duplicate_definition(ast_name.pos, entry.get().0.clone(), files);
                         }
                         std::collections::hash_map::Entry::Vacant(entry) => {
-                            variables.name_and_indices.push((name, variables.num));
-                            entry.insert((
-                                ast_name.pos,
-                                Item::Variable(local_or_global, variables.num),
-                            ));
-                            variables.num += 1;
+                            let item = variables.add(name);
+                            entry.insert((ast_name.pos, item));
                         }
                     },
                     _ => {
@@ -441,8 +366,8 @@ impl Context {
                     logger.missing_if_condition(keyword_if_pos, files);
                     Err(())
                 };
-                let mut then_block = Block::new();
-                let num_alive_variables = variables.name_and_indices.len();
+                let mut then_builder = backend::BlockBuilder::new();
+                let num_alive_variables = variables.len();
                 for ast::WithExtraTokens {
                     content: stmt,
                     extra_tokens_pos,
@@ -453,49 +378,17 @@ impl Context {
                     }
                     self.translate_statement(
                         stmt,
-                        &mut then_block,
+                        &mut then_builder,
                         variables,
                         num_outer_variables,
-                        local_or_global,
                         exports,
                         files,
                         logger,
                     );
                 }
-                for (name, index) in variables
-                    .name_and_indices
-                    .split_off(num_alive_variables)
-                    .into_iter()
-                    .rev()
-                {
-                    let item = self.items.remove(&name);
-                    assert!(matches!(
-                        item,
-                        Some((_, Item::Variable(stored_local_or_global, stored_index)))
-                        if stored_index == index
-                        && stored_local_or_global == local_or_global
-                    ));
-                    then_block.add_expression(backend::Expression::Function {
-                        candidates: vec![backend::Function::Delete],
-                        calls: vec![backend::Call {
-                            arguments: vec![backend::Expression::Variable(local_or_global, index)],
-                        }],
-                    });
-                }
-                if !then_block.expressions.is_empty() {
-                    then_block.block.size += 1;
-                    then_block
-                        .block
-                        .statements
-                        .push(backend::Statement::Expr(then_block.expressions));
-                }
-                let mut else_block = Block {
-                    block: backend::Block {
-                        statements: Vec::new(),
-                        size: 0,
-                    },
-                    expressions: Vec::new(),
-                };
+                variables.truncate(num_alive_variables, &mut then_builder);
+                let then_block = then_builder.finish();
+                let mut else_builder = backend::BlockBuilder::new();
                 if let Some(ast::ElseBlock {
                     keyword_else_pos,
                     extra_tokens_pos,
@@ -509,53 +402,18 @@ impl Context {
                     {
                         self.translate_statement(
                             stmt,
-                            &mut else_block,
+                            &mut else_builder,
                             variables,
                             num_outer_variables,
-                            local_or_global,
                             exports,
                             files,
                             logger,
                         );
                     }
-                    for (name, index) in variables
-                        .name_and_indices
-                        .split_off(num_alive_variables)
-                        .into_iter()
-                        .rev()
-                    {
-                        let item = self.items.remove(&name);
-                        assert!(matches!(
-                            item.unwrap().1,
-                            Item::Variable(stored_local_or_global, stored_index)
-                            if stored_index == index
-                            && stored_local_or_global == local_or_global
-                        ));
-                        else_block.expressions.push(backend::Expression::Function {
-                            candidates: vec![backend::Function::Delete],
-                            calls: vec![backend::Call {
-                                arguments: vec![backend::Expression::Variable(
-                                    local_or_global,
-                                    index,
-                                )],
-                            }],
-                        });
-                    }
-                    if !else_block.expressions.is_empty() {
-                        else_block.block.size += 1;
-                        else_block
-                            .block
-                            .statements
-                            .push(backend::Statement::Expr(else_block.expressions));
-                    }
+                    variables.truncate(num_alive_variables, &mut else_builder);
                 }
-                target.block.size += then_block.block.size + else_block.block.size + 1;
-                target.block.statements.push(backend::Statement::If {
-                    antecedents: std::mem::take(&mut target.expressions),
-                    condition: condition.unwrap(),
-                    then_block: then_block.block,
-                    else_block: else_block.block,
-                });
+                let else_block = else_builder.finish();
+                builder.add_if_statement(condition.unwrap(), then_block, else_block);
             }
             ast::Statement::While {
                 keyword_while_pos,
@@ -577,14 +435,8 @@ impl Context {
                     logger.missing_while_condition(keyword_while_pos, files);
                     Err(())
                 };
-                let mut do_block = Block {
-                    block: backend::Block {
-                        statements: Vec::new(),
-                        size: 0,
-                    },
-                    expressions: Vec::new(),
-                };
-                let num_alive_variables = variables.name_and_indices.len();
+                let mut do_builder = backend::BlockBuilder::new();
+                let num_alive_variables = variables.len();
                 for ast::WithExtraTokens {
                     content: stmt,
                     extra_tokens_pos,
@@ -595,96 +447,25 @@ impl Context {
                     }
                     self.translate_statement(
                         stmt,
-                        &mut do_block,
+                        &mut do_builder,
                         variables,
                         num_alive_variables,
-                        local_or_global,
                         exports,
                         files,
                         logger,
                     );
                 }
-                for (name, index) in variables
-                    .name_and_indices
-                    .split_off(num_alive_variables)
-                    .into_iter()
-                    .rev()
-                {
-                    let item = self.items.remove(&name);
-                    assert!(matches!(
-                        item.unwrap().1,
-                        Item::Variable(stored_local_or_global, stored_index)
-                        if stored_index == index
-                        && stored_local_or_global == local_or_global
-                    ));
-                    do_block.expressions.push(backend::Expression::Function {
-                        candidates: vec![backend::Function::Delete],
-                        calls: vec![backend::Call {
-                            arguments: vec![backend::Expression::Variable(local_or_global, index)],
-                        }],
-                    });
-                }
-                if !target.expressions.is_empty() {
-                    target.block.size += 1;
-                    target
-                        .block
-                        .statements
-                        .push(backend::Statement::Expr(std::mem::take(
-                            &mut target.expressions,
-                        )));
-                }
-                if !do_block.expressions.is_empty() {
-                    do_block.block.size += 1;
-                    do_block
-                        .block
-                        .statements
-                        .push(backend::Statement::Expr(do_block.expressions));
-                }
-                target.block.size += do_block.block.size + 1;
-                target.block.statements.push(backend::Statement::While {
-                    condition: condition.unwrap(),
-                    do_block: do_block.block,
-                });
+                variables.truncate(num_alive_variables, &mut do_builder);
+                let do_block = do_builder.finish();
+                builder.add_while_statement(condition.unwrap(), do_block);
             }
             ast::Statement::Break => {
-                for &(_, index) in variables.name_and_indices[num_outer_variables..]
-                    .iter()
-                    .rev()
-                {
-                    target.expressions.push(backend::Expression::Function {
-                        candidates: vec![backend::Function::Delete],
-                        calls: vec![backend::Call {
-                            arguments: vec![backend::Expression::Variable(local_or_global, index)],
-                        }],
-                    });
-                }
-                target
-                    .block
-                    .statements
-                    .push(backend::Statement::Break(std::mem::take(
-                        &mut target.expressions,
-                    )));
-                target.block.size += 1;
+                variables.call_delete(num_outer_variables, builder);
+                builder.add_break();
             }
             ast::Statement::Continue => {
-                for &(_, index) in variables.name_and_indices[num_outer_variables..]
-                    .iter()
-                    .rev()
-                {
-                    target.expressions.push(backend::Expression::Function {
-                        candidates: vec![backend::Function::Delete],
-                        calls: vec![backend::Call {
-                            arguments: vec![backend::Expression::Variable(local_or_global, index)],
-                        }],
-                    });
-                }
-                target
-                    .block
-                    .statements
-                    .push(backend::Statement::Continue(std::mem::take(
-                        &mut target.expressions,
-                    )));
-                target.block.size += 1;
+                variables.call_delete(num_outer_variables, builder);
+                builder.add_continue();
             }
         }
     }
@@ -955,13 +736,26 @@ impl Context {
                     }))
                 }
             }
-            Item::Variable(local_or_global, index) => {
-                let expr = backend::Expression::Variable(local_or_global, index);
+            Item::GlobalVariable(index) => {
+                let expr = backend::Expression::GlobalVariable(index);
                 Ok(Term::Expression(if reference {
                     expr
                 } else {
                     backend::Expression::Function {
-                        candidates: vec![backend::Function::Deref],
+                        candidates: vec![backend::Function::DereferenceInteger],
+                        calls: vec![backend::Call {
+                            arguments: vec![expr],
+                        }],
+                    }
+                }))
+            }
+            Item::LocalVariable(index) => {
+                let expr = backend::Expression::LocalVariable(index);
+                Ok(Term::Expression(if reference {
+                    expr
+                } else {
+                    backend::Expression::Function {
+                        candidates: vec![backend::Function::DereferenceInteger],
                         calls: vec![backend::Call {
                             arguments: vec![expr],
                         }],

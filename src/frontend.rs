@@ -18,9 +18,10 @@
 
 mod ast;
 mod chars_peekable;
+mod context;
 mod parser;
 mod tests;
-mod translate;
+mod variables;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
@@ -28,7 +29,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{backend, log};
 use chars_peekable::CharsPeekable;
-use translate::{Block, Context, Item, Variables};
+use context::Context;
+use variables::Variables;
 
 /**
  * Reads the file specified by `root_file_path` and any other files it
@@ -55,11 +57,8 @@ pub fn read_input(
             function_definitions: Vec::new(),
             num_global_variables: 0,
         },
-        global_block: Block::new(),
-        global_variables: Variables {
-            num: 0,
-            name_and_indices: Vec::new(),
-        },
+        global_builder: backend::BlockBuilder::new(),
+        global_variables: Variables::new(false),
         exports: Vec::new(),
         files: Vec::new(),
         file_indices: HashMap::new(),
@@ -72,18 +71,10 @@ pub fn read_input(
         logger.aborting();
         return Err(());
     }
-    for (_, index) in reader.global_variables.name_and_indices.into_iter().rev() {
-        reader.global_block.add_expression(backend::Expression::Function {
-            candidates: vec![backend::Function::Delete],
-            calls: vec![backend::Call {
-                arguments: vec![backend::Expression::Variable(
-                    backend::LocalOrGlobal::Global,
-                    index,
-                )],
-            }],
-        });
-    }
-    let body = reader.global_block.get();
+    reader
+        .global_variables
+        .truncate(0, &mut reader.global_builder);
+    let body = reader.global_builder.finish();
     reader.definitions.functions_ty.push(backend::FunctionTy {
         num_ty_parameters: 0,
         parameters_ty: Vec::new(),
@@ -125,7 +116,7 @@ struct Reader {
     /**
      * Block of global statements.
      */
-    global_block: Block,
+    global_builder: backend::BlockBuilder,
     /**
      *
      */
@@ -144,6 +135,15 @@ struct Reader {
      * Used in [`Reader::import_file`] to detect circular imports.
      */
     import_chain: HashSet<PathBuf>,
+}
+
+#[derive(Clone)]
+pub enum Item {
+    Import(usize),
+    Ty(backend::TyBuilder),
+    Function(Vec<backend::Function>),
+    GlobalVariable(usize),
+    LocalVariable(usize),
 }
 
 impl Reader {
@@ -257,10 +257,9 @@ impl Reader {
                 ast::TopLevelStatement::Statement(statement) => {
                     context.translate_statement(
                         statement,
-                        &mut self.global_block,
+                        &mut self.global_builder,
                         &mut self.global_variables,
                         0,
-                        backend::LocalOrGlobal::Global,
                         &self.exports,
                         &self.files,
                         logger,
