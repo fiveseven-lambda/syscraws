@@ -26,7 +26,7 @@ use super::{ast, Item, Variables};
 use crate::{backend, log};
 
 pub struct Context {
-    pub items: HashMap<String, (log::Pos, Item)>,
+    pub items: HashMap<String, (Option<log::Pos>, Item)>,
     pub methods: HashMap<String, Vec<backend::Function>>,
 }
 
@@ -54,16 +54,26 @@ impl Context {
                 };
                 match ast_ty_parameter.term {
                     ast::Term::Identifier(name) => match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(entry) => {
-                            logger.duplicate_definition(
-                                ast_ty_parameter.pos,
-                                entry.get().0.clone(),
-                                &files,
-                            );
+                        std::collections::hash_map::Entry::Occupied(mut entry) => {
+                            if let (Some(pos), _) = entry.get() {
+                                logger.duplicate_definition(
+                                    ast_ty_parameter.pos,
+                                    pos.clone(),
+                                    &files,
+                                );
+                            } else {
+                                entry.insert((
+                                    Some(ast_ty_parameter.pos),
+                                    Item::Ty(backend::TyBuilder::Parameter(
+                                        ty_parameters_name.len(),
+                                    )),
+                                ));
+                                ty_parameters_name.push(name);
+                            }
                         }
                         std::collections::hash_map::Entry::Vacant(entry) => {
                             entry.insert((
-                                ast_ty_parameter.pos,
+                                Some(ast_ty_parameter.pos),
                                 Item::Ty(backend::TyBuilder::Parameter(ty_parameters_name.len())),
                             ));
                             ty_parameters_name.push(name);
@@ -153,16 +163,26 @@ impl Context {
                 };
                 if let ast::Term::Identifier(name) = ast_ty_parameter.term {
                     match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(entry) => {
-                            logger.duplicate_definition(
-                                ast_ty_parameter.pos,
-                                entry.get().0.clone(),
-                                &files,
-                            );
+                        std::collections::hash_map::Entry::Occupied(mut entry) => {
+                            if let (Some(pos), _) = entry.get() {
+                                logger.duplicate_definition(
+                                    ast_ty_parameter.pos,
+                                    pos.clone(),
+                                    &files,
+                                );
+                            } else {
+                                entry.insert((
+                                    Some(ast_ty_parameter.pos),
+                                    Item::Ty(backend::TyBuilder::Parameter(
+                                        ty_parameters_name.len(),
+                                    )),
+                                ));
+                                ty_parameters_name.push(name);
+                            }
                         }
                         std::collections::hash_map::Entry::Vacant(entry) => {
                             entry.insert((
-                                ast_ty_parameter.pos,
+                                Some(ast_ty_parameter.pos),
                                 Item::Ty(backend::TyBuilder::Parameter(ty_parameters_name.len())),
                             ));
                             ty_parameters_name.push(name);
@@ -195,16 +215,21 @@ impl Context {
                             match ast_parameter_name.term {
                                 ast::Term::Identifier(name) => {
                                     match self.items.entry(name.clone()) {
-                                        std::collections::hash_map::Entry::Occupied(entry) => {
-                                            logger.duplicate_definition(
-                                                ast_parameter.pos,
-                                                entry.get().0.clone(),
-                                                &files,
-                                            );
+                                        std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                            if let (Some(pos), _) = entry.get() {
+                                                logger.duplicate_definition(
+                                                    ast_parameter.pos,
+                                                    pos.clone(),
+                                                    &files,
+                                                );
+                                            } else {
+                                                let item = local_variables.add(name);
+                                                entry.insert((Some(ast_parameter_name.pos), item));
+                                            }
                                         }
                                         std::collections::hash_map::Entry::Vacant(entry) => {
                                             let item = local_variables.add(name);
-                                            entry.insert((ast_parameter_name.pos, item));
+                                            entry.insert((Some(ast_parameter_name.pos), item));
                                         }
                                     }
                                 }
@@ -331,12 +356,17 @@ impl Context {
                 };
                 match ast_name.term {
                     ast::Term::Identifier(name) => match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(entry) => {
-                            logger.duplicate_definition(ast_name.pos, entry.get().0.clone(), files);
+                        std::collections::hash_map::Entry::Occupied(mut entry) => {
+                            if let (Some(pos), _) = entry.get() {
+                                logger.duplicate_definition(ast_name.pos, pos.clone(), files);
+                            } else {
+                                let item = variables.add(name);
+                                entry.insert((Some(ast_name.pos), item));
+                            }
                         }
                         std::collections::hash_map::Entry::Vacant(entry) => {
                             let item = variables.add(name);
-                            entry.insert((ast_name.pos, item));
+                            entry.insert((Some(ast_name.pos), item));
                         }
                     },
                     _ => {

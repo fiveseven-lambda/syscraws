@@ -49,6 +49,7 @@ pub enum Function {
     Identity,
     AssignInteger,
     DeleteInteger,
+    Print,
     UserDefined(usize),
     Field {
         structure_index: usize,

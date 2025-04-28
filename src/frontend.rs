@@ -181,7 +181,10 @@ impl Reader {
             }
         };
         let mut context = Context {
-            items: HashMap::new(),
+            items: HashMap::from([(
+                String::from("print"),
+                (None, Item::Function(vec![backend::Function::Print])),
+            )]),
             methods: HashMap::new(),
         };
         for ast::WithExtraTokens {
@@ -196,12 +199,15 @@ impl Reader {
                 self.import_file(ast_import, path.parent().unwrap(), logger)
             {
                 match context.items.entry(name) {
-                    std::collections::hash_map::Entry::Occupied(entry) => {
-                        let (prev_pos, _) = entry.get();
-                        logger.duplicate_definition(pos, prev_pos.clone(), &self.files);
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        if let (Some(prev_pos), _) = entry.get() {
+                            logger.duplicate_definition(pos, prev_pos.clone(), &self.files);
+                        } else {
+                            entry.insert((Some(pos), Item::Import(index)));
+                        }
                     }
                     std::collections::hash_map::Entry::Vacant(entry) => {
-                        entry.insert((pos, Item::Import(index)));
+                        entry.insert((Some(pos), Item::Import(index)));
                         for (name, exported_candidates) in &self.exports[index].methods {
                             context
                                 .methods
@@ -382,12 +388,21 @@ impl Reader {
             return;
         };
         match context.items.entry(name) {
-            std::collections::hash_map::Entry::Occupied(entry) => {
-                logger.duplicate_definition(pos, entry.get().0.clone(), &self.files);
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                if let (Some(prev_pos), _) = entry.get() {
+                    logger.duplicate_definition(pos, prev_pos.clone(), &self.files);
+                } else {
+                    entry.insert((
+                        Some(pos),
+                        Item::Ty(backend::TyBuilder::Constructor(
+                            backend::TyConstructor::Structure(self.num_structures),
+                        )),
+                    ));
+                }
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert((
-                    pos,
+                    Some(pos),
                     Item::Ty(backend::TyBuilder::Constructor(
                         backend::TyConstructor::Structure(self.num_structures),
                     )),
@@ -424,12 +439,12 @@ impl Reader {
                     if let Item::Function(functions) = item {
                         functions.push(backend::Function::UserDefined(self.num_functions));
                     } else {
-                        logger.duplicate_definition(pos, prev_pos.clone(), &self.files);
+                        logger.duplicate_definition(pos, prev_pos.clone().unwrap(), &self.files);
                     }
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
                     entry.insert((
-                        pos,
+                        Some(pos),
                         Item::Function(vec![backend::Function::UserDefined(self.num_functions)]),
                     ));
                 }
