@@ -178,10 +178,10 @@ impl Debug for backend::Expression {
         match self {
             backend::Expression::Integer(value) => write!(f, "{value}i"),
             backend::Expression::Float(value) => write!(f, "{value}f"),
-            backend::Expression::Variable(backend::LocalOrGlobal::Global, index) => {
+            backend::Expression::GlobalVariable(index) => {
                 write!(f, "G{index}")
             }
-            backend::Expression::Variable(backend::LocalOrGlobal::Local, index) => {
+            backend::Expression::LocalVariable(index) => {
                 write!(f, "L{index}")
             }
             backend::Expression::Function { candidates, calls } => {
@@ -214,11 +214,13 @@ impl Debug for backend::Expression {
 impl Debug for backend::Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            backend::Function::IAdd => write!(f, "IAdd"),
-            backend::Function::Deref => write!(f, "Deref"),
+            backend::Function::AddInteger => write!(f, "AddInteger"),
+            backend::Function::DereferenceInteger => write!(f, "DereferenceInteger"),
             backend::Function::Identity => write!(f, "Identity"),
-            backend::Function::IAssign => write!(f, "IAssign"),
-            backend::Function::Delete => write!(f, "Delete"),
+            backend::Function::AssignInteger => write!(f, "AssignInteger"),
+            backend::Function::DeleteInteger => write!(f, "DeleteInteger"),
+            backend::Function::IntegerToString => write!(f, "IntegerToString"),
+            backend::Function::Print => write!(f, "print"),
             backend::Function::UserDefined(index) => write!(f, "F{index}"),
             backend::Function::Field {
                 structure_index,

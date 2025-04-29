@@ -28,8 +28,8 @@ Block {
         2: <F0/F1/F2>(G0, 0i),
         3: <F0/F1/F2>(G1, 1i),
         4: <F0/F1/F2>(G2, 2i),
-        5: <Delete>(G2),
-        6: <Delete>(G1),
-        7: <Delete>(G0),
+        5: <DeleteInteger>(G2),
+        6: <DeleteInteger>(G1),
+        7: <DeleteInteger>(G0),
     },
 }
