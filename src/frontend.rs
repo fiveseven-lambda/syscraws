@@ -71,9 +71,7 @@ pub fn read_input(
         logger.aborting();
         return Err(());
     }
-    reader
-        .global_variables
-        .truncate(0, &mut reader.global_builder);
+    reader.global_variables.free(0, &mut reader.global_builder);
     let body = reader.global_builder.finish();
     reader.definitions.functions_ty.push(backend::FunctionTy {
         num_ty_parameters: 0,

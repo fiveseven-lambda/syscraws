@@ -2,15 +2,15 @@ F0(): Tuple[]
 Block {
     size: 7,
     0: While {
-        condition: <Deref>(G0),
+        condition: <DereferenceInteger>(G0),
         do: Block {
             size: 5,
             0: If {
-                condition: <Deref>(G1),
+                condition: <DereferenceInteger>(G1),
                 then: Block {
                     size: 1,
                     0: Break {
-                        0: <Delete>(G1),
+                        0: <DeleteInteger>(G1),
                     },
                 },
                 else: Block {
@@ -18,12 +18,12 @@ Block {
                 },
             },
             1: If {
-                condition: <Deref>(G2),
+                condition: <DereferenceInteger>(G2),
                 then: Block {
                     size: 1,
                     0: Break {
-                        0: <Delete>(G2),
-                        1: <Delete>(G1),
+                        0: <DeleteInteger>(G2),
+                        1: <DeleteInteger>(G1),
                     },
                 },
                 else: Block {
@@ -31,12 +31,12 @@ Block {
                 },
             },
             2: Expr {
-                0: <Delete>(G2),
-                1: <Delete>(G1),
+                0: <DeleteInteger>(G2),
+                1: <DeleteInteger>(G1),
             },
         },
     },
     1: Expr {
-        0: <Delete>(G0),
+        0: <DeleteInteger>(G0),
     },
 }

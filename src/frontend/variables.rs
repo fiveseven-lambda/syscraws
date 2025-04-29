@@ -18,7 +18,7 @@
 
 use crate::backend;
 
-use super::Item;
+use super::{context::Context, Item};
 
 pub struct Variables {
     is_local: bool,
@@ -29,7 +29,7 @@ pub struct Variables {
 impl Variables {
     pub fn new(is_local: bool) -> Variables {
         Variables {
-            is_local: false,
+            is_local,
             num: 0,
             name_and_indices: Vec::new(),
         }
@@ -50,16 +50,38 @@ impl Variables {
         self.num += 1;
         ret
     }
-    pub fn truncate(&mut self, len: usize, builder: &mut backend::BlockBuilder) {
-        self.call_delete(len, builder);
-        self.name_and_indices.truncate(len);
+    pub fn truncate(
+        &mut self,
+        len: usize,
+        builder: &mut backend::BlockBuilder,
+        context: &mut Context,
+    ) {
+        self.free(len, builder);
+        for (name, index) in self.name_and_indices.split_off(len) {
+            match context.items.remove(&name).unwrap() {
+                (_, Item::GlobalVariable(i)) => {
+                    assert!(!self.is_local);
+                    assert_eq!(index, i);
+                }
+                (_, Item::LocalVariable(i)) => {
+                    assert!(self.is_local);
+                    assert_eq!(index, i);
+                }
+                _ => unreachable!(),
+            }
+        }
     }
-    pub fn call_delete(&mut self, len: usize, builder: &mut backend::BlockBuilder) {
-        for &(_, index) in &self.name_and_indices[len..] {
+    pub fn free(&mut self, len: usize, builder: &mut backend::BlockBuilder) {
+        for &(_, index) in self.name_and_indices[len..].iter().rev() {
+            let expr = if self.is_local {
+                backend::Expression::LocalVariable(index)
+            } else {
+                backend::Expression::GlobalVariable(index)
+            };
             builder.add_expression(backend::Expression::Function {
                 candidates: vec![backend::Function::DeleteInteger],
                 calls: vec![backend::Call {
-                    arguments: vec![backend::Expression::GlobalVariable(index)],
+                    arguments: vec![expr],
                 }],
             });
         }

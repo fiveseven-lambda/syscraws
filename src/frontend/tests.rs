@@ -220,6 +220,7 @@ impl Debug for backend::Function {
             backend::Function::AssignInteger => write!(f, "AssignInteger"),
             backend::Function::DeleteInteger => write!(f, "DeleteInteger"),
             backend::Function::IntegerToString => write!(f, "IntegerToString"),
+            backend::Function::Print => write!(f, "print"),
             backend::Function::UserDefined(index) => write!(f, "F{index}"),
             backend::Function::Field {
                 structure_index,
