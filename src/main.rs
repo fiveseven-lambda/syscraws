@@ -18,6 +18,7 @@
 
 mod backend;
 mod frontend;
+mod ir;
 mod log;
 
 use std::process::ExitCode;
@@ -38,8 +39,6 @@ fn main() -> ExitCode {
     ) else {
         return ExitCode::FAILURE;
     };
-
-    definitions.translate();
 
     ExitCode::SUCCESS
 }

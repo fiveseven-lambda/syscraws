@@ -141,7 +141,7 @@ struct TokenInfo {
 /**
  * A token.
  */
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Debug, PartialEq, Eq)]
 enum Token {
     Digits(String),
     StringLiteral(Vec<ast::StringLiteralComponent>),

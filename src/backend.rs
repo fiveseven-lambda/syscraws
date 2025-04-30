@@ -16,89 +16,12 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-mod ir;
+/*
 mod tests;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-
-pub struct Definitions {
-    pub structures: Vec<(TyKind, Structure)>,
-    pub functions_ty: Vec<FunctionTy>,
-    pub function_definitions: Vec<FunctionDefinition>,
-    pub num_global_variables: usize,
-}
-
-pub struct Structure {
-    pub num_ty_parameters: usize,
-    pub fields_ty: Vec<TyBuilder>,
-}
-
-pub struct FunctionTy {
-    pub num_ty_parameters: usize,
-    pub parameters_ty: Vec<TyBuilder>,
-    pub return_ty: TyBuilder,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Function {
-    AddInteger,
-    IntegerToString,
-    DereferenceInteger,
-    Identity,
-    AssignInteger,
-    DeleteInteger,
-    Print,
-    UserDefined(usize),
-    Field {
-        structure_index: usize,
-        field_index: usize,
-    },
-    FieldRef {
-        structure_index: usize,
-        field_index: usize,
-    },
-}
-
-pub struct FunctionDefinition {
-    pub num_local_variables: usize,
-    pub body: Block,
-}
-
-#[derive(Clone)]
-pub enum TyBuilder {
-    Constructor(TyConstructor),
-    Parameter(usize),
-    Application {
-        constructor: Box<TyBuilder>,
-        arguments: Vec<TyBuilder>,
-    },
-}
-
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum TyConstructor {
-    Integer,
-    Float,
-    Reference,
-    Tuple,
-    Function,
-    Structure(usize),
-}
-
-pub enum TyKind {
-    Ty,
-    Abstraction {
-        parameters: TyListKind,
-        ret: Box<TyKind>,
-    },
-}
-
-pub enum TyListKind {
-    Nil,
-    Cons(Box<TyKind>, Box<TyListKind>),
-    Rest,
-}
 
 #[derive(Clone)]
 struct Ty {
@@ -251,114 +174,6 @@ impl Unifications {
             *left.inner.borrow_mut() = TyInner::SameAs(right.clone())
         }
     }
-}
-
-pub struct Block {
-    pub statements: Vec<Statement>,
-    pub size: usize,
-}
-
-pub struct BlockBuilder {
-    block: Block,
-    expressions: Vec<Expression>,
-}
-
-impl BlockBuilder {
-    pub fn new() -> BlockBuilder {
-        BlockBuilder {
-            block: Block {
-                statements: Vec::new(),
-                size: 0,
-            },
-            expressions: Vec::new(),
-        }
-    }
-    pub fn add_expression(&mut self, expression: Expression) {
-        self.expressions.push(expression);
-    }
-    pub fn add_if_statement(
-        &mut self,
-        condition: Expression,
-        then_block: Block,
-        else_block: Block,
-    ) {
-        let antecedents = std::mem::take(&mut self.expressions);
-        self.block.size += then_block.size + else_block.size + 1;
-        self.block.statements.push(Statement::If {
-            antecedents,
-            condition,
-            then_block,
-            else_block,
-        });
-    }
-    pub fn add_while_statement(&mut self, condition: Expression, do_block: Block) {
-        if !self.expressions.is_empty() {
-            let expressions = std::mem::take(&mut self.expressions);
-            self.block.statements.push(Statement::Expr(expressions));
-            self.block.size += 1;
-        }
-        self.block.size += do_block.size + 1;
-        self.block.statements.push(Statement::While {
-            condition,
-            do_block,
-        });
-    }
-    pub fn add_break(&mut self) {
-        let antecedents = std::mem::take(&mut self.expressions);
-        self.block.size += 1;
-        self.block.statements.push(Statement::Break(antecedents));
-    }
-    pub fn add_continue(&mut self) {
-        let antecedents = std::mem::take(&mut self.expressions);
-        self.block.size += 1;
-        self.block.statements.push(Statement::Continue(antecedents));
-    }
-    pub fn finish(mut self) -> Block {
-        if !self.expressions.is_empty() {
-            self.block
-                .statements
-                .push(Statement::Expr(self.expressions));
-            self.block.size += 1;
-        }
-        self.block
-    }
-}
-
-pub enum Statement {
-    Expr(Vec<Expression>),
-    If {
-        antecedents: Vec<Expression>,
-        condition: Expression,
-        then_block: Block,
-        else_block: Block,
-    },
-    While {
-        condition: Expression,
-        do_block: Block,
-    },
-    Break(Vec<Expression>),
-    Continue(Vec<Expression>),
-}
-
-pub enum Expression {
-    Integer(i32),
-    Float(f64),
-    GlobalVariable(usize),
-    LocalVariable(usize),
-    Function {
-        candidates: Vec<Function>,
-        calls: Vec<Call>,
-    },
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum LocalOrGlobal {
-    Local,
-    Global,
-}
-
-pub struct Call {
-    pub arguments: Vec<Expression>,
 }
 
 impl FunctionTy {
@@ -692,3 +507,4 @@ fn translate_expression(
         }
     }
 }
+*/

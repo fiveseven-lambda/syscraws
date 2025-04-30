@@ -1,0 +1,7 @@
+F0(): Tuple[]
+Block {
+    size: 1,
+    0: Expr {
+        0: <Print>(<ConcatenateString>(<ConcatenateString>(<ConcatenateString>("foo", <IntegerToString>(10i)), <IntegerToString>(20i)), "bar")),
+    },
+}

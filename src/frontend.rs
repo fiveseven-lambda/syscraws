@@ -17,6 +17,7 @@
  */
 
 mod ast;
+mod block_builder;
 mod chars_peekable;
 mod context;
 mod parser;
@@ -27,7 +28,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use crate::{backend, log};
+use crate::{ir, log};
+use block_builder::BlockBuilder;
 use chars_peekable::CharsPeekable;
 use context::Context;
 use variables::Variables;
@@ -36,10 +38,7 @@ use variables::Variables;
  * Reads the file specified by `root_file_path` and any other files it
  * imports, and passes them to `backend`.
  */
-pub fn read_input(
-    root_file_path: &Path,
-    logger: &mut log::Logger,
-) -> Result<backend::Definitions, ()> {
+pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir::Definitions, ()> {
     let root_file_path = root_file_path.with_extension("sysc");
     let root_file_path = match root_file_path.canonicalize() {
         Ok(path) => path,
@@ -51,13 +50,13 @@ pub fn read_input(
     let mut reader = Reader {
         num_structures: 0,
         num_functions: 0,
-        definitions: backend::Definitions {
+        definitions: ir::Definitions {
             structures: Vec::new(),
             functions_ty: Vec::new(),
             function_definitions: Vec::new(),
             num_global_variables: 0,
         },
-        global_builder: backend::BlockBuilder::new(),
+        global_builder: BlockBuilder::new(),
         global_variables: Variables::new(false),
         exports: Vec::new(),
         files: Vec::new(),
@@ -73,20 +72,18 @@ pub fn read_input(
     }
     reader.global_variables.free(0, &mut reader.global_builder);
     let body = reader.global_builder.finish();
-    reader.definitions.functions_ty.push(backend::FunctionTy {
+    reader.definitions.functions_ty.push(ir::FunctionTy {
         num_ty_parameters: 0,
         parameters_ty: Vec::new(),
-        return_ty: backend::TyBuilder::Application {
-            constructor: Box::new(backend::TyBuilder::Constructor(
-                backend::TyConstructor::Tuple,
-            )),
+        return_ty: ir::Ty::Application {
+            constructor: Box::new(ir::Ty::Constructor(ir::TyConstructor::Tuple)),
             arguments: vec![],
         },
     });
     reader
         .definitions
         .function_definitions
-        .push(backend::FunctionDefinition {
+        .push(ir::FunctionDefinition {
             num_local_variables: 0,
             body,
         });
@@ -110,11 +107,11 @@ struct Reader {
     /**
      * The target which [`Reader::read_file`] stores the results in.
      */
-    definitions: backend::Definitions,
+    definitions: ir::Definitions,
     /**
      * Block of global statements.
      */
-    global_builder: backend::BlockBuilder,
+    global_builder: BlockBuilder,
     /**
      *
      */
@@ -138,8 +135,8 @@ struct Reader {
 #[derive(Clone)]
 pub enum Item {
     Import(usize),
-    Ty(backend::TyBuilder),
-    Function(Vec<backend::Function>),
+    Ty(ir::Ty),
+    Function(Vec<ir::Function>),
     GlobalVariable(usize),
     LocalVariable(usize),
 }
@@ -181,7 +178,7 @@ impl Reader {
         let mut context = Context {
             items: HashMap::from([(
                 String::from("print"),
-                (None, Item::Function(vec![backend::Function::Print])),
+                (None, Item::Function(vec![ir::Function::Print])),
             )]),
             methods: HashMap::new(),
         };
@@ -392,18 +389,18 @@ impl Reader {
                 } else {
                     entry.insert((
                         Some(pos),
-                        Item::Ty(backend::TyBuilder::Constructor(
-                            backend::TyConstructor::Structure(self.num_structures),
-                        )),
+                        Item::Ty(ir::Ty::Constructor(ir::TyConstructor::Structure(
+                            self.num_structures,
+                        ))),
                     ));
                 }
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert((
                     Some(pos),
-                    Item::Ty(backend::TyBuilder::Constructor(
-                        backend::TyConstructor::Structure(self.num_structures),
-                    )),
+                    Item::Ty(ir::Ty::Constructor(ir::TyConstructor::Structure(
+                        self.num_structures,
+                    ))),
                 ));
                 self.num_structures += 1;
             }
@@ -429,13 +426,13 @@ impl Reader {
                 .methods
                 .entry(name)
                 .or_insert_with(Vec::new)
-                .push(backend::Function::UserDefined(self.num_functions));
+                .push(ir::Function::UserDefined(self.num_functions));
         } else {
             match context.items.entry(name) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
                     let (prev_pos, item) = entry.get_mut();
                     if let Item::Function(functions) = item {
-                        functions.push(backend::Function::UserDefined(self.num_functions));
+                        functions.push(ir::Function::UserDefined(self.num_functions));
                     } else {
                         logger.duplicate_definition(pos, prev_pos.clone().unwrap(), &self.files);
                     }
@@ -443,7 +440,7 @@ impl Reader {
                 std::collections::hash_map::Entry::Vacant(entry) => {
                     entry.insert((
                         Some(pos),
-                        Item::Function(vec![backend::Function::UserDefined(self.num_functions)]),
+                        Item::Function(vec![ir::Function::UserDefined(self.num_functions)]),
                     ));
                 }
             }
