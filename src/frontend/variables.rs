@@ -16,9 +16,8 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::backend;
-
-use super::{context::Context, Item};
+use super::{BlockBuilder, Context, Item};
+use crate::ir;
 
 pub struct Variables {
     is_local: bool,
@@ -34,10 +33,10 @@ impl Variables {
             name_and_indices: Vec::new(),
         }
     }
-    pub fn num(&self) -> usize {
+    pub fn num_total(self) -> usize {
         self.num
     }
-    pub fn len(&self) -> usize {
+    pub fn num_alive(&self) -> usize {
         self.name_and_indices.len()
     }
     pub fn add(&mut self, name: String) -> Item {
@@ -50,12 +49,7 @@ impl Variables {
         self.num += 1;
         ret
     }
-    pub fn truncate(
-        &mut self,
-        len: usize,
-        builder: &mut backend::BlockBuilder,
-        context: &mut Context,
-    ) {
+    pub fn truncate(&mut self, len: usize, builder: &mut BlockBuilder, context: &mut Context) {
         self.free(len, builder);
         for (name, index) in self.name_and_indices.split_off(len) {
             match context.items.remove(&name).unwrap() {
@@ -71,16 +65,16 @@ impl Variables {
             }
         }
     }
-    pub fn free(&mut self, len: usize, builder: &mut backend::BlockBuilder) {
+    pub fn free(&mut self, len: usize, builder: &mut BlockBuilder) {
         for &(_, index) in self.name_and_indices[len..].iter().rev() {
             let expr = if self.is_local {
-                backend::Expression::LocalVariable(index)
+                ir::Expression::LocalVariable(index)
             } else {
-                backend::Expression::GlobalVariable(index)
+                ir::Expression::GlobalVariable(index)
             };
-            builder.add_expression(backend::Expression::Function {
-                candidates: vec![backend::Function::DeleteInteger],
-                calls: vec![backend::Call {
+            builder.add_expression(ir::Expression::Function {
+                candidates: vec![ir::Function::DeleteInteger],
+                calls: vec![ir::Call {
                     arguments: vec![expr],
                 }],
             });

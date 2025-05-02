@@ -276,7 +276,7 @@ pub struct ElseBlock {
 /**
  * Pair of a [`Term`] and its [`Pos`].
  */
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TermWithPos {
     pub term: Term,
     pub pos: Pos,
@@ -285,7 +285,7 @@ pub struct TermWithPos {
 /**
  * A term in the AST, representing an expression, a type, or an import name.
  */
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Term {
     /**
      * A numeric literal, either integer or floating-point number.
@@ -391,7 +391,7 @@ pub enum Term {
 /**
  * A component of a string literal in the AST.
  */
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Debug, PartialEq, Eq)]
 pub enum StringLiteralComponent {
     String(String),
     PlaceHolder {
@@ -403,7 +403,7 @@ pub enum StringLiteralComponent {
 /**
  * An element of a list in the AST.
  */
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ListElement {
     NonEmpty(TermWithPos),
     Empty { comma_pos: Pos },

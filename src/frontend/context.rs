@@ -22,12 +22,12 @@
 
 use std::collections::HashMap;
 
-use super::{ast, Item, Variables};
-use crate::{backend, log};
+use super::{BlockBuilder, Item, Variables, ast};
+use crate::{ir, log};
 
 pub struct Context {
     pub items: HashMap<String, (Option<log::Pos>, Item)>,
-    pub methods: HashMap<String, Vec<backend::Function>>,
+    pub methods: HashMap<String, Vec<ir::Function>>,
 }
 
 impl Context {
@@ -41,7 +41,7 @@ impl Context {
         exports: &[Context],
         files: &[log::File],
         logger: &mut log::Logger,
-    ) -> (backend::TyKind, backend::Structure) {
+    ) -> (ir::TyKind, ir::Structure) {
         let mut ty_parameters_name = Vec::new();
         let kind = if let Some(ast_ty_parameters) = ast_ty_parameters {
             for ast_ty_parameter in ast_ty_parameters {
@@ -64,9 +64,7 @@ impl Context {
                             } else {
                                 entry.insert((
                                     Some(ast_ty_parameter.pos),
-                                    Item::Ty(backend::TyBuilder::Parameter(
-                                        ty_parameters_name.len(),
-                                    )),
+                                    Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
                                 ));
                                 ty_parameters_name.push(name);
                             }
@@ -74,7 +72,7 @@ impl Context {
                         std::collections::hash_map::Entry::Vacant(entry) => {
                             entry.insert((
                                 Some(ast_ty_parameter.pos),
-                                Item::Ty(backend::TyBuilder::Parameter(ty_parameters_name.len())),
+                                Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
                             ));
                             ty_parameters_name.push(name);
                         }
@@ -84,17 +82,14 @@ impl Context {
                     }
                 }
             }
-            backend::TyKind::Abstraction {
-                parameters: (0..ty_parameters_name.len()).fold(
-                    backend::TyListKind::Nil,
-                    |tail, _| {
-                        backend::TyListKind::Cons(Box::new(backend::TyKind::Ty), Box::new(tail))
-                    },
-                ),
-                ret: Box::new(backend::TyKind::Ty),
+            ir::TyKind::Abstraction {
+                parameters: (0..ty_parameters_name.len()).fold(ir::TyListKind::Nil, |tail, _| {
+                    ir::TyListKind::Cons(Box::new(ir::TyKind::Ty), Box::new(tail))
+                }),
+                ret: Box::new(ir::TyKind::Ty),
             }
         } else {
-            backend::TyKind::Ty
+            ir::TyKind::Ty
         };
         if let Some(extra_tokens_pos) = extra_tokens_pos {
             logger.extra_tokens(extra_tokens_pos, &files);
@@ -131,7 +126,7 @@ impl Context {
         }
         (
             kind,
-            backend::Structure {
+            ir::Structure {
                 num_ty_parameters: ty_parameters_name.len(),
                 fields_ty,
             },
@@ -150,7 +145,7 @@ impl Context {
         exports: &[Context],
         files: &[log::File],
         logger: &mut log::Logger,
-    ) -> Option<(backend::FunctionTy, backend::FunctionDefinition)> {
+    ) -> Option<(ir::FunctionTy, ir::FunctionDefinition)> {
         let mut ty_parameters_name = Vec::new();
         if let Some(ast_ty_parameters) = ast_ty_parameters {
             for ast_ty_parameter in ast_ty_parameters {
@@ -173,9 +168,7 @@ impl Context {
                             } else {
                                 entry.insert((
                                     Some(ast_ty_parameter.pos),
-                                    Item::Ty(backend::TyBuilder::Parameter(
-                                        ty_parameters_name.len(),
-                                    )),
+                                    Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
                                 ));
                                 ty_parameters_name.push(name);
                             }
@@ -183,7 +176,7 @@ impl Context {
                         std::collections::hash_map::Entry::Vacant(entry) => {
                             entry.insert((
                                 Some(ast_ty_parameter.pos),
-                                Item::Ty(backend::TyBuilder::Parameter(ty_parameters_name.len())),
+                                Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
                             ));
                             ty_parameters_name.push(name);
                         }
@@ -193,7 +186,7 @@ impl Context {
                 }
             }
         }
-        let mut builder = backend::BlockBuilder::new();
+        let mut builder = BlockBuilder::new();
         let mut local_variables = Variables::new(true);
         let mut parameters_ty = Vec::new();
         match ast_parameters {
@@ -280,10 +273,8 @@ impl Context {
                 return None;
             }
         } else {
-            backend::TyBuilder::Application {
-                constructor: Box::new(backend::TyBuilder::Constructor(
-                    backend::TyConstructor::Tuple,
-                )),
+            ir::Ty::Application {
+                constructor: Box::new(ir::Ty::Constructor(ir::TyConstructor::Tuple)),
                 arguments: vec![],
             }
         };
@@ -314,13 +305,13 @@ impl Context {
             self.items.remove(ty_parameter_name);
         }
         Some((
-            backend::FunctionTy {
+            ir::FunctionTy {
                 num_ty_parameters: ty_parameters_name.len(),
                 parameters_ty,
                 return_ty,
             },
-            backend::FunctionDefinition {
-                num_local_variables: local_variables.num(),
+            ir::FunctionDefinition {
+                num_local_variables: local_variables.num_total(),
                 body,
             },
         ))
@@ -329,7 +320,7 @@ impl Context {
     pub fn translate_statement(
         &mut self,
         statement: ast::Statement,
-        builder: &mut backend::BlockBuilder,
+        builder: &mut BlockBuilder,
         variables: &mut Variables,
         num_outer_variables: usize,
         exports: &[Context],
@@ -397,8 +388,8 @@ impl Context {
                     logger.missing_if_condition(keyword_if_pos, files);
                     Err(())
                 };
-                let mut then_builder = backend::BlockBuilder::new();
-                let num_alive_variables = variables.len();
+                let mut then_builder = BlockBuilder::new();
+                let num_alive_variables = variables.num_alive();
                 for ast::WithExtraTokens {
                     content: stmt,
                     extra_tokens_pos,
@@ -419,7 +410,7 @@ impl Context {
                 }
                 variables.truncate(num_alive_variables, &mut then_builder, self);
                 let then_block = then_builder.finish();
-                let mut else_builder = backend::BlockBuilder::new();
+                let mut else_builder = BlockBuilder::new();
                 if let Some(ast::ElseBlock {
                     keyword_else_pos,
                     extra_tokens_pos,
@@ -466,8 +457,8 @@ impl Context {
                     logger.missing_while_condition(keyword_while_pos, files);
                     Err(())
                 };
-                let mut do_builder = backend::BlockBuilder::new();
-                let num_alive_variables = variables.len();
+                let mut do_builder = BlockBuilder::new();
+                let num_alive_variables = variables.num_alive();
                 for ast::WithExtraTokens {
                     content: stmt,
                     extra_tokens_pos,
@@ -514,14 +505,10 @@ impl Context {
     ) -> Result<Term, ()> {
         match ast_term {
             ast::Term::IntegerTy => {
-                return Ok(Term::Ty(backend::TyBuilder::Constructor(
-                    backend::TyConstructor::Integer,
-                )))
+                return Ok(Term::Ty(ir::Ty::Constructor(ir::TyConstructor::Integer)));
             }
             ast::Term::FloatTy => {
-                return Ok(Term::Ty(backend::TyBuilder::Constructor(
-                    backend::TyConstructor::Float,
-                )))
+                return Ok(Term::Ty(ir::Ty::Constructor(ir::TyConstructor::Float)));
             }
             ast::Term::NumericLiteral(value) => {
                 if value.chars().all(|ch| matches!(ch, '0'..='9')) {
@@ -531,7 +518,7 @@ impl Context {
                                 logger.expected_lvalue(pos, files);
                                 Err(())
                             } else {
-                                Ok(Term::Expression(backend::Expression::Integer(value)))
+                                Ok(Term::Expression(ir::Expression::Integer(value)))
                             }
                         }
                         Err(err) => {
@@ -546,7 +533,7 @@ impl Context {
                                 logger.expected_lvalue(pos, files);
                                 Err(())
                             } else {
-                                Ok(Term::Expression(backend::Expression::Float(value)))
+                                Ok(Term::Expression(ir::Expression::Float(value)))
                             }
                         }
                         Err(err) => {
@@ -556,8 +543,43 @@ impl Context {
                     }
                 }
             }
-            ast::Term::Identity => Ok(Term::Expression(backend::Expression::Function {
-                candidates: vec![backend::Function::Identity],
+            ast::Term::StringLiteral(ast_components) => {
+                let mut components = Vec::new();
+                for ast_component in ast_components {
+                    match ast_component {
+                        ast::StringLiteralComponent::String(value) => {
+                            components.push(ir::Expression::String(value));
+                        }
+                        ast::StringLiteralComponent::PlaceHolder { format, value } => {
+                            if let Some(value) = value {
+                                if let Ok(Term::Expression(expression)) =
+                                    self.translate_term(value, reference, exports, files, logger)
+                                {
+                                    components.push(ir::Expression::Function {
+                                        candidates: vec![ir::Function::IntegerToString],
+                                        calls: vec![ir::Call {
+                                            arguments: vec![expression],
+                                        }],
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Term::Expression(
+                    components
+                        .into_iter()
+                        .reduce(|left, right| ir::Expression::Function {
+                            candidates: vec![ir::Function::ConcatenateString],
+                            calls: vec![ir::Call {
+                                arguments: vec![left, right],
+                            }],
+                        })
+                        .unwrap_or(ir::Expression::String(String::new())),
+                ))
+            }
+            ast::Term::Identity => Ok(Term::Expression(ir::Expression::Function {
+                candidates: vec![ir::Function::Identity],
                 calls: vec![],
             })),
             ast::Term::Identifier(name) => match self.items.get(&name) {
@@ -573,9 +595,9 @@ impl Context {
                 term_left: ast_term_left,
                 name,
             } => match self.translate_term(*ast_term_left, reference, exports, files, logger)? {
-                Term::Expression(expr) => Ok(Term::Expression(backend::Expression::Function {
+                Term::Expression(expr) => Ok(Term::Expression(ir::Expression::Function {
                     candidates: vec![],
-                    calls: vec![backend::Call {
+                    calls: vec![ir::Call {
                         arguments: vec![expr],
                     }],
                 })),
@@ -601,7 +623,7 @@ impl Context {
                     .translate_term(*ast_function, false, exports, files, logger)
                     .and_then(|term| match term {
                         Term::Expression(function) => match function {
-                            backend::Expression::Function { candidates, calls } => {
+                            ir::Expression::Function { candidates, calls } => {
                                 Ok((candidates, calls))
                             }
                             _ => {
@@ -639,8 +661,8 @@ impl Context {
                     }
                 }
                 let (candidates, mut calls) = function?;
-                calls.push(backend::Call { arguments });
-                Ok(Term::Expression(backend::Expression::Function {
+                calls.push(ir::Call { arguments });
+                Ok(Term::Expression(ir::Expression::Function {
                     candidates,
                     calls,
                 }))
@@ -690,9 +712,9 @@ impl Context {
                     .get(operator_name)
                     .cloned()
                     .unwrap_or_else(Vec::new);
-                Ok(Term::Expression(backend::Expression::Function {
+                Ok(Term::Expression(ir::Expression::Function {
                     candidates,
-                    calls: vec![backend::Call {
+                    calls: vec![ir::Call {
                         arguments: vec![left_hand_side?, right_hand_side?],
                     }],
                 }))
@@ -735,7 +757,7 @@ impl Context {
                     }
                 }
                 return if logger.num_errors == 0 {
-                    Ok(Term::Ty(backend::TyBuilder::Application {
+                    Ok(Term::Ty(ir::Ty::Application {
                         constructor: Box::new(term_left?),
                         arguments: parameters,
                     }))
@@ -761,33 +783,33 @@ impl Context {
                     logger.expected_lvalue(pos, files);
                     Err(())
                 } else {
-                    Ok(Term::Expression(backend::Expression::Function {
+                    Ok(Term::Expression(ir::Expression::Function {
                         candidates: candidates.clone(),
                         calls: vec![],
                     }))
                 }
             }
             Item::GlobalVariable(index) => {
-                let expr = backend::Expression::GlobalVariable(index);
+                let expr = ir::Expression::GlobalVariable(index);
                 Ok(Term::Expression(if reference {
                     expr
                 } else {
-                    backend::Expression::Function {
-                        candidates: vec![backend::Function::DereferenceInteger],
-                        calls: vec![backend::Call {
+                    ir::Expression::Function {
+                        candidates: vec![ir::Function::DereferenceInteger],
+                        calls: vec![ir::Call {
                             arguments: vec![expr],
                         }],
                     }
                 }))
             }
             Item::LocalVariable(index) => {
-                let expr = backend::Expression::LocalVariable(index);
+                let expr = ir::Expression::LocalVariable(index);
                 Ok(Term::Expression(if reference {
                     expr
                 } else {
-                    backend::Expression::Function {
-                        candidates: vec![backend::Function::DereferenceInteger],
-                        calls: vec![backend::Call {
+                    ir::Expression::Function {
+                        candidates: vec![ir::Function::DereferenceInteger],
+                        calls: vec![ir::Call {
                             arguments: vec![expr],
                         }],
                     }
@@ -801,6 +823,6 @@ impl Context {
 
 enum Term {
     Import(usize),
-    Ty(backend::TyBuilder),
-    Expression(backend::Expression),
+    Ty(ir::Ty),
+    Expression(ir::Expression),
 }

@@ -22,8 +22,8 @@
 
 mod tests;
 
-use super::ast;
 use super::CharsPeekable;
+use super::ast;
 use crate::log::Index;
 use crate::log::ParseError;
 use crate::log::Pos;
@@ -141,7 +141,7 @@ struct TokenInfo {
 /**
  * A token.
  */
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Debug, PartialEq, Eq)]
 enum Token {
     Digits(String),
     StringLiteral(Vec<ast::StringLiteralComponent>),
@@ -255,7 +255,7 @@ impl Parser<'_, '_> {
                     return Err(ParseError::UnexpectedTokenAfterKeywordStruct {
                         unexpected_token_pos: self.current_pos(),
                         keyword_struct_pos,
-                    })
+                    });
                 }
             }
         } else {
@@ -275,7 +275,7 @@ impl Parser<'_, '_> {
                     return Err(ParseError::UnexpectedTokenInBrackets {
                         unexpected_token_pos: self.current_pos(),
                         opening_bracket_pos,
-                    })
+                    });
                 }
                 None => {
                     return Err(ParseError::UnclosedBracket {
@@ -346,7 +346,7 @@ impl Parser<'_, '_> {
                     return Err(ParseError::UnexpectedTokenAfterKeywordFuncOrMethod {
                         unexpected_token_pos: self.current_pos(),
                         keyword_pos,
-                    })
+                    });
                 }
             }
         } else {
@@ -367,7 +367,7 @@ impl Parser<'_, '_> {
                     return Err(ParseError::UnexpectedTokenInBrackets {
                         unexpected_token_pos: self.current_pos(),
                         opening_bracket_pos,
-                    })
+                    });
                 }
                 None => {
                     return Err(ParseError::UnclosedBracket {
@@ -557,7 +557,7 @@ impl Parser<'_, '_> {
                 return Err(ParseError::UnclosedBlock {
                     pos: self.current_pos(),
                     starts_pos: std::mem::take(starts_pos),
-                })
+                });
             }
         };
 
@@ -824,7 +824,7 @@ impl Parser<'_, '_> {
                         return Err(ParseError::UnexpectedTokenAfterDot {
                             unexpected_token_pos: self.current_pos(),
                             dot_pos,
-                        })
+                        });
                     }
                     None => return Err(ParseError::MissingFieldAfterDot { dot_pos }),
                 }
@@ -864,12 +864,12 @@ impl Parser<'_, '_> {
                         return Err(ParseError::UnexpectedTokenInParentheses {
                             unexpected_token_pos: self.current_pos(),
                             opening_parenthesis_pos,
-                        })
+                        });
                     }
                     None => {
                         return Err(ParseError::UnclosedParenthesis {
                             opening_parenthesis_pos,
-                        })
+                        });
                     }
                 }
                 factor = ast::TermWithPos {
@@ -889,7 +889,7 @@ impl Parser<'_, '_> {
                         return Err(ParseError::UnexpectedTokenInBrackets {
                             unexpected_token_pos: self.current_pos(),
                             opening_bracket_pos,
-                        })
+                        });
                     }
                     None => {
                         return Err(ParseError::UnclosedBracket {
@@ -992,12 +992,12 @@ impl Parser<'_, '_> {
                     return Err(ParseError::UnexpectedTokenInParentheses {
                         unexpected_token_pos: self.current_pos(),
                         opening_parenthesis_pos,
-                    })
+                    });
                 }
                 None => {
                     return Err(ParseError::UnclosedParenthesis {
                         opening_parenthesis_pos,
-                    })
+                    });
                 }
             }
             if elements.len() == 1 && !has_trailing_comma {
@@ -1312,7 +1312,7 @@ fn read_token(
                                     file: file_index,
                                     start: index1,
                                     end: iter.index(),
-                                }))
+                                }));
                             }
                         });
                     }
@@ -1499,7 +1499,7 @@ fn read_token(
                 file: file_index,
                 start: start_index,
                 end: iter.index(),
-            }))
+            }));
         }
     };
     Ok(TokenInfo {

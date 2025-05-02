@@ -1,0 +1,79 @@
+{
+  "structures": [
+    [
+      "Ty",
+      {
+        "num_ty_parameters": 0,
+        "fields_ty": [
+          {
+            "Constructor": "Integer"
+          },
+          {
+            "Application": {
+              "constructor": {
+                "Constructor": {
+                  "Structure": 1
+                }
+              },
+              "arguments": [
+                {
+                  "Constructor": "Integer"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "Abstraction": {
+          "parameters": {
+            "Cons": [
+              "Ty",
+              "Nil"
+            ]
+          },
+          "ret": "Ty"
+        }
+      },
+      {
+        "num_ty_parameters": 1,
+        "fields_ty": [
+          {
+            "Constructor": "Float"
+          },
+          {
+            "Constructor": {
+              "Structure": 0
+            }
+          }
+        ]
+      }
+    ]
+  ],
+  "functions_ty": [
+    {
+      "num_ty_parameters": 0,
+      "parameters_ty": [],
+      "return_ty": {
+        "Application": {
+          "constructor": {
+            "Constructor": "Tuple"
+          },
+          "arguments": []
+        }
+      }
+    }
+  ],
+  "function_definitions": [
+    {
+      "num_local_variables": 0,
+      "body": {
+        "statements": [],
+        "size": 0
+      }
+    }
+  ],
+  "num_global_variables": 0
+}
