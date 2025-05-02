@@ -33,7 +33,7 @@ struct CommandLineArguments {
 fn main() -> ExitCode {
     let command_line_arguments = CommandLineArguments::parse();
     let mut logger = log::Logger::new(Box::new(std::io::stderr()));
-    let Ok(definitions) = frontend::read_input(
+    let Ok(program) = frontend::read_input(
         std::path::Path::new(&command_line_arguments.filename),
         &mut logger,
     ) else {

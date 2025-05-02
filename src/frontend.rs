@@ -16,6 +16,10 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+/*!
+ * Parses source files and emits intermediate representation ([`ir`]).
+ */
+
 mod ast;
 mod block_builder;
 mod chars_peekable;
@@ -38,7 +42,7 @@ use variables::Variables;
  * Reads the file specified by `root_file_path` and any other files it
  * imports, and passes them to `backend`.
  */
-pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir::Definitions, ()> {
+pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir::Program, ()> {
     let root_file_path = root_file_path.with_extension("sysc");
     let root_file_path = match root_file_path.canonicalize() {
         Ok(path) => path,
@@ -50,7 +54,7 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
     let mut reader = Reader {
         num_structures: 0,
         num_functions: 0,
-        definitions: ir::Definitions {
+        definitions: ir::Program {
             structures: Vec::new(),
             functions_ty: Vec::new(),
             function_definitions: Vec::new(),
@@ -107,7 +111,7 @@ struct Reader {
     /**
      * The target which [`Reader::read_file`] stores the results in.
      */
-    definitions: ir::Definitions,
+    definitions: ir::Program,
     /**
      * Block of global statements.
      */

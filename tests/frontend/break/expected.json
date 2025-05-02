@@ -1,0 +1,225 @@
+{
+  "structures": [],
+  "functions_ty": [
+    {
+      "num_ty_parameters": 0,
+      "parameters_ty": [],
+      "return_ty": {
+        "Application": {
+          "constructor": {
+            "Constructor": "Tuple"
+          },
+          "arguments": []
+        }
+      }
+    }
+  ],
+  "function_definitions": [
+    {
+      "num_local_variables": 0,
+      "body": {
+        "statements": [
+          {
+            "While": {
+              "condition": {
+                "Function": {
+                  "candidates": [
+                    "DereferenceInteger"
+                  ],
+                  "calls": [
+                    {
+                      "arguments": [
+                        {
+                          "GlobalVariable": 0
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "do_block": {
+                "statements": [
+                  {
+                    "If": {
+                      "antecedents": [],
+                      "condition": {
+                        "Function": {
+                          "candidates": [
+                            "DereferenceInteger"
+                          ],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "GlobalVariable": 1
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "then_block": {
+                        "statements": [
+                          {
+                            "Break": [
+                              {
+                                "Function": {
+                                  "candidates": [
+                                    "DeleteInteger"
+                                  ],
+                                  "calls": [
+                                    {
+                                      "arguments": [
+                                        {
+                                          "GlobalVariable": 1
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        ],
+                        "size": 1
+                      },
+                      "else_block": {
+                        "statements": [],
+                        "size": 0
+                      }
+                    }
+                  },
+                  {
+                    "If": {
+                      "antecedents": [],
+                      "condition": {
+                        "Function": {
+                          "candidates": [
+                            "DereferenceInteger"
+                          ],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "GlobalVariable": 2
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "then_block": {
+                        "statements": [
+                          {
+                            "Break": [
+                              {
+                                "Function": {
+                                  "candidates": [
+                                    "DeleteInteger"
+                                  ],
+                                  "calls": [
+                                    {
+                                      "arguments": [
+                                        {
+                                          "GlobalVariable": 2
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "Function": {
+                                  "candidates": [
+                                    "DeleteInteger"
+                                  ],
+                                  "calls": [
+                                    {
+                                      "arguments": [
+                                        {
+                                          "GlobalVariable": 1
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        ],
+                        "size": 1
+                      },
+                      "else_block": {
+                        "statements": [],
+                        "size": 0
+                      }
+                    }
+                  },
+                  {
+                    "Expr": [
+                      {
+                        "Function": {
+                          "candidates": [
+                            "DeleteInteger"
+                          ],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "GlobalVariable": 2
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "Function": {
+                          "candidates": [
+                            "DeleteInteger"
+                          ],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "GlobalVariable": 1
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "size": 5
+              }
+            }
+          },
+          {
+            "Expr": [
+              {
+                "Function": {
+                  "candidates": [
+                    "DeleteInteger"
+                  ],
+                  "calls": [
+                    {
+                      "arguments": [
+                        {
+                          "GlobalVariable": 0
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "size": 7
+      }
+    }
+  ],
+  "num_global_variables": 0
+}

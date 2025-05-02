@@ -1,0 +1,122 @@
+{
+  "structures": [],
+  "functions_ty": [
+    {
+      "num_ty_parameters": 0,
+      "parameters_ty": [],
+      "return_ty": {
+        "Application": {
+          "constructor": {
+            "Constructor": "Tuple"
+          },
+          "arguments": []
+        }
+      }
+    }
+  ],
+  "function_definitions": [
+    {
+      "num_local_variables": 0,
+      "body": {
+        "statements": [
+          {
+            "Expr": [
+              {
+                "Function": {
+                  "candidates": [
+                    "Print"
+                  ],
+                  "calls": [
+                    {
+                      "arguments": [
+                        {
+                          "Function": {
+                            "candidates": [
+                              "ConcatenateString"
+                            ],
+                            "calls": [
+                              {
+                                "arguments": [
+                                  {
+                                    "Function": {
+                                      "candidates": [
+                                        "ConcatenateString"
+                                      ],
+                                      "calls": [
+                                        {
+                                          "arguments": [
+                                            {
+                                              "Function": {
+                                                "candidates": [
+                                                  "ConcatenateString"
+                                                ],
+                                                "calls": [
+                                                  {
+                                                    "arguments": [
+                                                      {
+                                                        "String": "foo"
+                                                      },
+                                                      {
+                                                        "Function": {
+                                                          "candidates": [
+                                                            "IntegerToString"
+                                                          ],
+                                                          "calls": [
+                                                            {
+                                                              "arguments": [
+                                                                {
+                                                                  "Integer": 10
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            {
+                                              "Function": {
+                                                "candidates": [
+                                                  "IntegerToString"
+                                                ],
+                                                "calls": [
+                                                  {
+                                                    "arguments": [
+                                                      {
+                                                        "Integer": 20
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "String": "bar"
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "size": 1
+      }
+    }
+  ],
+  "num_global_variables": 0
+}

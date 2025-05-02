@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use super::{ast, BlockBuilder, Item, Variables};
+use super::{BlockBuilder, Item, Variables, ast};
 use crate::{ir, log};
 
 pub struct Context {
@@ -505,10 +505,10 @@ impl Context {
     ) -> Result<Term, ()> {
         match ast_term {
             ast::Term::IntegerTy => {
-                return Ok(Term::Ty(ir::Ty::Constructor(ir::TyConstructor::Integer)))
+                return Ok(Term::Ty(ir::Ty::Constructor(ir::TyConstructor::Integer)));
             }
             ast::Term::FloatTy => {
-                return Ok(Term::Ty(ir::Ty::Constructor(ir::TyConstructor::Float)))
+                return Ok(Term::Ty(ir::Ty::Constructor(ir::TyConstructor::Float)));
             }
             ast::Term::NumericLiteral(value) => {
                 if value.chars().all(|ch| matches!(ch, '0'..='9')) {

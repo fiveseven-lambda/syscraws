@@ -1,0 +1,91 @@
+{
+  "structures": [],
+  "functions_ty": [
+    {
+      "num_ty_parameters": 0,
+      "parameters_ty": [],
+      "return_ty": {
+        "Application": {
+          "constructor": {
+            "Constructor": "Tuple"
+          },
+          "arguments": []
+        }
+      }
+    }
+  ],
+  "function_definitions": [
+    {
+      "num_local_variables": 0,
+      "body": {
+        "statements": [
+          {
+            "If": {
+              "antecedents": [
+                {
+                  "Integer": 0
+                }
+              ],
+              "condition": {
+                "Integer": 1
+              },
+              "then_block": {
+                "statements": [
+                  {
+                    "Expr": [
+                      {
+                        "Integer": 2
+                      },
+                      {
+                        "Integer": 3
+                      }
+                    ]
+                  }
+                ],
+                "size": 1
+              },
+              "else_block": {
+                "statements": [],
+                "size": 0
+              }
+            }
+          },
+          {
+            "If": {
+              "antecedents": [],
+              "condition": {
+                "Integer": 4
+              },
+              "then_block": {
+                "statements": [
+                  {
+                    "Expr": [
+                      {
+                        "Integer": 5
+                      }
+                    ]
+                  }
+                ],
+                "size": 1
+              },
+              "else_block": {
+                "statements": [
+                  {
+                    "Expr": [
+                      {
+                        "Integer": 6
+                      }
+                    ]
+                  }
+                ],
+                "size": 1
+              }
+            }
+          }
+        ],
+        "size": 5
+      }
+    }
+  ],
+  "num_global_variables": 0
+}

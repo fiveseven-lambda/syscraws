@@ -16,6 +16,12 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+/*!
+ * Receives intermediate representation ([`ir`]) and executes it.
+ */
+
+use crate::ir;
+
 /*
 mod tests;
 

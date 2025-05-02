@@ -1,0 +1,220 @@
+{
+  "structures": [],
+  "functions_ty": [
+    {
+      "num_ty_parameters": 0,
+      "parameters_ty": [],
+      "return_ty": {
+        "Application": {
+          "constructor": {
+            "Constructor": "Tuple"
+          },
+          "arguments": []
+        }
+      }
+    },
+    {
+      "num_ty_parameters": 0,
+      "parameters_ty": [],
+      "return_ty": {
+        "Application": {
+          "constructor": {
+            "Constructor": "Tuple"
+          },
+          "arguments": []
+        }
+      }
+    }
+  ],
+  "function_definitions": [
+    {
+      "num_local_variables": 2,
+      "body": {
+        "statements": [
+          {
+            "While": {
+              "condition": {
+                "Integer": 1
+              },
+              "do_block": {
+                "statements": [
+                  {
+                    "Expr": [
+                      {
+                        "Function": {
+                          "candidates": [],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "GlobalVariable": 1
+                                },
+                                {
+                                  "Integer": 1
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "Function": {
+                          "candidates": [],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "LocalVariable": 0
+                                },
+                                {
+                                  "Integer": 2
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "Function": {
+                          "candidates": [],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "LocalVariable": 1
+                                },
+                                {
+                                  "Integer": 3
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "Function": {
+                          "candidates": [
+                            "DeleteInteger"
+                          ],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "LocalVariable": 1
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "size": 1
+              }
+            }
+          },
+          {
+            "Expr": [
+              {
+                "Function": {
+                  "candidates": [
+                    "DeleteInteger"
+                  ],
+                  "calls": [
+                    {
+                      "arguments": [
+                        {
+                          "LocalVariable": 0
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "size": 3
+      }
+    },
+    {
+      "num_local_variables": 0,
+      "body": {
+        "statements": [
+          {
+            "While": {
+              "condition": {
+                "Integer": 1
+              },
+              "do_block": {
+                "statements": [
+                  {
+                    "Expr": [
+                      {
+                        "Function": {
+                          "candidates": [],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "GlobalVariable": 0
+                                },
+                                {
+                                  "Integer": 1
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "Function": {
+                          "candidates": [
+                            "DeleteInteger"
+                          ],
+                          "calls": [
+                            {
+                              "arguments": [
+                                {
+                                  "GlobalVariable": 0
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "size": 1
+              }
+            }
+          },
+          {
+            "Expr": [
+              {
+                "Function": {
+                  "candidates": [
+                    "DeleteInteger"
+                  ],
+                  "calls": [
+                    {
+                      "arguments": [
+                        {
+                          "GlobalVariable": 1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "size": 3
+      }
+    }
+  ],
+  "num_global_variables": 0
+}

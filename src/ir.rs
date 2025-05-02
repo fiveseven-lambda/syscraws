@@ -21,20 +21,24 @@
  * [`frontend`](crate::frontend) and [`backend`](crate::backend).
  */
 
-mod debug;
+#[cfg(test)]
+use serde::Serialize;
 
-pub struct Definitions {
+#[cfg_attr(test, derive(Serialize))]
+pub struct Program {
     pub structures: Vec<(TyKind, Structure)>,
     pub functions_ty: Vec<FunctionTy>,
     pub function_definitions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
 }
 
+#[cfg_attr(test, derive(Serialize))]
 pub struct Structure {
     pub num_ty_parameters: usize,
     pub fields_ty: Vec<Ty>,
 }
 
+#[cfg_attr(test, derive(Serialize))]
 pub struct FunctionTy {
     pub num_ty_parameters: usize,
     pub parameters_ty: Vec<Ty>,
@@ -42,6 +46,7 @@ pub struct FunctionTy {
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(test, derive(Serialize))]
 pub enum Function {
     AddInteger,
     IntegerToString,
@@ -62,12 +67,14 @@ pub enum Function {
     },
 }
 
+#[cfg_attr(test, derive(Serialize))]
 pub struct FunctionDefinition {
     pub num_local_variables: usize,
     pub body: Block,
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Serialize))]
 pub enum Ty {
     Constructor(TyConstructor),
     Parameter(usize),
@@ -78,6 +85,7 @@ pub enum Ty {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(test, derive(Serialize))]
 pub enum TyConstructor {
     Integer,
     Float,
@@ -87,6 +95,7 @@ pub enum TyConstructor {
     Structure(usize),
 }
 
+#[cfg_attr(test, derive(Serialize))]
 pub enum TyKind {
     Ty,
     Abstraction {
@@ -95,17 +104,20 @@ pub enum TyKind {
     },
 }
 
+#[cfg_attr(test, derive(Serialize))]
 pub enum TyListKind {
     Nil,
     Cons(Box<TyKind>, Box<TyListKind>),
     Rest,
 }
 
+#[cfg_attr(test, derive(Serialize))]
 pub struct Block {
     pub statements: Vec<Statement>,
     pub size: usize,
 }
 
+#[cfg_attr(test, derive(Serialize))]
 pub enum Statement {
     Expr(Vec<Expression>),
     If {
@@ -122,6 +134,7 @@ pub enum Statement {
     Continue(Vec<Expression>),
 }
 
+#[cfg_attr(test, derive(Serialize))]
 pub enum Expression {
     Integer(i32),
     Float(f64),
@@ -134,6 +147,7 @@ pub enum Expression {
     },
 }
 
+#[cfg_attr(test, derive(Serialize))]
 pub struct Call {
     pub arguments: Vec<Expression>,
 }
