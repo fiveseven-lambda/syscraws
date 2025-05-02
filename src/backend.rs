@@ -22,7 +22,6 @@
 
 use crate::ir;
 
-/*
 mod tests;
 
 use std::cell::RefCell;
@@ -49,7 +48,7 @@ impl std::cmp::PartialEq for Ty {
 impl std::cmp::Eq for Ty {}
 
 enum TyInner {
-    Constructor(TyConstructor),
+    Constructor(ir::TyConstructor),
     Parameter(usize),
     Application { constructor: Ty, arguments: Vec<Ty> },
     List(Vec<Ty>),
@@ -154,7 +153,7 @@ impl Ty {
                 ref constructor,
                 ref arguments,
             } => match *constructor.inner.borrow() {
-                TyInner::Constructor(TyConstructor::Function) => {
+                TyInner::Constructor(ir::TyConstructor::Function) => {
                     let (ty, depth) = arguments[0].extract_function_ty();
                     (ty, depth + 1)
                 }
@@ -182,7 +181,7 @@ impl Unifications {
     }
 }
 
-impl FunctionTy {
+impl ir::FunctionTy {
     fn build(&self) -> Ty {
         let ty_parameters: Vec<_> = (0..self.num_ty_parameters)
             .map(|_| Ty {
@@ -201,7 +200,9 @@ impl FunctionTy {
         Ty {
             inner: Rc::new(RefCell::new(TyInner::Application {
                 constructor: Ty {
-                    inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Function))),
+                    inner: Rc::new(RefCell::new(TyInner::Constructor(
+                        ir::TyConstructor::Function,
+                    ))),
                 },
                 arguments: vec![return_ty, parameters_ty],
             })),
@@ -209,13 +210,13 @@ impl FunctionTy {
     }
 }
 
-impl TyBuilder {
+impl ir::Ty {
     fn build(&self, parameters: &[Ty]) -> Ty {
         match *self {
-            TyBuilder::Constructor(ref constructor) => Ty {
+            ir::Ty::Constructor(ref constructor) => Ty {
                 inner: Rc::new(RefCell::new(TyInner::Constructor(constructor.clone()))),
             },
-            TyBuilder::Application {
+            ir::Ty::Application {
                 ref constructor,
                 ref arguments,
             } => Ty {
@@ -224,12 +225,12 @@ impl TyBuilder {
                     arguments: arguments.iter().map(|ty| ty.build(parameters)).collect(),
                 })),
             },
-            TyBuilder::Parameter(index) => parameters[index].clone(),
+            ir::Ty::Parameter(index) => parameters[index].clone(),
         }
     }
 }
 
-impl Definitions {
+impl ir::Program {
     pub fn translate(self) {
         for definition in self.function_definitions {
             let variables_ty: Vec<_> = (0..definition.num_local_variables)
@@ -249,10 +250,10 @@ impl Definitions {
 }
 
 fn translate_block(
-    block: Block,
+    block: ir::Block,
     num_blocks: &mut usize,
     variables_ty: &[Ty],
-    functions_ty: &[FunctionTy],
+    functions_ty: &[ir::FunctionTy],
 ) {
     for statement in block.statements {
         translate_statement(statement, num_blocks, variables_ty, functions_ty);
@@ -260,20 +261,20 @@ fn translate_block(
 }
 
 fn translate_statement(
-    statement: Statement,
+    statement: ir::Statement,
     num_blocks: &mut usize,
     variables_ty: &[Ty],
-    functions_ty: &[FunctionTy],
+    functions_ty: &[ir::FunctionTy],
 ) {
     match statement {
-        Statement::Expr(exprs) => {
+        ir::Statement::Expr(exprs) => {
             for expr in exprs {
                 translate_expression(expr, variables_ty, functions_ty);
             }
             println!("{num_blocks}: Jump");
             *num_blocks += 1;
         }
-        Statement::If {
+        ir::Statement::If {
             antecedents,
             condition,
             then_block,
@@ -288,7 +289,7 @@ fn translate_statement(
             translate_block(then_block, num_blocks, variables_ty, functions_ty);
             translate_block(else_block, num_blocks, variables_ty, functions_ty);
         }
-        Statement::While {
+        ir::Statement::While {
             condition,
             do_block,
         } => {
@@ -297,13 +298,13 @@ fn translate_statement(
             *num_blocks += 1;
             translate_block(do_block, num_blocks, variables_ty, functions_ty);
         }
-        Statement::Break(exprs) => {
+        ir::Statement::Break(exprs) => {
             for expr in exprs {
                 translate_expression(expr, variables_ty, functions_ty);
             }
             println!("{num_blocks}: break");
         }
-        Statement::Continue(exprs) => {
+        ir::Statement::Continue(exprs) => {
             for expr in exprs {
                 translate_expression(expr, variables_ty, functions_ty);
             }
@@ -312,23 +313,27 @@ fn translate_statement(
     }
 }
 
-fn get_function_ty(function: &Function, functions_ty: &[FunctionTy]) -> Ty {
+fn get_function_ty(function: &ir::Function, functions_ty: &[ir::FunctionTy]) -> Ty {
     match *function {
-        Function::UserDefined(index) => functions_ty[index].build(),
-        Function::DeleteInteger => Ty {
+        ir::Function::UserDefined(index) => functions_ty[index].build(),
+        ir::Function::DeleteInteger => Ty {
             inner: Rc::new(RefCell::new(TyInner::Application {
                 constructor: Ty {
-                    inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Function))),
+                    inner: Rc::new(RefCell::new(TyInner::Constructor(
+                        ir::TyConstructor::Function,
+                    ))),
                 },
                 arguments: vec![
                     Ty {
-                        inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Integer))),
+                        inner: Rc::new(RefCell::new(TyInner::Constructor(
+                            ir::TyConstructor::Integer,
+                        ))),
                     },
                     Ty {
                         inner: Rc::new(RefCell::new(TyInner::Application {
                             constructor: Ty {
                                 inner: Rc::new(RefCell::new(TyInner::Constructor(
-                                    TyConstructor::Tuple,
+                                    ir::TyConstructor::Tuple,
                                 ))),
                             },
                             arguments: vec![Ty {
@@ -344,27 +349,30 @@ fn get_function_ty(function: &Function, functions_ty: &[FunctionTy]) -> Ty {
 }
 
 fn translate_expression(
-    expr: Expression,
+    expr: ir::Expression,
     variables_ty: &[Ty],
-    functions_ty: &[FunctionTy],
-) -> (Ty, ir::Expression) {
+    functions_ty: &[ir::FunctionTy],
+) -> (Ty, Expression) {
     match expr {
-        Expression::Integer(value) => (
+        ir::Expression::Integer(value) => (
             Ty {
-                inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Integer))),
+                inner: Rc::new(RefCell::new(TyInner::Constructor(
+                    ir::TyConstructor::Integer,
+                ))),
             },
-            ir::Expression::Integer(value),
+            Expression::Integer(value),
         ),
-        Expression::Float(value) => (
+        ir::Expression::Float(value) => (
             Ty {
-                inner: Rc::new(RefCell::new(TyInner::Constructor(TyConstructor::Float))),
+                inner: Rc::new(RefCell::new(TyInner::Constructor(ir::TyConstructor::Float))),
             },
-            ir::Expression::Float(value),
+            Expression::Float(value),
         ),
-        Expression::Function { candidates, calls } => {
+        ir::Expression::String(value) => todo!(),
+        ir::Expression::Function { candidates, calls } => {
             let calls: Vec<Vec<_>> = calls
                 .into_iter()
-                .map(|Call { arguments }| {
+                .map(|ir::Call { arguments }| {
                     arguments
                         .into_iter()
                         .map(|argument| translate_expression(argument, variables_ty, functions_ty))
@@ -388,7 +396,7 @@ fn translate_expression(
                             else {
                                 return None;
                             };
-                            let TyInner::Constructor(TyConstructor::Function) =
+                            let TyInner::Constructor(ir::TyConstructor::Function) =
                                 *constructor.inner.borrow()
                             else {
                                 return None;
@@ -475,7 +483,7 @@ fn translate_expression(
                                                 constructor: Ty {
                                                     inner: Rc::new(RefCell::new(
                                                         TyInner::Constructor(
-                                                            TyConstructor::Function,
+                                                            ir::TyConstructor::Function,
                                                         ),
                                                     )),
                                                 },
@@ -500,17 +508,22 @@ fn translate_expression(
             match &candidates[..] {
                 [(ty, unifications)] => {
                     unifications.redo();
-                    (ty.clone(), ir::Expression::Integer(0))
+                    (ty.clone(), Expression::Integer(0))
                 }
                 _ => todo!(),
             }
         }
-        Expression::LocalVariable(index) => {
-            (variables_ty[index].clone(), ir::Expression::Variable(index))
+        ir::Expression::LocalVariable(index) => {
+            (variables_ty[index].clone(), Expression::Variable(index))
         }
-        Expression::GlobalVariable(index) => {
-            (variables_ty[index].clone(), ir::Expression::Variable(index))
+        ir::Expression::GlobalVariable(index) => {
+            (variables_ty[index].clone(), Expression::Variable(index))
         }
     }
 }
-*/
+
+enum Expression {
+    Integer(i32),
+    Float(f64),
+    Variable(usize),
+}
