@@ -61,7 +61,7 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
             num_global_variables: 0,
         },
         global_builder: BlockBuilder::new(),
-        global_variables: Variables::new(false),
+        global_variables: Variables::new(ir::Storage::Global),
         exports: Vec::new(),
         files: Vec::new(),
         file_indices: HashMap::new(),
@@ -141,8 +141,7 @@ pub enum Item {
     Import(usize),
     Ty(ir::Ty),
     Function(Vec<ir::Function>),
-    GlobalVariable(usize),
-    LocalVariable(usize),
+    Variable(ir::Storage, usize),
 }
 
 impl Reader {

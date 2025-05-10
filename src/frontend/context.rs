@@ -187,7 +187,7 @@ impl Context {
             }
         }
         let mut builder = BlockBuilder::new();
-        let mut local_variables = Variables::new(true);
+        let mut local_variables = Variables::new(ir::Storage::Local);
         let mut parameters_ty = Vec::new();
         match ast_parameters {
             Ok(ast_parameters) => {
@@ -789,21 +789,8 @@ impl Context {
                     }))
                 }
             }
-            Item::GlobalVariable(index) => {
-                let expr = ir::Expression::GlobalVariable(index);
-                Ok(Term::Expression(if reference {
-                    expr
-                } else {
-                    ir::Expression::Function {
-                        candidates: vec![ir::Function::DereferenceInteger],
-                        calls: vec![ir::Call {
-                            arguments: vec![expr],
-                        }],
-                    }
-                }))
-            }
-            Item::LocalVariable(index) => {
-                let expr = ir::Expression::LocalVariable(index);
+            Item::Variable(storage, index) => {
+                let expr = ir::Expression::Variable(storage, index);
                 Ok(Term::Expression(if reference {
                     expr
                 } else {
