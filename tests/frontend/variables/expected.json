@@ -47,7 +47,10 @@
                             {
                               "arguments": [
                                 {
-                                  "GlobalVariable": 1
+                                  "Variable": [
+                                    "Global",
+                                    1
+                                  ]
                                 },
                                 {
                                   "Integer": 1
@@ -64,7 +67,10 @@
                             {
                               "arguments": [
                                 {
-                                  "LocalVariable": 0
+                                  "Variable": [
+                                    "Local",
+                                    0
+                                  ]
                                 },
                                 {
                                   "Integer": 2
@@ -81,7 +87,10 @@
                             {
                               "arguments": [
                                 {
-                                  "LocalVariable": 1
+                                  "Variable": [
+                                    "Local",
+                                    1
+                                  ]
                                 },
                                 {
                                   "Integer": 3
@@ -100,7 +109,10 @@
                             {
                               "arguments": [
                                 {
-                                  "LocalVariable": 1
+                                  "Variable": [
+                                    "Local",
+                                    1
+                                  ]
                                 }
                               ]
                             }
@@ -125,7 +137,10 @@
                     {
                       "arguments": [
                         {
-                          "LocalVariable": 0
+                          "Variable": [
+                            "Local",
+                            0
+                          ]
                         }
                       ]
                     }
@@ -158,7 +173,10 @@
                             {
                               "arguments": [
                                 {
-                                  "GlobalVariable": 0
+                                  "Variable": [
+                                    "Global",
+                                    0
+                                  ]
                                 },
                                 {
                                   "Integer": 1
@@ -177,7 +195,10 @@
                             {
                               "arguments": [
                                 {
-                                  "GlobalVariable": 0
+                                  "Variable": [
+                                    "Global",
+                                    0
+                                  ]
                                 }
                               ]
                             }
@@ -202,7 +223,10 @@
                     {
                       "arguments": [
                         {
-                          "GlobalVariable": 1
+                          "Variable": [
+                            "Global",
+                            1
+                          ]
                         }
                       ]
                     }

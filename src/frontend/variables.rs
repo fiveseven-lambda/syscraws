@@ -45,7 +45,12 @@ impl Variables {
         self.num += 1;
         ret
     }
-    pub fn truncate(&mut self, len: usize, builder: &mut BlockBuilder, context: &mut Context) {
+    pub fn free_and_remove(
+        &mut self,
+        len: usize,
+        builder: &mut BlockBuilder,
+        context: &mut Context,
+    ) {
         self.free(len, builder);
         for (name, index) in self.name_and_indices.split_off(len) {
             match context.items.remove(&name).unwrap() {
