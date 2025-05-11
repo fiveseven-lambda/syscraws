@@ -20,15 +20,15 @@ use super::{BlockBuilder, Context, Item};
 use crate::ir;
 
 pub struct Variables {
-    is_local: bool,
+    storage: ir::Storage,
     num: usize,
     name_and_indices: Vec<(String, usize)>,
 }
 
 impl Variables {
-    pub fn new(is_local: bool) -> Variables {
+    pub fn new(storage: ir::Storage) -> Variables {
         Variables {
-            is_local,
+            storage,
             num: 0,
             name_and_indices: Vec::new(),
         }
@@ -41,25 +41,22 @@ impl Variables {
     }
     pub fn add(&mut self, name: String) -> Item {
         self.name_and_indices.push((name, self.num));
-        let ret = if self.is_local {
-            Item::LocalVariable(self.num)
-        } else {
-            Item::GlobalVariable(self.num)
-        };
+        let ret = Item::Variable(self.storage, self.num);
         self.num += 1;
         ret
     }
-    pub fn truncate(&mut self, len: usize, builder: &mut BlockBuilder, context: &mut Context) {
+    pub fn free_and_remove(
+        &mut self,
+        len: usize,
+        builder: &mut BlockBuilder,
+        context: &mut Context,
+    ) {
         self.free(len, builder);
         for (name, index) in self.name_and_indices.split_off(len) {
             match context.items.remove(&name).unwrap() {
-                (_, Item::GlobalVariable(i)) => {
-                    assert!(!self.is_local);
-                    assert_eq!(index, i);
-                }
-                (_, Item::LocalVariable(i)) => {
-                    assert!(self.is_local);
-                    assert_eq!(index, i);
+                (_, Item::Variable(s, i)) => {
+                    assert_eq!(s, self.storage);
+                    assert_eq!(i, index);
                 }
                 _ => unreachable!(),
             }
@@ -67,11 +64,7 @@ impl Variables {
     }
     pub fn free(&mut self, len: usize, builder: &mut BlockBuilder) {
         for &(_, index) in self.name_and_indices[len..].iter().rev() {
-            let expr = if self.is_local {
-                ir::Expression::LocalVariable(index)
-            } else {
-                ir::Expression::GlobalVariable(index)
-            };
+            let expr = ir::Expression::Variable(self.storage, index);
             builder.add_expression(ir::Expression::Function {
                 candidates: vec![ir::Function::DeleteInteger],
                 calls: vec![ir::Call {

@@ -139,12 +139,18 @@ pub enum Expression {
     Integer(i32),
     Float(f64),
     String(String),
-    GlobalVariable(usize),
-    LocalVariable(usize),
+    Variable(Storage, usize),
     Function {
         candidates: Vec<Function>,
         calls: Vec<Call>,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(test, derive(Serialize))]
+pub enum Storage {
+    Global,
+    Local,
 }
 
 #[cfg_attr(test, derive(Serialize))]

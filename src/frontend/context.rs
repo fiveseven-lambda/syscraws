@@ -187,7 +187,7 @@ impl Context {
             }
         }
         let mut builder = BlockBuilder::new();
-        let mut local_variables = Variables::new(true);
+        let mut local_variables = Variables::new(ir::Storage::Local);
         let mut parameters_ty = Vec::new();
         match ast_parameters {
             Ok(ast_parameters) => {
@@ -299,7 +299,7 @@ impl Context {
                 logger,
             );
         }
-        local_variables.truncate(0, &mut builder, self);
+        local_variables.free_and_remove(0, &mut builder, self);
         let body = builder.finish();
         for ty_parameter_name in &ty_parameters_name {
             self.items.remove(ty_parameter_name);
@@ -408,7 +408,7 @@ impl Context {
                         logger,
                     );
                 }
-                variables.truncate(num_alive_variables, &mut then_builder, self);
+                variables.free_and_remove(num_alive_variables, &mut then_builder, self);
                 let then_block = then_builder.finish();
                 let mut else_builder = BlockBuilder::new();
                 if let Some(ast::ElseBlock {
@@ -432,7 +432,7 @@ impl Context {
                             logger,
                         );
                     }
-                    variables.truncate(num_alive_variables, &mut else_builder, self);
+                    variables.free_and_remove(num_alive_variables, &mut else_builder, self);
                 }
                 let else_block = else_builder.finish();
                 builder.add_if_statement(condition.unwrap(), then_block, else_block);
@@ -477,7 +477,7 @@ impl Context {
                         logger,
                     );
                 }
-                variables.truncate(num_alive_variables, &mut do_builder, self);
+                variables.free_and_remove(num_alive_variables, &mut do_builder, self);
                 let do_block = do_builder.finish();
                 builder.add_while_statement(condition.unwrap(), do_block);
             }
@@ -789,21 +789,8 @@ impl Context {
                     }))
                 }
             }
-            Item::GlobalVariable(index) => {
-                let expr = ir::Expression::GlobalVariable(index);
-                Ok(Term::Expression(if reference {
-                    expr
-                } else {
-                    ir::Expression::Function {
-                        candidates: vec![ir::Function::DereferenceInteger],
-                        calls: vec![ir::Call {
-                            arguments: vec![expr],
-                        }],
-                    }
-                }))
-            }
-            Item::LocalVariable(index) => {
-                let expr = ir::Expression::LocalVariable(index);
+            Item::Variable(storage, index) => {
+                let expr = ir::Expression::Variable(storage, index);
                 Ok(Term::Expression(if reference {
                     expr
                 } else {

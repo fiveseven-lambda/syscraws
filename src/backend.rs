@@ -513,11 +513,8 @@ fn translate_expression(
                 _ => todo!(),
             }
         }
-        ir::Expression::LocalVariable(index) => {
-            (variables_ty[index].clone(), Expression::Variable(index))
-        }
-        ir::Expression::GlobalVariable(index) => {
-            (variables_ty[index].clone(), Expression::Variable(index))
+        ir::Expression::Variable(storage, index) => {
+            todo!();
         }
     }
 }

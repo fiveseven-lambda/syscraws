@@ -30,7 +30,10 @@
                     {
                       "arguments": [
                         {
-                          "GlobalVariable": 0
+                          "Variable": [
+                            "Global",
+                            0
+                          ]
                         }
                       ]
                     }
@@ -51,7 +54,10 @@
                             {
                               "arguments": [
                                 {
-                                  "GlobalVariable": 1
+                                  "Variable": [
+                                    "Global",
+                                    1
+                                  ]
                                 }
                               ]
                             }
@@ -71,7 +77,10 @@
                                     {
                                       "arguments": [
                                         {
-                                          "GlobalVariable": 1
+                                          "Variable": [
+                                            "Global",
+                                            1
+                                          ]
                                         }
                                       ]
                                     }
@@ -101,7 +110,10 @@
                             {
                               "arguments": [
                                 {
-                                  "GlobalVariable": 2
+                                  "Variable": [
+                                    "Global",
+                                    2
+                                  ]
                                 }
                               ]
                             }
@@ -121,7 +133,10 @@
                                     {
                                       "arguments": [
                                         {
-                                          "GlobalVariable": 2
+                                          "Variable": [
+                                            "Global",
+                                            2
+                                          ]
                                         }
                                       ]
                                     }
@@ -137,7 +152,10 @@
                                     {
                                       "arguments": [
                                         {
-                                          "GlobalVariable": 1
+                                          "Variable": [
+                                            "Global",
+                                            1
+                                          ]
                                         }
                                       ]
                                     }
@@ -166,7 +184,10 @@
                             {
                               "arguments": [
                                 {
-                                  "GlobalVariable": 2
+                                  "Variable": [
+                                    "Global",
+                                    2
+                                  ]
                                 }
                               ]
                             }
@@ -182,7 +203,10 @@
                             {
                               "arguments": [
                                 {
-                                  "GlobalVariable": 1
+                                  "Variable": [
+                                    "Global",
+                                    1
+                                  ]
                                 }
                               ]
                             }
@@ -207,7 +231,10 @@
                     {
                       "arguments": [
                         {
-                          "GlobalVariable": 0
+                          "Variable": [
+                            "Global",
+                            0
+                          ]
                         }
                       ]
                     }
