@@ -79,42 +79,46 @@ macro_rules! pos {
 
 #[test]
 fn skip_comments() {
-    for (is_on_new_line, input) in std::iter::repeat(true)
+    for (case_index, (is_on_new_line, input)) in std::iter::repeat(true)
         .zip([
             "foo--comment\nbar",
             "foo/-comment-/\nbar",
             "foo\n/-comment-/bar",
             r"foo
             // comment
-            |  comment
+            // comment
             \\ comment
             bar",
             r"foo
-            ///  comment
-            | // comment
-            | |  comment
-            | \\ comment
-            \\\  comment
+            // \\ comment
+            | \\ comment \\
+            \\ comment
             bar",
             r"foo
-            ////   comment
-            | |    comment
-            | \\// comment
-            |   |  comment
-            \\  \\ comment
+            /// comment
+            \\  comment
+            \\\// comment
+            bar",
+            r"foo
+            //// comment
+            \\ \\  comment
+            \\\\ comment
             bar",
         ])
         .chain(std::iter::repeat(false).zip([
+            "foo/-comment-/bar",
+            "foo/-com/-ment--/bar",
+            "foo/--com-/ment--/bar",
+            "foo/--com---ment---/bar",
             "foo/-com-//-ment-/bar",
-            "foo/-/-com-//-ment-/-/bar",
+            "foo/--comment/--/bar",
             "foo/-/comment-/bar",
-            "foo/-/-/comment-/--/bar",
-            "foo/-com//-ment-/-/bar",
             "foo/-com\nment-/bar",
         ]))
+        .enumerate()
     {
         let mut chars_peekable = CharsPeekable::new(&input);
-        let mut parser = Parser::new(&mut chars_peekable, 0).unwrap();
+        let mut parser = Parser::new(&mut chars_peekable, case_index).unwrap();
         assert_eq!(
             parser.current.token,
             Some(Token::Identifier(String::from("foo")))

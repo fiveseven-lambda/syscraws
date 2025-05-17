@@ -1386,7 +1386,28 @@ fn read_token(
         }
         '/' => {
             if iter.consume_if('-') {
-                skip_block_comment(iter, '/', '-', '-', '/', start_index, file_index)?;
+                let mut num_hyphens = 1;
+                while let Some('-') = iter.peek() {
+                    num_hyphens += 1;
+                    iter.consume();
+                }
+                let mut hyphen_count = 0;
+                loop {
+                    match iter.peek() {
+                        None => {
+                            return Err(ParseError::UnterminatedComment(Pos {
+                                file: file_index,
+                                start: start_index,
+                                end: iter.index(),
+                            }));
+                        }
+                        Some('-') => hyphen_count += 1,
+                        Some('/') if hyphen_count >= num_hyphens => break,
+                        _ => hyphen_count = 0,
+                    };
+                    iter.consume();
+                }
+                iter.consume();
                 return read_token(iter, is_on_new_line, file_index);
             } else if iter.consume_if('/') {
                 if !is_on_new_line {
@@ -1398,9 +1419,35 @@ fn read_token(
                         },
                     });
                 }
-                skip_block_comment(iter, '/', '/', '\\', '\\', start_index, file_index)?;
-                skip_line_comment(iter);
-                return read_token(iter, true, file_index);
+                let mut num_slashes = 2;
+                while let Some('/') = iter.peek() {
+                    num_slashes += 1;
+                    iter.consume();
+                }
+                loop {
+                    let Some(ch) = iter.peek() else {
+                        return Err(ParseError::UnterminatedComment(Pos {
+                            file: file_index,
+                            start: start_index,
+                            end: iter.index(),
+                        }));
+                    };
+                    iter.consume();
+                    if ch == '\n' {
+                        while iter.peek().is_some_and(|ch| ch.is_ascii_whitespace()) {
+                            iter.consume();
+                        }
+                        let mut backslash_count = 0;
+                        while let Some('\\') = iter.peek() {
+                            backslash_count += 1;
+                            if backslash_count == num_slashes {
+                                skip_line_comment(iter);
+                                return read_token(iter, true, file_index);
+                            }
+                            iter.consume();
+                        }
+                    }
+                }
             } else if iter.consume_if('=') {
                 Token::SlashEqual
             } else {
@@ -1518,53 +1565,6 @@ fn skip_line_comment(iter: &mut CharsPeekable) {
         iter.consume();
         if let None | Some('\n') = ch {
             break;
-        }
-    }
-}
-
-/**
- * Skips over a block comment.
- *
- * A block comment starts with two consecutive characters `start0` and
- * `start1`, and ends with two consecutive characters `end0` and `end1`.
- * Block comments can be nested.
- *
- * # Errors
- * - [`ParseError::UnterminatedComment`]: EOF is reached before a matching
- *   end sequence is found.
- */
-fn skip_block_comment(
-    iter: &mut CharsPeekable,
-    start0: char,
-    start1: char,
-    end0: char,
-    end1: char,
-    start_index: Index,
-    file_index: usize,
-) -> Result<(), ParseError> {
-    let mut start_indices = vec![start_index];
-    loop {
-        let Some(ch) = iter.peek() else {
-            return Err(ParseError::UnterminatedComment(
-                start_indices
-                    .into_iter()
-                    .map(|start_index| Pos {
-                        file: file_index,
-                        start: start_index,
-                        end: iter.index(),
-                    })
-                    .collect(),
-            ));
-        };
-        let index = iter.index();
-        iter.consume();
-        if ch == start0 && iter.consume_if(start1) {
-            start_indices.push(index);
-        } else if ch == end0 && iter.consume_if(end1) {
-            start_indices.pop();
-            if start_indices.is_empty() {
-                return Ok(());
-            }
         }
     }
 }
