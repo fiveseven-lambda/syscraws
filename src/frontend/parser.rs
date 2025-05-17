@@ -1367,7 +1367,7 @@ fn read_token(
         }
         '-' => {
             if iter.consume_if('-') {
-                skip_line(iter);
+                skip_line_comment(iter);
                 return read_token(iter, true, file_index);
             } else if iter.consume_if('=') {
                 Token::HyphenEqual
@@ -1424,7 +1424,6 @@ fn read_token(
                     num_slashes += 1;
                     iter.consume();
                 }
-                let mut leading_backslash_count = None;
                 loop {
                     let Some(ch) = iter.peek() else {
                         return Err(ParseError::UnterminatedComment(Pos {
@@ -1434,21 +1433,21 @@ fn read_token(
                         }));
                     };
                     iter.consume();
-                    if ch == '\\' {
-                        if let Some(backslash_count) = leading_backslash_count.as_mut() {
-                            *backslash_count += 1;
-                            if *backslash_count >= num_slashes {
-                                break;
-                            }
+                    if ch == '\n' {
+                        while iter.peek().is_some_and(|ch| ch.is_ascii_whitespace()) {
+                            iter.consume();
                         }
-                    } else if ch == '\n' {
-                        leading_backslash_count = Some(0);
-                    } else if !ch.is_ascii_whitespace() {
-                        leading_backslash_count = None;
+                        let mut backslash_count = 0;
+                        while let Some('\\') = iter.peek() {
+                            backslash_count += 1;
+                            if backslash_count == num_slashes {
+                                skip_line_comment(iter);
+                                return read_token(iter, true, file_index);
+                            }
+                            iter.consume();
+                        }
                     }
                 }
-                skip_line(iter);
-                return read_token(iter, true, file_index);
             } else if iter.consume_if('=') {
                 Token::SlashEqual
             } else {
@@ -1560,7 +1559,7 @@ fn read_token(
 /**
  * Skips until the end of line.
  */
-fn skip_line(iter: &mut CharsPeekable) {
+fn skip_line_comment(iter: &mut CharsPeekable) {
     loop {
         let ch = iter.peek();
         iter.consume();

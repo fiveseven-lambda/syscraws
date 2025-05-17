@@ -90,9 +90,19 @@ fn skip_comments() {
             \\ comment
             bar",
             r"foo
+            // \\ comment
+            | \\ comment \\
+            \\ comment
+            bar",
+            r"foo
             /// comment
             \\  comment
             \\\// comment
+            bar",
+            r"foo
+            //// comment
+            \\ \\  comment
+            \\\\ comment
             bar",
         ])
         .chain(std::iter::repeat(false).zip([
