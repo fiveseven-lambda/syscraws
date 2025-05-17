@@ -1367,7 +1367,7 @@ fn read_token(
         }
         '-' => {
             if iter.consume_if('-') {
-                skip_line_comment(iter);
+                skip_line(iter);
                 return read_token(iter, true, file_index);
             } else if iter.consume_if('=') {
                 Token::HyphenEqual
@@ -1386,7 +1386,28 @@ fn read_token(
         }
         '/' => {
             if iter.consume_if('-') {
-                skip_block_comment(iter, '/', '-', '-', '/', start_index, file_index)?;
+                let mut num_hyphens = 1;
+                while let Some('-') = iter.peek() {
+                    num_hyphens += 1;
+                    iter.consume();
+                }
+                let mut hyphen_count = 0;
+                loop {
+                    match iter.peek() {
+                        None => {
+                            return Err(ParseError::UnterminatedComment(Pos {
+                                file: file_index,
+                                start: start_index,
+                                end: iter.index(),
+                            }));
+                        }
+                        Some('-') => hyphen_count += 1,
+                        Some('/') if hyphen_count >= num_hyphens => break,
+                        _ => hyphen_count = 0,
+                    };
+                    iter.consume();
+                }
+                iter.consume();
                 return read_token(iter, is_on_new_line, file_index);
             } else if iter.consume_if('/') {
                 if !is_on_new_line {
@@ -1398,8 +1419,35 @@ fn read_token(
                         },
                     });
                 }
-                skip_block_comment(iter, '/', '/', '\\', '\\', start_index, file_index)?;
-                skip_line_comment(iter);
+                let mut num_slashes = 2;
+                while let Some('/') = iter.peek() {
+                    num_slashes += 1;
+                    iter.consume();
+                }
+                let mut leading_backslash_count = None;
+                loop {
+                    let Some(ch) = iter.peek() else {
+                        return Err(ParseError::UnterminatedComment(Pos {
+                            file: file_index,
+                            start: start_index,
+                            end: iter.index(),
+                        }));
+                    };
+                    iter.consume();
+                    if ch == '\\' {
+                        if let Some(backslash_count) = leading_backslash_count.as_mut() {
+                            *backslash_count += 1;
+                            if *backslash_count >= num_slashes {
+                                break;
+                            }
+                        }
+                    } else if ch == '\n' {
+                        leading_backslash_count = Some(0);
+                    } else if !ch.is_ascii_whitespace() {
+                        leading_backslash_count = None;
+                    }
+                }
+                skip_line(iter);
                 return read_token(iter, true, file_index);
             } else if iter.consume_if('=') {
                 Token::SlashEqual
@@ -1512,59 +1560,12 @@ fn read_token(
 /**
  * Skips until the end of line.
  */
-fn skip_line_comment(iter: &mut CharsPeekable) {
+fn skip_line(iter: &mut CharsPeekable) {
     loop {
         let ch = iter.peek();
         iter.consume();
         if let None | Some('\n') = ch {
             break;
-        }
-    }
-}
-
-/**
- * Skips over a block comment.
- *
- * A block comment starts with two consecutive characters `start0` and
- * `start1`, and ends with two consecutive characters `end0` and `end1`.
- * Block comments can be nested.
- *
- * # Errors
- * - [`ParseError::UnterminatedComment`]: EOF is reached before a matching
- *   end sequence is found.
- */
-fn skip_block_comment(
-    iter: &mut CharsPeekable,
-    start0: char,
-    start1: char,
-    end0: char,
-    end1: char,
-    start_index: Index,
-    file_index: usize,
-) -> Result<(), ParseError> {
-    let mut start_indices = vec![start_index];
-    loop {
-        let Some(ch) = iter.peek() else {
-            return Err(ParseError::UnterminatedComment(
-                start_indices
-                    .into_iter()
-                    .map(|start_index| Pos {
-                        file: file_index,
-                        start: start_index,
-                        end: iter.index(),
-                    })
-                    .collect(),
-            ));
-        };
-        let index = iter.index();
-        iter.consume();
-        if ch == start0 && iter.consume_if(start1) {
-            start_indices.push(index);
-        } else if ch == end0 && iter.consume_if(end1) {
-            start_indices.pop();
-            if start_indices.is_empty() {
-                return Ok(());
-            }
         }
     }
 }

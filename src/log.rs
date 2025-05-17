@@ -178,9 +178,7 @@ impl Logger {
 pub enum ParseError {
     /// Returned by [`read_token`](../frontend/ast/fn.read_token.html).
     UnexpectedCharacter(Pos),
-    /// Returned by
-    /// [`skip_block_comment`](../frontend/ast/fn.skip_block_comment.html).
-    UnterminatedComment(Vec<Pos>),
+    UnterminatedComment(Pos),
     /// Returned by [`read_token`](../frontend/ast/fn.read_token.html).
     UnterminatedStringLiteral(Pos),
     /// Returned by [`read_token`](../frontend/ast/fn.read_token.html).
@@ -267,12 +265,10 @@ impl Logger {
                 .unwrap();
                 self.quote(dollar_pos, files);
             }
-            ParseError::UnterminatedComment(comments_pos) => {
-                writeln!(self.err, "{}", files[comments_pos[0].file].path.display()).unwrap();
-                for pos in comments_pos {
-                    writeln!(self.err, "Unterminated comment at {pos}:").unwrap();
-                    self.quote(pos, files);
-                }
+            ParseError::UnterminatedComment(comment_pos) => {
+                writeln!(self.err, "{}", files[comment_pos.file].path.display()).unwrap();
+                writeln!(self.err, "Unterminated comment at {comment_pos}:").unwrap();
+                self.quote(comment_pos, files);
             }
             ParseError::InvalidBlockComment { start_pos } => {
                 writeln!(self.err, "{}", files[start_pos.file].path.display()).unwrap();
