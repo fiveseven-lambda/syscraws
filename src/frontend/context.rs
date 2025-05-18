@@ -389,7 +389,7 @@ impl Context {
                     Err(())
                 };
                 let mut then_builder = BlockBuilder::new();
-                let num_alive_variables = variables.num_alive();
+                let num_variables = variables.num_alive();
                 for ast::WithExtraTokens {
                     content: stmt,
                     extra_tokens_pos,
@@ -408,7 +408,7 @@ impl Context {
                         logger,
                     );
                 }
-                variables.free_and_remove(num_alive_variables, &mut then_builder, self);
+                variables.free_and_remove(num_variables, &mut then_builder, self);
                 let then_block = then_builder.finish();
                 let mut else_builder = BlockBuilder::new();
                 if let Some(ast::ElseBlock {
@@ -432,7 +432,7 @@ impl Context {
                             logger,
                         );
                     }
-                    variables.free_and_remove(num_alive_variables, &mut else_builder, self);
+                    variables.free_and_remove(num_variables, &mut else_builder, self);
                 }
                 let else_block = else_builder.finish();
                 builder.add_if_statement(condition.unwrap(), then_block, else_block);
@@ -458,7 +458,7 @@ impl Context {
                     Err(())
                 };
                 let mut do_builder = BlockBuilder::new();
-                let num_alive_variables = variables.num_alive();
+                let num_variables = variables.num_alive();
                 for ast::WithExtraTokens {
                     content: stmt,
                     extra_tokens_pos,
@@ -471,13 +471,13 @@ impl Context {
                         stmt,
                         &mut do_builder,
                         variables,
-                        num_alive_variables,
+                        num_variables,
                         exports,
                         files,
                         logger,
                     );
                 }
-                variables.free_and_remove(num_alive_variables, &mut do_builder, self);
+                variables.free_and_remove(num_variables, &mut do_builder, self);
                 let do_block = do_builder.finish();
                 builder.add_while_statement(condition.unwrap(), do_block);
             }

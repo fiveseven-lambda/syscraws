@@ -39,8 +39,8 @@ use context::Context;
 use variables::Variables;
 
 /**
- * Reads the file specified by `root_file_path` and any other files it
- * imports, and passes them to `backend`.
+ * Reads the file specified by `root_file_path` and any other files it imports,
+ * and emits intermediate representation defined in [`ir`].
  */
 pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir::Program, ()> {
     let root_file_path = root_file_path.with_extension("sysc");
@@ -54,7 +54,7 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
     let mut reader = Reader {
         num_structures: 0,
         num_functions: 0,
-        definitions: ir::Program {
+        ir_program: ir::Program {
             structures: Vec::new(),
             functions_ty: Vec::new(),
             function_definitions: Vec::new(),
@@ -76,7 +76,7 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
     }
     reader.global_variables.free(0, &mut reader.global_builder);
     let body = reader.global_builder.finish();
-    reader.definitions.functions_ty.push(ir::FunctionTy {
+    reader.ir_program.functions_ty.push(ir::FunctionTy {
         num_ty_parameters: 0,
         parameters_ty: Vec::new(),
         return_ty: ir::Ty::Application {
@@ -85,53 +85,59 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         },
     });
     reader
-        .definitions
+        .ir_program
         .function_definitions
         .push(ir::FunctionDefinition {
             num_local_variables: 0,
             body,
         });
-    Ok(reader.definitions)
+    Ok(reader.ir_program)
 }
 
 /**
- * A structure used in [`read_input`].
+ * A structure to read files recursively and convert them to intermediate representation (IR) defined in [`ir`].
  */
 struct Reader {
     /**
      * Total number of structures defined in all files. Used and updated by
-     * [`Reader::register_structure_name`].
+     * [`declare_structure`](Reader::declare_structure) method.
      */
     num_structures: usize,
     /**
      * Total number of functions defined in all files. Used and updated by
-     * [`Reader::register_function_name`].
+     * [`declare_function`](Reader::declare_function) method.
      */
     num_functions: usize,
     /**
-     * The target which [`Reader::read_file`] stores the results in.
+     * The target which [`read_file`](Reader::read_file) stores the results in.
      */
-    definitions: ir::Program,
+    ir_program: ir::Program,
     /**
-     * Block of global statements.
+     * Holds the global statements, which are later added as a single entry-point function.
      */
     global_builder: BlockBuilder,
     /**
-     *
+     * List of global variables alive.
+     * Variables in a block (e.g. if) are removed at the end of the block.
+     * After all files are read, any remaining global variables are freed.
      */
     global_variables: Variables,
     /**
-     *
+     * Items exported from each file, in postorder.
      */
     exports: Vec<Context>,
+    /**
+     * File imformation for error reporting, in preorder.
+     */
     files: Vec<log::File>,
     /**
-     * Used in [`Reader::read_file`] to avoid reading the same file multiple
-     * times.
+     * Maps each file path to its postorder index (`None` if a parse error occurred).
+     * Used to resolve imports and to avoid reading the same file multiple times.
      */
     file_indices: HashMap<PathBuf, Option<usize>>,
     /**
-     * Used in [`Reader::import_file`] to detect circular imports.
+     * The paths of all files currently being imported (from root to current).
+     * Used in [`import_file`](Reader::import_file) to detect circular imports.
      */
     import_chain: HashSet<PathBuf>,
 }
@@ -222,10 +228,10 @@ impl Reader {
             }
         }
         for name in ast_file.structure_names {
-            self.register_structure_name(name, &mut context, logger);
+            self.declare_structure(name, &mut context, logger);
         }
         for name in ast_file.function_names {
-            self.register_function_name(name, &mut context, logger);
+            self.declare_function(name, &mut context, logger);
         }
         for ast::WithExtraTokens {
             content: statement,
@@ -243,7 +249,7 @@ impl Reader {
                         &self.files,
                         logger,
                     );
-                    self.definitions.structures.push((kind, definition));
+                    self.ir_program.structures.push((kind, definition));
                 }
                 ast::TopLevelStatement::FunctionDefinition(function_definition) => {
                     let num_current_items = context.items.len();
@@ -253,8 +259,8 @@ impl Reader {
                         &self.files,
                         logger,
                     ) {
-                        self.definitions.functions_ty.push(ty);
-                        self.definitions.function_definitions.push(definition);
+                        self.ir_program.functions_ty.push(ty);
+                        self.ir_program.function_definitions.push(definition);
                     }
                     assert_eq!(context.items.len(), num_current_items);
                 }
@@ -372,7 +378,7 @@ impl Reader {
         }
     }
 
-    fn register_structure_name(
+    fn declare_structure(
         &mut self,
         ast::StructureName {
             keyword_struct_pos,
@@ -410,7 +416,7 @@ impl Reader {
         }
     }
 
-    fn register_function_name(
+    fn declare_function(
         &mut self,
         ast::FunctionName {
             keyword_pos,
