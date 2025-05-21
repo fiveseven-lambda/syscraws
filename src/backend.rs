@@ -298,41 +298,62 @@ fn translate_call(
         .iter()
         .map(|argument| translate_expression(&argument, variables_ty, ir_functions_ty))
         .collect();
-    let mut depths = HashMap::new();
-    depths.insert(None, Some(0));
+    let mut min_order = 0;
+    let mut max_order = 0;
     let mut inequalities = Vec::new();
     for ((argument_ty, _), parameter_ty) in arguments.iter().zip(parameters_ty) {
         let (argument_return_ty, argument_depth) = argument_ty.extract_function_ty();
         let (parameter_return_ty, parameter_depth) = parameter_ty.extract_function_ty();
-        if let Some(ref argument_return_ty) = argument_return_ty {
-            depths.insert(Some(Rc::as_ptr(argument_return_ty)), None);
-        }
-        if let Some(ref parameter_return_ty) = parameter_return_ty {
-            depths.insert(Some(Rc::as_ptr(parameter_return_ty)), None);
-        }
-        inequalities.push((
-            argument_return_ty,
-            parameter_return_ty,
-            argument_depth - parameter_depth,
-        ));
+        let gap = argument_depth - parameter_depth;
+        inequalities.push((argument_return_ty, parameter_return_ty, gap));
+        max_order += gap.abs();
     }
-    for i in 0..depths.len() {
-        let mut updated = false;
-        for (argument, parameter, diff) in &inequalities {
-            let Some(argument_depth) = depths[&argument.as_ref().map(Rc::as_ptr)] else {
-                continue;
-            };
-            let new_parameter_depth = argument_depth + diff;
-            let parameter_depth = depths.get_mut(&parameter.as_ref().map(Rc::as_ptr)).unwrap();
-            if parameter_depth.is_none_or(|depth| depth > new_parameter_depth) {
-                *parameter_depth = Some(new_parameter_depth);
-                updated = true;
+    let get_depths = |order| {
+        let mut depths = HashMap::new();
+        depths.insert(None, Some(0));
+        for (argument_return_ty, parameter_return_ty, _) in &inequalities {
+            if let Some(argument_return_ty) = argument_return_ty {
+                depths.insert(Some(Rc::as_ptr(argument_return_ty)), None);
+            }
+            if let Some(parameter_return_ty) = parameter_return_ty {
+                depths.insert(Some(Rc::as_ptr(parameter_return_ty)), None);
             }
         }
-        if i == depths.len() - 1 && updated {
-            return None;
+        for _ in 0..depths.len() {
+            let mut updated = false;
+            for (argument, parameter, diff) in &inequalities {
+                let Some(argument_depth) = depths[&argument.as_ref().map(Rc::as_ptr)] else {
+                    continue;
+                };
+                let new_parameter_depth = argument_depth + diff + order;
+                let parameter_depth = depths.get_mut(&parameter.as_ref().map(Rc::as_ptr)).unwrap();
+                if parameter_depth.is_none_or(|depth| depth > new_parameter_depth) {
+                    *parameter_depth = Some(new_parameter_depth);
+                    updated = true;
+                }
+            }
+            if !updated {
+                return Some(depths);
+            }
+        }
+        None
+    };
+    let Some(mut depths) = get_depths(max_order) else {
+        return None;
+    };
+    while min_order < max_order - 1 {
+        let mid_order = (min_order + max_order) / 2;
+        match get_depths(mid_order) {
+            Some(new_depths) => {
+                max_order = mid_order;
+                depths = new_depths;
+            }
+            None => {
+                min_order = mid_order;
+            }
         }
     }
+
     let nums_extra_calls: Option<Vec<_>> = inequalities
         .iter()
         .map(|(argument_ty, parameter_ty, diff)| {
@@ -348,7 +369,7 @@ fn translate_call(
     let Some(nums_extra_calls) = nums_extra_calls else {
         return None;
     };
-    let extra_calls: Vec<_> = (0..nums_extra_calls.iter().cloned().max().unwrap_or(0))
+    let extra_calls: Vec<_> = (0..max_order)
         .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
         .collect();
     for (((argument_ty, _), parameter_ty), num_extra_calls) in
