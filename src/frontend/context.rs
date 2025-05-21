@@ -17,7 +17,7 @@
  */
 
 /*!
- * Translates ASTs into intermediate representations in backend.
+ * Defines [`Context`] used to translate AST into IR.
  */
 
 use std::collections::HashMap;
@@ -25,8 +25,22 @@ use std::collections::HashMap;
 use super::{BlockBuilder, Item, Variables, ast};
 use crate::{ir, log};
 
+/**
+ * Represents the name resolution context.
+ */
 pub struct Context {
+    /**
+     * A mapping from identifiers to their corresponding items and source positions.
+     *
+     * Items defined in the same file can be referenced by their names directly.
+     * Referencing items defined in another file requires dot notation ([`ast::Term::FieldByName`]).
+     */
     pub items: HashMap<String, (Option<log::Pos>, Item)>,
+    /**
+     * A mapping from method names to the list of functions associated with them.
+     * Methods can be accessed by their name alone,
+     * even from files that import the defining file.
+     */
     pub methods: HashMap<String, Vec<ir::Function>>,
 }
 
@@ -389,7 +403,7 @@ impl Context {
                     Err(())
                 };
                 let mut then_builder = BlockBuilder::new();
-                let num_alive_variables = variables.num_alive();
+                let num_variables = variables.num_alive();
                 for ast::WithExtraTokens {
                     content: stmt,
                     extra_tokens_pos,
@@ -408,7 +422,7 @@ impl Context {
                         logger,
                     );
                 }
-                variables.free_and_remove(num_alive_variables, &mut then_builder, self);
+                variables.free_and_remove(num_variables, &mut then_builder, self);
                 let then_block = then_builder.finish();
                 let mut else_builder = BlockBuilder::new();
                 if let Some(ast::ElseBlock {
@@ -432,7 +446,7 @@ impl Context {
                             logger,
                         );
                     }
-                    variables.free_and_remove(num_alive_variables, &mut else_builder, self);
+                    variables.free_and_remove(num_variables, &mut else_builder, self);
                 }
                 let else_block = else_builder.finish();
                 builder.add_if_statement(condition.unwrap(), then_block, else_block);
@@ -458,7 +472,7 @@ impl Context {
                     Err(())
                 };
                 let mut do_builder = BlockBuilder::new();
-                let num_alive_variables = variables.num_alive();
+                let num_variables = variables.num_alive();
                 for ast::WithExtraTokens {
                     content: stmt,
                     extra_tokens_pos,
@@ -471,13 +485,13 @@ impl Context {
                         stmt,
                         &mut do_builder,
                         variables,
-                        num_alive_variables,
+                        num_variables,
                         exports,
                         files,
                         logger,
                     );
                 }
-                variables.free_and_remove(num_alive_variables, &mut do_builder, self);
+                variables.free_and_remove(num_variables, &mut do_builder, self);
                 let do_block = do_builder.finish();
                 builder.add_while_statement(condition.unwrap(), do_block);
             }
