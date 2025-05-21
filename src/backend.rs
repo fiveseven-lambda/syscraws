@@ -46,81 +46,121 @@ fn translate_ty(ir_ty: &ir::Ty, ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
     }
 }
 
-pub fn translate(ir_program: ir::Program) {
+pub fn translate(ir_program: ir::Program) -> Result<unsafe fn() -> u8, ()> {
+    let mut program = Program {
+        function_definitions: Vec::new(),
+    };
     for definition in ir_program.function_definitions {
+        let mut body = Vec::new();
+
         let variables_ty: Vec<_> = (0..definition.num_local_variables)
             .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
             .collect();
-        let mut num_blocks = 0;
+
         translate_block(
             &definition.body,
-            &mut num_blocks,
+            &mut body,
+            definition.body.size,
             &variables_ty,
             &ir_program.functions_ty,
         );
+
+        program
+            .function_definitions
+            .push(FunctionDefinition { body });
     }
+    todo!();
 }
 
 fn translate_block(
     block: &ir::Block,
-    num_blocks: &mut usize,
+    blocks: &mut Vec<Block>,
+    next: usize,
     variables_ty: &[Rc<ty::Ty>],
-    functions_ty: &[ir::FunctionTy],
+    ir_functions_ty: &[ir::FunctionTy],
 ) {
-    for statement in &block.statements {
-        translate_statement(statement, num_blocks, variables_ty, functions_ty);
-    }
-}
-
-fn translate_statement(
-    statement: &ir::Statement,
-    num_blocks: &mut usize,
-    variables_ty: &[Rc<ty::Ty>],
-    functions_ty: &[ir::FunctionTy],
-) {
-    match statement {
-        ir::Statement::Expr(exprs) => {
-            for expr in exprs {
-                translate_expression(expr, variables_ty, functions_ty);
+    for (index, statement) in block.statements.iter().enumerate() {
+        match statement {
+            ir::Statement::Expr(expressions) => {
+                blocks.push(Block {
+                    expressions: expressions
+                        .iter()
+                        .map(|expression| {
+                            translate_expression(expression, variables_ty, ir_functions_ty).1
+                        })
+                        .collect(),
+                    next: Next::Jump(if index == block.statements.len() - 1 {
+                        next
+                    } else {
+                        blocks.len() + 1
+                    }),
+                });
             }
-            println!("{num_blocks}: Jump");
-            *num_blocks += 1;
-        }
-        ir::Statement::If {
-            antecedents,
-            condition,
-            then_block,
-            else_block,
-        } => {
-            for expr in antecedents {
-                translate_expression(expr, variables_ty, functions_ty);
+            ir::Statement::If {
+                antecedents,
+                condition,
+                then_block,
+                else_block,
+            } => {
+                let then_index = blocks.len() + 1;
+                let else_index = then_index + then_block.size;
+                let mut expressions = Vec::new();
+                for antecedent in antecedents {
+                    expressions
+                        .push(translate_expression(antecedent, variables_ty, ir_functions_ty).1);
+                }
+                let (condition_ty, condition) =
+                    translate_expression(condition, variables_ty, ir_functions_ty);
+                blocks.push(Block {
+                    expressions,
+                    next: Next::Br(condition, then_index, else_index),
+                });
+                let next_index = if index == block.statements.len() - 1 {
+                    next
+                } else {
+                    else_index + else_block.size
+                };
+                translate_block(
+                    then_block,
+                    blocks,
+                    next_index,
+                    variables_ty,
+                    ir_functions_ty,
+                );
+                translate_block(
+                    else_block,
+                    blocks,
+                    next_index,
+                    variables_ty,
+                    ir_functions_ty,
+                );
             }
-            translate_expression(condition, variables_ty, functions_ty);
-            println!("{num_blocks}: Br");
-            *num_blocks += 1;
-            translate_block(then_block, num_blocks, variables_ty, functions_ty);
-            translate_block(else_block, num_blocks, variables_ty, functions_ty);
-        }
-        ir::Statement::While {
-            condition,
-            do_block,
-        } => {
-            translate_expression(condition, variables_ty, functions_ty);
-            println!("{num_blocks}: Br");
-            *num_blocks += 1;
-            translate_block(do_block, num_blocks, variables_ty, functions_ty);
-        }
-        ir::Statement::Break(exprs) => {
-            for expr in exprs {
-                translate_expression(expr, variables_ty, functions_ty);
+            ir::Statement::While {
+                condition,
+                do_block,
+            } => {
+                let condition_index = blocks.len();
+                let do_index = condition_index + 1;
+                let next_index = if index == block.statements.len() - 1 {
+                    next
+                } else {
+                    do_index + do_block.size
+                };
+                let (condition_ty, condition) =
+                    translate_expression(condition, variables_ty, ir_functions_ty);
+                blocks.push(Block {
+                    expressions: Vec::new(),
+                    next: Next::Br(condition, do_index, next_index),
+                });
+                translate_block(
+                    do_block,
+                    blocks,
+                    condition_index,
+                    variables_ty,
+                    ir_functions_ty,
+                );
             }
-            println!("{num_blocks}: break");
-        }
-        ir::Statement::Continue(exprs) => {
-            for expr in exprs {
-                translate_expression(expr, variables_ty, functions_ty);
-            }
-            println!("{num_blocks}: continue");
+            _ => todo!(),
         }
     }
 }
@@ -138,12 +178,13 @@ fn translate_function(
             let mut return_and_parameters_ty =
                 Vec::with_capacity(1 + ir_function_ty.parameters_ty.len());
             return_and_parameters_ty.push(translate_ty(&ir_function_ty.return_ty, &ty_parameters));
-            return_and_parameters_ty.extend(
+            return_and_parameters_ty.push(Rc::new(ty::Ty::List(
                 ir_function_ty
                     .parameters_ty
                     .iter()
-                    .map(|parameter_ty| translate_ty(&parameter_ty, &ty_parameters)),
-            );
+                    .map(|parameter_ty| translate_ty(&parameter_ty, &ty_parameters))
+                    .collect(),
+            )));
             let function_ty = Rc::new(ty::Ty::Application {
                 constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
                 arguments: return_and_parameters_ty,
@@ -151,6 +192,22 @@ fn translate_function(
             let function = Expression::Function(*index);
             (function_ty, function)
         }
+        ir::Function::DeleteInteger => (
+            Rc::new(ty::Ty::Application {
+                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                arguments: vec![
+                    Rc::new(ty::Ty::Application {
+                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
+                        arguments: vec![],
+                    }),
+                    Rc::new(ty::Ty::List(vec![Rc::new(ty::Ty::Application {
+                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
+                        arguments: vec![Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))],
+                    })])),
+                ],
+            }),
+            Expression::DeleteInteger,
+        ),
         _ => todo!(),
     }
 }
@@ -178,150 +235,169 @@ fn translate_expression(
                 .into_iter()
                 .filter_map(|ir_function| {
                     let mut unifications = ty::Unifications::new();
-                    calls.iter().try_fold(
+                    let ret = calls.iter().try_fold(
                         translate_function(&ir_function, ir_functions_ty),
-                        |(function_ty, function), ir::Call { arguments }| {
-                            let ty::Ty::Application {
-                                constructor,
-                                arguments: return_and_parameters_ty,
-                            } = function_ty.as_ref()
-                            else {
-                                return None;
-                            };
-                            let ty::Ty::Constructor(ir::TyConstructor::Function) =
-                                constructor.as_ref()
-                            else {
-                                return None;
-                            };
-                            let return_ty = &return_and_parameters_ty[0];
-                            let ty::Ty::List(parameters_ty) = return_and_parameters_ty[1].as_ref()
-                            else {
-                                return None;
-                            };
-                            if arguments.len() != parameters_ty.len() {
-                                return None;
-                            }
-                            let arguments: Vec<_> = arguments
-                                .iter()
-                                .map(|argument| {
-                                    translate_expression(&argument, variables_ty, ir_functions_ty)
-                                })
-                                .collect();
-                            let mut depths = HashMap::new();
-                            depths.insert(None, Some(0));
-                            let mut inequalities = Vec::new();
-                            for ((argument_ty, _), parameter_ty) in
-                                arguments.iter().zip(parameters_ty)
-                            {
-                                let (argument_return_ty, argument_depth) =
-                                    argument_ty.extract_function_ty();
-                                let (parameter_return_ty, parameter_depth) =
-                                    parameter_ty.extract_function_ty();
-                                if let Some(ref argument_return_ty) = argument_return_ty {
-                                    depths.insert(Some(Rc::as_ptr(argument_return_ty)), None);
-                                }
-                                if let Some(ref parameter_return_ty) = parameter_return_ty {
-                                    depths.insert(Some(Rc::as_ptr(parameter_return_ty)), None);
-                                }
-                                inequalities.push((
-                                    argument_return_ty,
-                                    parameter_return_ty,
-                                    argument_depth - parameter_depth,
-                                ));
-                            }
-                            for i in 0..depths.len() {
-                                let mut updated = false;
-                                for (argument, parameter, diff) in &inequalities {
-                                    let Some(argument_depth) =
-                                        depths[&argument.as_ref().map(Rc::as_ptr)]
-                                    else {
-                                        continue;
-                                    };
-                                    let new_parameter_depth = argument_depth + diff;
-                                    let parameter_depth = depths
-                                        .get_mut(&parameter.as_ref().map(Rc::as_ptr))
-                                        .unwrap();
-                                    if parameter_depth
-                                        .is_none_or(|depth| depth > new_parameter_depth)
-                                    {
-                                        *parameter_depth = Some(new_parameter_depth);
-                                        updated = true;
-                                    }
-                                }
-                                if i == depths.len() - 1 && updated {
-                                    return None;
-                                }
-                            }
-                            let nums_extra_calls: Option<Vec<_>> = inequalities
-                                .iter()
-                                .map(|(argument_ty, parameter_ty, diff)| {
-                                    let Some(argument_depth) =
-                                        depths[&argument_ty.as_ref().map(Rc::as_ptr)]
-                                    else {
-                                        return None;
-                                    };
-                                    let Some(parameter_depth) =
-                                        depths[&parameter_ty.as_ref().map(Rc::as_ptr)]
-                                    else {
-                                        return None;
-                                    };
-                                    (diff + argument_depth - parameter_depth).try_into().ok()
-                                })
-                                .collect();
-                            let Some(nums_extra_calls) = nums_extra_calls else {
-                                return None;
-                            };
-                            let extra_calls: Vec<_> =
-                                (0..nums_extra_calls.iter().cloned().max().unwrap_or(0))
-                                    .map(|_| {
-                                        Rc::new(ty::Ty::Var(Rc::new(RefCell::new(
-                                            ty::Var::Unassigned(0),
-                                        ))))
-                                    })
-                                    .collect();
-                            for (((argument_ty, _), parameter_ty), num_extra_calls) in
-                                arguments.iter().zip(parameters_ty).zip(nums_extra_calls)
-                            {
-                                if !unifications.unify(
-                                    &extra_calls[..num_extra_calls].iter().fold(
-                                        parameter_ty.clone(),
-                                        |parameter_ty, extra_call| {
-                                            Rc::new(ty::Ty::Application {
-                                                constructor: Rc::new(ty::Ty::Constructor(
-                                                    ir::TyConstructor::Function,
-                                                )),
-                                                arguments: vec![parameter_ty, extra_call.clone()],
-                                            })
-                                        },
-                                    ),
-                                    argument_ty,
-                                ) {
-                                    return None;
-                                }
-                            }
-
-                            Some((
-                                return_ty.clone(),
-                                Expression::Call {
-                                    function: Box::new(function),
-                                    arguments: arguments
-                                        .into_iter()
-                                        .map(|(_, argument)| argument)
-                                        .collect(),
-                                },
-                            ))
+                        |function, call| {
+                            translate_call(
+                                function,
+                                call,
+                                &mut unifications,
+                                variables_ty,
+                                ir_functions_ty,
+                            )
                         },
-                    )
+                    );
+                    let undo = unifications.undo();
+                    ret.map(|ret| (ret, undo))
                 })
                 .collect();
             if candidates.len() == 1 {
-                candidates.into_iter().next().unwrap()
+                let (ret, undo) = candidates.into_iter().next().unwrap();
+                undo.undo();
+                ret
             } else {
-                todo!();
+                todo!("{}", candidates.len());
             }
         }
-        _ => todo!(),
+        ir::Expression::Variable(storage, index) => (
+            Rc::new(ty::Ty::Application {
+                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
+                arguments: vec![variables_ty[*index].clone()],
+            }),
+            Expression::Variable(*storage, *index),
+        ),
     }
+}
+
+fn translate_call(
+    (function_ty, function): (Rc<ty::Ty>, Expression),
+    call: &ir::Call,
+    unifications: &mut ty::Unifications,
+    variables_ty: &[Rc<ty::Ty>],
+    ir_functions_ty: &[ir::FunctionTy],
+) -> Option<(Rc<ty::Ty>, Expression)> {
+    let ty::Ty::Application {
+        constructor,
+        arguments: return_and_parameters_ty,
+    } = function_ty.as_ref()
+    else {
+        return None;
+    };
+    let ty::Ty::Constructor(ir::TyConstructor::Function) = constructor.as_ref() else {
+        return None;
+    };
+    let return_ty = return_and_parameters_ty[0].clone();
+    let ty::Ty::List(parameters_ty) = return_and_parameters_ty[1].as_ref() else {
+        return None;
+    };
+    if call.arguments.len() != parameters_ty.len() {
+        return None;
+    }
+    let arguments: Vec<_> = call
+        .arguments
+        .iter()
+        .map(|argument| translate_expression(&argument, variables_ty, ir_functions_ty))
+        .collect();
+    let mut depths = HashMap::new();
+    depths.insert(None, Some(0));
+    let mut inequalities = Vec::new();
+    for ((argument_ty, _), parameter_ty) in arguments.iter().zip(parameters_ty) {
+        let (argument_return_ty, argument_depth) = argument_ty.extract_function_ty();
+        let (parameter_return_ty, parameter_depth) = parameter_ty.extract_function_ty();
+        if let Some(ref argument_return_ty) = argument_return_ty {
+            depths.insert(Some(Rc::as_ptr(argument_return_ty)), None);
+        }
+        if let Some(ref parameter_return_ty) = parameter_return_ty {
+            depths.insert(Some(Rc::as_ptr(parameter_return_ty)), None);
+        }
+        inequalities.push((
+            argument_return_ty,
+            parameter_return_ty,
+            argument_depth - parameter_depth,
+        ));
+    }
+    for i in 0..depths.len() {
+        let mut updated = false;
+        for (argument, parameter, diff) in &inequalities {
+            let Some(argument_depth) = depths[&argument.as_ref().map(Rc::as_ptr)] else {
+                continue;
+            };
+            let new_parameter_depth = argument_depth + diff;
+            let parameter_depth = depths.get_mut(&parameter.as_ref().map(Rc::as_ptr)).unwrap();
+            if parameter_depth.is_none_or(|depth| depth > new_parameter_depth) {
+                *parameter_depth = Some(new_parameter_depth);
+                updated = true;
+            }
+        }
+        if i == depths.len() - 1 && updated {
+            return None;
+        }
+    }
+    let nums_extra_calls: Option<Vec<_>> = inequalities
+        .iter()
+        .map(|(argument_ty, parameter_ty, diff)| {
+            let Some(argument_depth) = depths[&argument_ty.as_ref().map(Rc::as_ptr)] else {
+                return None;
+            };
+            let Some(parameter_depth) = depths[&parameter_ty.as_ref().map(Rc::as_ptr)] else {
+                return None;
+            };
+            (diff + argument_depth - parameter_depth).try_into().ok()
+        })
+        .collect();
+    let Some(nums_extra_calls) = nums_extra_calls else {
+        return None;
+    };
+    let extra_calls: Vec<_> = (0..nums_extra_calls.iter().cloned().max().unwrap_or(0))
+        .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
+        .collect();
+    for (((argument_ty, _), parameter_ty), num_extra_calls) in
+        arguments.iter().zip(parameters_ty).zip(nums_extra_calls)
+    {
+        if !unifications.unify(
+            &extra_calls[..num_extra_calls].iter().fold(
+                parameter_ty.clone(),
+                |parameter_ty, extra_call| {
+                    Rc::new(ty::Ty::Application {
+                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                        arguments: vec![parameter_ty, extra_call.clone()],
+                    })
+                },
+            ),
+            argument_ty,
+        ) {
+            return None;
+        }
+    }
+
+    Some((
+        return_ty,
+        Expression::Call {
+            function: Box::new(function),
+            arguments: arguments
+                .into_iter()
+                .map(|(_, argument)| argument)
+                .collect(),
+        },
+    ))
+}
+
+struct Program {
+    function_definitions: Vec<FunctionDefinition>,
+}
+
+struct FunctionDefinition {
+    body: Vec<Block>,
+}
+
+struct Block {
+    expressions: Vec<Expression>,
+    next: Next,
+}
+
+enum Next {
+    Jump(usize),
+    Br(Expression, usize, usize),
 }
 
 enum Expression {
@@ -329,7 +405,9 @@ enum Expression {
     Float(f64),
     String(String),
     Function(usize),
+    Variable(ir::Storage, usize),
     AddInteger,
+    DeleteInteger,
     Call {
         function: Box<Expression>,
         arguments: Vec<Expression>,

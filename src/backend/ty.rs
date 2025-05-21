@@ -133,6 +133,14 @@ impl Unifications {
         });
         *left.borrow_mut() = right;
     }
+
+    pub fn undo(self) -> Unifications {
+        let mut ret = Unifications::new();
+        for Unification { var, old } in self.0 {
+            ret.bind(&var, old);
+        }
+        ret
+    }
 }
 
 impl Ty {
@@ -167,7 +175,7 @@ impl Ty {
                 _ => (None, 0),
             },
             Ty::Parameter(_) => (None, 0),
-            Ty::Constructor(_) => todo!("Runtime error"),
+            Ty::Constructor(_) => (None, 0),
             Ty::List(_) => todo!("Runtime error"),
             Ty::Var(var) => match *var.borrow() {
                 Var::Assigned(ref ty) => ty.extract_function_ty(),
