@@ -38,6 +38,7 @@ pub struct Structure {
     pub fields_ty: Vec<Ty>,
 }
 
+#[derive(Clone)]
 #[cfg_attr(test, derive(Serialize))]
 pub struct FunctionTy {
     pub num_ty_parameters: usize,
@@ -89,6 +90,7 @@ pub enum Ty {
 pub enum TyConstructor {
     Integer,
     Float,
+    String,
     Reference,
     Tuple,
     Function,
