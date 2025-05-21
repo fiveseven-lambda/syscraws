@@ -142,11 +142,26 @@ struct Reader {
     import_chain: HashSet<PathBuf>,
 }
 
+/**
+ * Various kinds of named entities.
+ */
 #[derive(Clone)]
 pub enum Item {
+    /**
+     * References another file by its postorder index.
+     */
     Import(usize),
+    /**
+     * A type definition.
+     */
     Ty(ir::Ty),
+    /**
+     * One or more function definitions.
+     */
     Function(Vec<ir::Function>),
+    /**
+     * A variable definition.
+     */
     Variable(ir::Storage, usize),
 }
 

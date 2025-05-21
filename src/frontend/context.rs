@@ -17,7 +17,7 @@
  */
 
 /*!
- * Translates ASTs into intermediate representations in backend.
+ * Defines [`Context`] used to translate AST into IR.
  */
 
 use std::collections::HashMap;
@@ -25,8 +25,22 @@ use std::collections::HashMap;
 use super::{BlockBuilder, Item, Variables, ast};
 use crate::{ir, log};
 
+/**
+ * Represents the name resolution context.
+ */
 pub struct Context {
+    /**
+     * A mapping from identifiers to their corresponding items and source positions.
+     *
+     * Items defined in the same file can be referenced by their names directly.
+     * Referencing items defined in another file requires dot notation ([`ast::Term::FieldByName`]).
+     */
     pub items: HashMap<String, (Option<log::Pos>, Item)>,
+    /**
+     * A mapping from method names to the list of functions associated with them.
+     * Methods can be accessed by their name alone,
+     * even from files that import the defining file.
+     */
     pub methods: HashMap<String, Vec<ir::Function>>,
 }
 
