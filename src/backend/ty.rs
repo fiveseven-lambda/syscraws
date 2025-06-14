@@ -26,9 +26,13 @@ pub enum Ty {
     Parameter(usize),
     Application {
         constructor: Rc<Ty>,
-        arguments: Vec<Rc<Ty>>,
+        arguments: Rc<Ty>,
     },
-    List(Vec<Rc<Ty>>),
+    Nil,
+    Cons {
+        head: Rc<Ty>,
+        tail: Rc<Ty>,
+    },
     Var(Rc<RefCell<Var>>),
 }
 
@@ -67,16 +71,19 @@ impl Unifications {
                 },
             ) => {
                 self.unify(left_constructor, right_constructor)
-                    && left_arguments.iter().zip(right_arguments).all(
-                        |(left_argument, right_argument)| self.unify(left_argument, right_argument),
-                    )
+                    && self.unify(left_arguments, right_arguments)
             }
-            (Ty::List(self_elements), Ty::List(other_elements)) => {
-                self_elements.len() == other_elements.len()
-                    && self_elements.iter().zip(other_elements).all(
-                        |(self_element, other_element)| self.unify(self_element, other_element),
-                    )
-            }
+            (Ty::Nil, Ty::Nil) => true,
+            (
+                Ty::Cons {
+                    head: left_head,
+                    tail: left_tail,
+                },
+                Ty::Cons {
+                    head: right_head,
+                    tail: right_tail,
+                },
+            ) => self.unify(left_head, right_head) && self.unify(left_tail, right_tail),
             (Ty::Var(left_var), Ty::Var(right_var)) => {
                 let left_rank = match *left_var.borrow() {
                     Var::Assigned(ref left) => return self.unify(left, right),
@@ -151,10 +158,9 @@ impl Ty {
             Ty::Application {
                 constructor,
                 arguments,
-            } => {
-                constructor.contains(var) && arguments.iter().any(|argument| argument.contains(var))
-            }
-            Ty::List(elements) => elements.iter().any(|element| element.contains(var)),
+            } => constructor.contains(var) || arguments.contains(var),
+            Ty::Nil => false,
+            Ty::Cons { head, tail } => head.contains(var) || tail.contains(var),
             Ty::Var(self_var) => match *self_var.borrow() {
                 Var::Assigned(ref ty) => ty.contains(var),
                 Var::Unassigned(_) => self_var.as_ptr() == var.as_ptr(),
@@ -167,20 +173,24 @@ impl Ty {
             Ty::Application {
                 constructor,
                 arguments,
-            } => match constructor.as_ref() {
-                Ty::Constructor(ir::TyConstructor::Function) => {
-                    let (ty, depth) = arguments[0].extract_function_ty();
+            } => match (constructor.as_ref(), arguments.as_ref()) {
+                (
+                    Ty::Constructor(ir::TyConstructor::Function),
+                    Ty::Cons {
+                        head: return_ty,
+                        tail: _,
+                    },
+                ) => {
+                    let (ty, depth) = return_ty.extract_function_ty();
                     (ty, depth + 1)
                 }
                 _ => (None, 0),
             },
-            Ty::Parameter(_) => (None, 0),
-            Ty::Constructor(_) => (None, 0),
-            Ty::List(_) => todo!("Runtime error"),
             Ty::Var(var) => match *var.borrow() {
                 Var::Assigned(ref ty) => ty.extract_function_ty(),
                 Var::Unassigned(_) => (Some(var.clone()), 0),
             },
+            _ => (None, 0),
         }
     }
 }

@@ -51,10 +51,10 @@ pub struct FunctionTy {
 pub enum Function {
     AddInteger,
     IntegerToString,
-    DereferenceInteger,
+    Dereference,
     Identity,
-    AssignInteger,
-    DeleteInteger,
+    Assign,
+    Delete,
     ConcatenateString,
     Print,
     UserDefined(usize),

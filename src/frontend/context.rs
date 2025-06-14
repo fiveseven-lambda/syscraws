@@ -809,7 +809,7 @@ impl Context {
                     expr
                 } else {
                     ir::Expression::Function {
-                        candidates: vec![ir::Function::DereferenceInteger],
+                        candidates: vec![ir::Function::Dereference],
                         calls: vec![ir::Call {
                             arguments: vec![expr],
                         }],

@@ -126,7 +126,7 @@ impl Variables {
         for &(_, index) in self.name_and_indices[len..].iter().rev() {
             let expr = ir::Expression::Variable(self.storage, index);
             builder.add_expression(ir::Expression::Function {
-                candidates: vec![ir::Function::DeleteInteger],
+                candidates: vec![ir::Function::Delete],
                 calls: vec![ir::Call {
                     arguments: vec![expr],
                 }],

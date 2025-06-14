@@ -38,12 +38,18 @@ fn translate_ty(ir_ty: &ir::Ty, ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
             arguments,
         } => Rc::new(ty::Ty::Application {
             constructor: translate_ty(constructor, ty_parameters),
-            arguments: arguments
-                .iter()
-                .map(|argument| translate_ty(argument, ty_parameters))
-                .collect(),
+            arguments: translate_tys(arguments, ty_parameters),
         }),
     }
+}
+
+fn translate_tys(ir_tys: &[ir::Ty], ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
+    return ir_tys.iter().rfold(Rc::new(ty::Ty::Nil), |tail, ir_head| {
+        Rc::new(ty::Ty::Cons {
+            head: translate_ty(ir_head, ty_parameters),
+            tail,
+        })
+    });
 }
 
 pub fn translate(ir_program: ir::Program) -> Result<unsafe fn() -> u8, ()> {
@@ -169,45 +175,101 @@ fn translate_function(
     ir_function: &ir::Function,
     ir_functions_ty: &[ir::FunctionTy],
 ) -> (Rc<ty::Ty>, Expression) {
-    match ir_function {
+    match *ir_function {
         ir::Function::UserDefined(index) => {
-            let ir_function_ty = &ir_functions_ty[*index];
+            let ir_function_ty = &ir_functions_ty[index];
             let ty_parameters: Vec<_> = (0..ir_function_ty.num_ty_parameters)
                 .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
                 .collect();
-            let mut return_and_parameters_ty =
-                Vec::with_capacity(1 + ir_function_ty.parameters_ty.len());
-            return_and_parameters_ty.push(translate_ty(&ir_function_ty.return_ty, &ty_parameters));
-            return_and_parameters_ty.push(Rc::new(ty::Ty::List(
-                ir_function_ty
-                    .parameters_ty
-                    .iter()
-                    .map(|parameter_ty| translate_ty(&parameter_ty, &ty_parameters))
-                    .collect(),
-            )));
-            let function_ty = Rc::new(ty::Ty::Application {
-                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-                arguments: return_and_parameters_ty,
-            });
-            let function = Expression::Function(*index);
-            (function_ty, function)
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: translate_ty(&ir_function_ty.return_ty, &ty_parameters),
+                        tail: translate_tys(&ir_function_ty.parameters_ty, &ty_parameters),
+                    }),
+                }),
+                Expression::Function {
+                    index,
+                    ty_parameters,
+                },
+            )
         }
-        ir::Function::DeleteInteger => (
+        ir::Function::AddInteger => (
             Rc::new(ty::Ty::Application {
                 constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-                arguments: vec![
-                    Rc::new(ty::Ty::Application {
-                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
-                        arguments: vec![],
+                arguments: Rc::new(ty::Ty::Cons {
+                    head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
+                    tail: Rc::new(ty::Ty::Cons {
+                        head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
+                            tail: Rc::new(ty::Ty::Nil),
+                        }),
                     }),
-                    Rc::new(ty::Ty::List(vec![Rc::new(ty::Ty::Application {
-                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
-                        arguments: vec![Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))],
-                    })])),
-                ],
+                }),
             }),
-            Expression::DeleteInteger,
+            Expression::AddInteger,
         ),
+        ir::Function::Dereference => {
+            let ty = Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0)))));
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: ty.clone(),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: Rc::new(ty::Ty::Application {
+                                constructor: Rc::new(ty::Ty::Constructor(
+                                    ir::TyConstructor::Reference,
+                                )),
+                                arguments: Rc::new(ty::Ty::Cons {
+                                    head: ty.clone(),
+                                    tail: Rc::new(ty::Ty::Nil),
+                                }),
+                            }),
+                            tail: Rc::new(ty::Ty::Nil),
+                        }),
+                    }),
+                }),
+                Expression::Dereference(ty),
+            )
+        }
+        ir::Function::Identity => {
+            let ty = Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0)))));
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: ty.clone(),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: ty.clone(),
+                            tail: Rc::new(ty::Ty::Nil),
+                        }),
+                    }),
+                }),
+                Expression::Identity(ty),
+            )
+        }
+        ir::Function::Delete => {
+            let ty = Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0)))));
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: Rc::new(ty::Ty::Application {
+                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
+                            arguments: Rc::new(ty::Ty::Nil),
+                        }),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: ty.clone(),
+                            tail: Rc::new(ty::Ty::Nil),
+                        }),
+                    }),
+                }),
+                Expression::Identity(ty),
+            )
+        }
         _ => todo!(),
     }
 }
@@ -262,7 +324,10 @@ fn translate_expression(
         ir::Expression::Variable(storage, index) => (
             Rc::new(ty::Ty::Application {
                 constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
-                arguments: vec![variables_ty[*index].clone()],
+                arguments: Rc::new(ty::Ty::Cons {
+                    head: variables_ty[*index].clone(),
+                    tail: Rc::new(ty::Ty::Nil),
+                }),
             }),
             Expression::Variable(*storage, *index),
         ),
@@ -286,9 +351,21 @@ fn translate_call(
     let ty::Ty::Constructor(ir::TyConstructor::Function) = constructor.as_ref() else {
         return None;
     };
-    let return_ty = return_and_parameters_ty[0].clone();
-    let ty::Ty::List(parameters_ty) = return_and_parameters_ty[1].as_ref() else {
+    let ty::Ty::Cons {
+        head: return_ty,
+        tail: parameters_ty,
+    } = return_and_parameters_ty.as_ref()
+    else {
         return None;
+    };
+    let parameters_ty = {
+        let mut parameters_ty_ref: &ty::Ty = parameters_ty;
+        let mut parameters_ty_vec = Vec::new();
+        while let ty::Ty::Cons { head, tail } = parameters_ty_ref {
+            parameters_ty_vec.push(head.clone());
+            parameters_ty_ref = tail;
+        }
+        parameters_ty_vec
     };
     if call.arguments.len() != parameters_ty.len() {
         return None;
@@ -301,7 +378,7 @@ fn translate_call(
     let mut min_order = 0;
     let mut max_order = 0;
     let mut inequalities = Vec::new();
-    for ((argument_ty, _), parameter_ty) in arguments.iter().zip(parameters_ty) {
+    for ((argument_ty, _), parameter_ty) in arguments.iter().zip(&parameters_ty) {
         let (argument_return_ty, argument_depth) = argument_ty.extract_function_ty();
         let (parameter_return_ty, parameter_depth) = parameter_ty.extract_function_ty();
         let gap = argument_depth - parameter_depth;
@@ -373,7 +450,7 @@ fn translate_call(
         .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
         .collect();
     for (((argument_ty, _), parameter_ty), num_extra_calls) in
-        arguments.iter().zip(parameters_ty).zip(nums_extra_calls)
+        arguments.iter().zip(&parameters_ty).zip(nums_extra_calls)
     {
         if !unifications.unify(
             &extra_calls[..num_extra_calls].iter().fold(
@@ -381,7 +458,10 @@ fn translate_call(
                 |parameter_ty, extra_call| {
                     Rc::new(ty::Ty::Application {
                         constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-                        arguments: vec![parameter_ty, extra_call.clone()],
+                        arguments: Rc::new(ty::Ty::Cons {
+                            head: parameter_ty,
+                            tail: extra_call.clone(),
+                        }),
                     })
                 },
             ),
@@ -392,7 +472,7 @@ fn translate_call(
     }
 
     Some((
-        return_ty,
+        return_ty.clone(),
         Expression::Call {
             function: Box::new(function),
             arguments: arguments
@@ -425,10 +505,15 @@ enum Expression {
     Integer(i32),
     Float(f64),
     String(String),
-    Function(usize),
+    Function {
+        index: usize,
+        ty_parameters: Vec<Rc<ty::Ty>>,
+    },
     Variable(ir::Storage, usize),
     AddInteger,
-    DeleteInteger,
+    Dereference(Rc<ty::Ty>),
+    Identity(Rc<ty::Ty>),
+    Delete,
     Call {
         function: Box<Expression>,
         arguments: Vec<Expression>,
