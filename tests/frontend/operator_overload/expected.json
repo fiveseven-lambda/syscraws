@@ -243,7 +243,7 @@
               {
                 "Function": {
                   "candidates": [
-                    "DeleteInteger"
+                    "Delete"
                   ],
                   "calls": [
                     {
@@ -262,7 +262,7 @@
               {
                 "Function": {
                   "candidates": [
-                    "DeleteInteger"
+                    "Delete"
                   ],
                   "calls": [
                     {
@@ -281,7 +281,7 @@
               {
                 "Function": {
                   "candidates": [
-                    "DeleteInteger"
+                    "Delete"
                   ],
                   "calls": [
                     {

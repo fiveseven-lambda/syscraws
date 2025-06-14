@@ -15,3 +15,25 @@
  * You should have received a copy of the GNU General Public License
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
+
+#![cfg(test)]
+
+use super::*;
+
+#[test]
+fn unify() {
+    let x = Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0)))));
+    let mut u1 = ty::Unifications::new();
+    assert!(u1.unify(
+        &x,
+        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
+    ));
+    assert!(!u1.unify(&x, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
+    u1.undo();
+    let mut u2 = ty::Unifications::new();
+    assert!(u2.unify(&x, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
+    assert!(!u2.unify(
+        &x,
+        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
+    ));
+}
