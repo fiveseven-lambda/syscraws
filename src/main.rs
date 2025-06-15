@@ -17,6 +17,7 @@
  */
 
 mod backend;
+mod ffi;
 mod frontend;
 mod ir;
 mod log;

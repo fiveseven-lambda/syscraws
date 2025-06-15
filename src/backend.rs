@@ -20,7 +20,8 @@
  * Receives intermediate representation ([`ir`]) and executes it.
  */
 
-use crate::ir;
+use crate::ffi::create_integer;
+use crate::{ffi, ir};
 
 mod tests;
 mod ty;
@@ -29,6 +30,7 @@ mod ty;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::rc::Rc;
 
 fn translate_ty(ir_ty: &ir::Ty, ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
@@ -54,7 +56,7 @@ fn translate_tys(ir_tys: &[ir::Ty], ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> 
     });
 }
 
-pub fn translate(ir_program: ir::Program) -> Result<unsafe fn() -> u8, ()> {
+pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8, ()> {
     let global_variables_ty: Vec<_> = (0..ir_program.num_global_variables)
         .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
         .collect();
@@ -81,7 +83,35 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe fn() -> u8, ()> {
             .function_definitions
             .push(FunctionDefinition { body_rev });
     }
-    todo!();
+    unsafe { ffi::initialize_jit() };
+    let context = unsafe { ffi::create_context() };
+    let num_definitions = program.function_definitions.len();
+    for (function_index, definition) in program.function_definitions.into_iter().enumerate() {
+        let function_name = CString::new(format!("{}", function_index)).unwrap();
+        unsafe {
+            let function_type = ffi::get_function_type(false, ffi::get_integer_type(), 0);
+            ffi::add_function(
+                context,
+                function_name.as_ptr(),
+                function_type,
+                definition.body_rev.len(),
+            );
+        }
+        for (block_index, block) in definition.body_rev.into_iter().rev().enumerate() {
+            unsafe {
+                ffi::set_insert_point(context, block_index);
+                ffi::add_return(context, create_integer(42));
+            }
+        }
+        if function_index == num_definitions - 1 {
+            let pointer = unsafe { ffi::compile_function(context, function_name.as_ptr()) };
+            unsafe {
+                ffi::delete_context(context);
+            }
+            return Ok(pointer);
+        }
+    }
+    Err(())
 }
 
 fn translate_block(
