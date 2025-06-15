@@ -54,7 +54,9 @@ impl BlockBuilder {
     pub fn add_while_statement(&mut self, condition: Expression, do_block: Block) {
         if !self.expressions.is_empty() {
             let expressions = std::mem::take(&mut self.expressions);
-            self.block.statements.push(Statement::Expr(expressions));
+            self.block
+                .statements
+                .push(Statement::Expressions(expressions));
             self.block.size += 1;
         }
         self.block.size += do_block.size + 1;
@@ -77,7 +79,7 @@ impl BlockBuilder {
         if !self.expressions.is_empty() {
             self.block
                 .statements
-                .push(Statement::Expr(self.expressions));
+                .push(Statement::Expressions(self.expressions));
             self.block.size += 1;
         }
         self.block

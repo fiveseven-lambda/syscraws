@@ -32,7 +32,7 @@
               "then_block": {
                 "statements": [
                   {
-                    "Expr": [
+                    "Expressions": [
                       {
                         "Integer": 2
                       },
@@ -59,7 +59,7 @@
               "then_block": {
                 "statements": [
                   {
-                    "Expr": [
+                    "Expressions": [
                       {
                         "Integer": 5
                       }
@@ -71,7 +71,7 @@
               "else_block": {
                 "statements": [
                   {
-                    "Expr": [
+                    "Expressions": [
                       {
                         "Integer": 6
                       }

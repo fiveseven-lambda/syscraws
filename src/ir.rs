@@ -38,6 +38,7 @@ pub struct Structure {
     pub fields_ty: Vec<Ty>,
 }
 
+#[derive(Clone)]
 #[cfg_attr(test, derive(Serialize))]
 pub struct FunctionTy {
     pub num_ty_parameters: usize,
@@ -50,10 +51,10 @@ pub struct FunctionTy {
 pub enum Function {
     AddInteger,
     IntegerToString,
-    DereferenceInteger,
+    Dereference,
     Identity,
-    AssignInteger,
-    DeleteInteger,
+    Assign,
+    Delete,
     ConcatenateString,
     Print,
     UserDefined(usize),
@@ -89,6 +90,7 @@ pub enum Ty {
 pub enum TyConstructor {
     Integer,
     Float,
+    String,
     Reference,
     Tuple,
     Function,
@@ -119,7 +121,7 @@ pub struct Block {
 
 #[cfg_attr(test, derive(Serialize))]
 pub enum Statement {
-    Expr(Vec<Expression>),
+    Expressions(Vec<Expression>),
     If {
         antecedents: Vec<Expression>,
         condition: Expression,

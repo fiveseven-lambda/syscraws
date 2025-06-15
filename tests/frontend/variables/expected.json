@@ -39,10 +39,12 @@
               "do_block": {
                 "statements": [
                   {
-                    "Expr": [
+                    "Expressions": [
                       {
                         "Function": {
-                          "candidates": [],
+                          "candidates": [
+                            "Assign"
+                          ],
                           "calls": [
                             {
                               "arguments": [
@@ -62,7 +64,9 @@
                       },
                       {
                         "Function": {
-                          "candidates": [],
+                          "candidates": [
+                            "Assign"
+                          ],
                           "calls": [
                             {
                               "arguments": [
@@ -82,7 +86,9 @@
                       },
                       {
                         "Function": {
-                          "candidates": [],
+                          "candidates": [
+                            "Assign"
+                          ],
                           "calls": [
                             {
                               "arguments": [
@@ -103,7 +109,7 @@
                       {
                         "Function": {
                           "candidates": [
-                            "DeleteInteger"
+                            "Delete"
                           ],
                           "calls": [
                             {
@@ -127,11 +133,11 @@
             }
           },
           {
-            "Expr": [
+            "Expressions": [
               {
                 "Function": {
                   "candidates": [
-                    "DeleteInteger"
+                    "Delete"
                   ],
                   "calls": [
                     {
@@ -165,10 +171,12 @@
               "do_block": {
                 "statements": [
                   {
-                    "Expr": [
+                    "Expressions": [
                       {
                         "Function": {
-                          "candidates": [],
+                          "candidates": [
+                            "Assign"
+                          ],
                           "calls": [
                             {
                               "arguments": [
@@ -189,7 +197,7 @@
                       {
                         "Function": {
                           "candidates": [
-                            "DeleteInteger"
+                            "Delete"
                           ],
                           "calls": [
                             {
@@ -213,11 +221,11 @@
             }
           },
           {
-            "Expr": [
+            "Expressions": [
               {
                 "Function": {
                   "candidates": [
-                    "DeleteInteger"
+                    "Delete"
                   ],
                   "calls": [
                     {
@@ -240,5 +248,5 @@
       }
     }
   ],
-  "num_global_variables": 0
+  "num_global_variables": 2
 }

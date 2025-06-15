@@ -20,507 +20,626 @@
  * Receives intermediate representation ([`ir`]) and executes it.
  */
 
-use crate::ir;
+use crate::ffi::create_integer;
+use crate::{ffi, ir};
 
 mod tests;
+mod ty;
 
+#[cfg(test)]
+use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::rc::Rc;
 
-#[derive(Clone)]
-struct Ty {
-    inner: Rc<RefCell<TyInner>>,
-}
-
-impl std::hash::Hash for Ty {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        Rc::as_ptr(&self.inner).hash(state);
+fn translate_ty(ir_ty: &ir::Ty, ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
+    match ir_ty {
+        ir::Ty::Constructor(constructor) => Rc::new(ty::Ty::Constructor(constructor.clone())),
+        ir::Ty::Parameter(index) => ty_parameters[*index].clone(),
+        ir::Ty::Application {
+            constructor,
+            arguments,
+        } => Rc::new(ty::Ty::Application {
+            constructor: translate_ty(constructor, ty_parameters),
+            arguments: translate_tys(arguments, ty_parameters),
+        }),
     }
 }
 
-impl std::cmp::PartialEq for Ty {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::as_ptr(&self.inner) == Rc::as_ptr(&other.inner)
-    }
+fn translate_tys(ir_tys: &[ir::Ty], ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
+    return ir_tys.iter().rfold(Rc::new(ty::Ty::Nil), |tail, ir_head| {
+        Rc::new(ty::Ty::Cons {
+            head: translate_ty(ir_head, ty_parameters),
+            tail,
+        })
+    });
 }
 
-impl std::cmp::Eq for Ty {}
+pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8, ()> {
+    let global_variables_ty: Vec<_> = (0..ir_program.num_global_variables)
+        .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
+        .collect();
+    let mut program = Program {
+        function_definitions: Vec::new(),
+    };
+    for definition in ir_program.function_definitions {
+        let mut body_rev = Vec::new();
 
-enum TyInner {
-    Constructor(ir::TyConstructor),
-    Parameter(usize),
-    Application { constructor: Ty, arguments: Vec<Ty> },
-    List(Vec<Ty>),
-    Undetermined,
-    SameAs(Ty),
-}
-
-impl Ty {
-    fn contains(&self, other: &Ty) -> bool {
-        if Rc::ptr_eq(&self.inner, &other.inner) {
-            return true;
-        }
-        match &*self.inner.borrow() {
-            TyInner::Constructor(_) => false,
-            TyInner::Parameter(_) => false,
-            TyInner::Application {
-                constructor,
-                arguments,
-            } => {
-                constructor.contains(other)
-                    || arguments.iter().any(|argument| argument.contains(other))
-            }
-            TyInner::List(elements) => elements.iter().any(|element| element.contains(other)),
-            TyInner::Undetermined => false,
-            TyInner::SameAs(this) => this.contains(other),
-        }
-    }
-}
-
-struct Unifications {
-    history: Vec<(Ty, Ty)>,
-}
-
-impl Unifications {
-    fn unify(&mut self, left: &Ty, right: &Ty) -> bool {
-        let left_binding = left.inner.borrow();
-        let right_binding = right.inner.borrow();
-        match (&*left_binding, &*right_binding) {
-            (TyInner::SameAs(left), _) => {
-                drop(right_binding);
-                self.unify(left, right)
-            }
-            (_, TyInner::SameAs(right)) => {
-                drop(left_binding);
-                self.unify(left, right)
-            }
-            (TyInner::Undetermined, _) => {
-                if right.contains(left) {
-                    return false;
-                }
-                drop(left_binding);
-                self.history.push((left.clone(), right.clone()));
-                *left.inner.borrow_mut() = TyInner::SameAs(right.clone());
-                true
-            }
-            (_, TyInner::Undetermined) => {
-                if left.contains(right) {
-                    return false;
-                }
-                drop(right_binding);
-                self.history.push((right.clone(), left.clone()));
-                *right.inner.borrow_mut() = TyInner::SameAs(left.clone());
-                true
-            }
-            (TyInner::Constructor(left_constructor), TyInner::Constructor(right_constructor)) => {
-                left_constructor == right_constructor
-            }
-            (TyInner::Parameter(left_index), TyInner::Parameter(right_index)) => {
-                left_index == right_index
-            }
-            (
-                TyInner::Application {
-                    constructor: left_constructor,
-                    arguments: left_arguments,
-                },
-                TyInner::Application {
-                    constructor: right_constructor,
-                    arguments: right_arguments,
-                },
-            ) => {
-                left_arguments.len() == right_arguments.len()
-                    && self.unify(left_constructor, right_constructor)
-                    && left_arguments.iter().zip(right_arguments).all(
-                        |(self_element, other_element)| self.unify(self_element, other_element),
-                    )
-            }
-            (TyInner::List(self_elements), TyInner::List(other_elements)) => {
-                self_elements.len() == other_elements.len()
-                    && self_elements.iter().zip(other_elements).all(
-                        |(self_element, other_element)| self.unify(self_element, other_element),
-                    )
-            }
-            _ => false,
-        }
-    }
-}
-
-impl Ty {
-    fn extract_function_ty(&self) -> (Option<Ty>, i32) {
-        match *self.inner.borrow() {
-            TyInner::Application {
-                ref constructor,
-                ref arguments,
-            } => match *constructor.inner.borrow() {
-                TyInner::Constructor(ir::TyConstructor::Function) => {
-                    let (ty, depth) = arguments[0].extract_function_ty();
-                    (ty, depth + 1)
-                }
-                _ => (None, 0),
-            },
-            TyInner::Parameter(_) => (None, 0),
-            TyInner::Constructor(_) => todo!("Runtime error"),
-            TyInner::List(_) => todo!("Runtime error"),
-            TyInner::Undetermined => (Some(self.clone()), 0),
-            TyInner::SameAs(ref this) => this.extract_function_ty(),
-        }
-    }
-}
-
-impl Unifications {
-    fn undo(&self) {
-        for (ty, _) in &self.history {
-            *ty.inner.borrow_mut() = TyInner::Undetermined
-        }
-    }
-    fn redo(&self) {
-        for (left, right) in &self.history {
-            *left.inner.borrow_mut() = TyInner::SameAs(right.clone())
-        }
-    }
-}
-
-impl ir::FunctionTy {
-    fn build(&self) -> Ty {
-        let ty_parameters: Vec<_> = (0..self.num_ty_parameters)
-            .map(|_| Ty {
-                inner: Rc::new(RefCell::new(TyInner::Undetermined)),
-            })
+        let local_variables_ty: Vec<_> = (0..definition.num_local_variables)
+            .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
             .collect();
-        let return_ty = self.return_ty.build(&ty_parameters);
-        let parameters_ty = Ty {
-            inner: Rc::new(RefCell::new(TyInner::List(
-                self.parameters_ty
-                    .iter()
-                    .map(|ty| ty.build(&ty_parameters))
-                    .collect(),
-            ))),
-        };
-        Ty {
-            inner: Rc::new(RefCell::new(TyInner::Application {
-                constructor: Ty {
-                    inner: Rc::new(RefCell::new(TyInner::Constructor(
-                        ir::TyConstructor::Function,
-                    ))),
-                },
-                arguments: vec![return_ty, parameters_ty],
-            })),
-        }
-    }
-}
 
-impl ir::Ty {
-    fn build(&self, parameters: &[Ty]) -> Ty {
-        match *self {
-            ir::Ty::Constructor(ref constructor) => Ty {
-                inner: Rc::new(RefCell::new(TyInner::Constructor(constructor.clone()))),
-            },
-            ir::Ty::Application {
-                ref constructor,
-                ref arguments,
-            } => Ty {
-                inner: Rc::new(RefCell::new(TyInner::Application {
-                    constructor: constructor.build(parameters),
-                    arguments: arguments.iter().map(|ty| ty.build(parameters)).collect(),
-                })),
-            },
-            ir::Ty::Parameter(index) => parameters[index].clone(),
-        }
-    }
-}
+        translate_block(
+            &definition.body,
+            &mut body_rev,
+            None,
+            &local_variables_ty,
+            &global_variables_ty,
+            &ir_program.functions_ty,
+        );
 
-impl ir::Program {
-    pub fn translate(self) {
-        for definition in self.function_definitions {
-            let variables_ty: Vec<_> = (0..definition.num_local_variables)
-                .map(|_| Ty {
-                    inner: Rc::new(RefCell::new(TyInner::Undetermined)),
-                })
-                .collect();
-            let mut num_blocks = 0;
-            translate_block(
-                definition.body,
-                &mut num_blocks,
-                &variables_ty,
-                &self.functions_ty,
+        program
+            .function_definitions
+            .push(FunctionDefinition { body_rev });
+    }
+    unsafe { ffi::initialize_jit() };
+    let context = unsafe { ffi::create_context() };
+    let num_definitions = program.function_definitions.len();
+    for (function_index, definition) in program.function_definitions.into_iter().enumerate() {
+        let function_name = CString::new(format!("{}", function_index)).unwrap();
+        unsafe {
+            let function_type = ffi::get_function_type(false, ffi::get_integer_type(), 0);
+            ffi::add_function(
+                context,
+                function_name.as_ptr(),
+                function_type,
+                definition.body_rev.len(),
             );
         }
+        for (block_index, block) in definition.body_rev.into_iter().rev().enumerate() {
+            unsafe {
+                ffi::set_insert_point(context, block_index);
+                ffi::add_return(context, create_integer(42));
+            }
+        }
+        if function_index == num_definitions - 1 {
+            let pointer = unsafe { ffi::compile_function(context, function_name.as_ptr()) };
+            unsafe {
+                ffi::delete_context(context);
+            }
+            return Ok(pointer);
+        }
     }
+    Err(())
 }
 
 fn translate_block(
-    block: ir::Block,
-    num_blocks: &mut usize,
-    variables_ty: &[Ty],
-    functions_ty: &[ir::FunctionTy],
-) {
-    for statement in block.statements {
-        translate_statement(statement, num_blocks, variables_ty, functions_ty);
+    block: &ir::Block,
+    blocks: &mut Vec<Block>,
+    mut next: Option<usize>,
+    local_variables_ty: &[Rc<ty::Ty>],
+    global_variables_ty: &[Rc<ty::Ty>],
+    ir_functions_ty: &[ir::FunctionTy],
+) -> Option<usize> {
+    for statement in block.statements.iter().rev() {
+        match statement {
+            ir::Statement::Expressions(ir_expressions) => {
+                let index = blocks.len();
+                blocks.push(Block {
+                    expressions: ir_expressions
+                        .iter()
+                        .map(|ir_expression| {
+                            translate_expression(
+                                ir_expression,
+                                local_variables_ty,
+                                global_variables_ty,
+                                ir_functions_ty,
+                            )
+                            .1
+                        })
+                        .collect(),
+                    next: Next::Jump(next),
+                });
+                next = Some(index);
+            }
+            ir::Statement::If {
+                antecedents: ir_antecedents,
+                condition: ir_condition,
+                then_block,
+                else_block,
+            } => {
+                let else_index = translate_block(
+                    else_block,
+                    blocks,
+                    next,
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
+                let then_index = translate_block(
+                    then_block,
+                    blocks,
+                    next,
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
+                let (condition_ty, condition) = translate_expression(
+                    ir_condition,
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
+                let condition_index = blocks.len();
+                blocks.push(Block {
+                    expressions: ir_antecedents
+                        .iter()
+                        .map(|ir_expression| {
+                            translate_expression(
+                                ir_expression,
+                                local_variables_ty,
+                                global_variables_ty,
+                                ir_functions_ty,
+                            )
+                            .1
+                        })
+                        .collect(),
+                    next: Next::Br(condition, then_index, else_index),
+                });
+                next = Some(condition_index);
+            }
+            ir::Statement::While {
+                condition: ir_condition,
+                do_block,
+            } => {
+                let condition_index = blocks.len() + do_block.size;
+                let do_index = translate_block(
+                    do_block,
+                    blocks,
+                    Some(condition_index),
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
+                assert_eq!(blocks.len(), condition_index);
+                let (condition_ty, condition) = translate_expression(
+                    ir_condition,
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
+                blocks.push(Block {
+                    expressions: Vec::new(),
+                    next: Next::Br(condition, do_index, next),
+                });
+                next = Some(condition_index);
+            }
+            _ => todo!(),
+        }
     }
+    next
 }
 
-fn translate_statement(
-    statement: ir::Statement,
-    num_blocks: &mut usize,
-    variables_ty: &[Ty],
-    functions_ty: &[ir::FunctionTy],
-) {
-    match statement {
-        ir::Statement::Expr(exprs) => {
-            for expr in exprs {
-                translate_expression(expr, variables_ty, functions_ty);
-            }
-            println!("{num_blocks}: Jump");
-            *num_blocks += 1;
-        }
-        ir::Statement::If {
-            antecedents,
-            condition,
-            then_block,
-            else_block,
-        } => {
-            for expr in antecedents {
-                translate_expression(expr, variables_ty, functions_ty);
-            }
-            translate_expression(condition, variables_ty, functions_ty);
-            println!("{num_blocks}: Br");
-            *num_blocks += 1;
-            translate_block(then_block, num_blocks, variables_ty, functions_ty);
-            translate_block(else_block, num_blocks, variables_ty, functions_ty);
-        }
-        ir::Statement::While {
-            condition,
-            do_block,
-        } => {
-            translate_expression(condition, variables_ty, functions_ty);
-            println!("{num_blocks}: Br");
-            *num_blocks += 1;
-            translate_block(do_block, num_blocks, variables_ty, functions_ty);
-        }
-        ir::Statement::Break(exprs) => {
-            for expr in exprs {
-                translate_expression(expr, variables_ty, functions_ty);
-            }
-            println!("{num_blocks}: break");
-        }
-        ir::Statement::Continue(exprs) => {
-            for expr in exprs {
-                translate_expression(expr, variables_ty, functions_ty);
-            }
-            println!("{num_blocks}: continue");
-        }
-    }
-}
-
-fn get_function_ty(function: &ir::Function, functions_ty: &[ir::FunctionTy]) -> Ty {
-    match *function {
-        ir::Function::UserDefined(index) => functions_ty[index].build(),
-        ir::Function::DeleteInteger => Ty {
-            inner: Rc::new(RefCell::new(TyInner::Application {
-                constructor: Ty {
-                    inner: Rc::new(RefCell::new(TyInner::Constructor(
-                        ir::TyConstructor::Function,
-                    ))),
+fn translate_function(
+    ir_function: &ir::Function,
+    ir_functions_ty: &[ir::FunctionTy],
+) -> (Rc<ty::Ty>, Expression) {
+    match *ir_function {
+        ir::Function::UserDefined(index) => {
+            let ir_function_ty = &ir_functions_ty[index];
+            let ty_parameters: Vec<_> = (0..ir_function_ty.num_ty_parameters)
+                .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
+                .collect();
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: translate_ty(&ir_function_ty.return_ty, &ty_parameters),
+                        tail: translate_tys(&ir_function_ty.parameters_ty, &ty_parameters),
+                    }),
+                }),
+                Expression::Function {
+                    index,
+                    ty_parameters,
                 },
-                arguments: vec![
-                    Ty {
-                        inner: Rc::new(RefCell::new(TyInner::Constructor(
-                            ir::TyConstructor::Integer,
-                        ))),
-                    },
-                    Ty {
-                        inner: Rc::new(RefCell::new(TyInner::Application {
-                            constructor: Ty {
-                                inner: Rc::new(RefCell::new(TyInner::Constructor(
-                                    ir::TyConstructor::Tuple,
-                                ))),
-                            },
-                            arguments: vec![Ty {
-                                inner: Rc::new(RefCell::new(TyInner::List(Vec::new()))),
-                            }],
-                        })),
-                    },
-                ],
-            })),
-        },
+            )
+        }
+        ir::Function::AddInteger => (
+            Rc::new(ty::Ty::Application {
+                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                arguments: Rc::new(ty::Ty::Cons {
+                    head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
+                    tail: Rc::new(ty::Ty::Cons {
+                        head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
+                            tail: Rc::new(ty::Ty::Nil),
+                        }),
+                    }),
+                }),
+            }),
+            Expression::AddInteger,
+        ),
+        ir::Function::Dereference => {
+            let ty = Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0)))));
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: ty.clone(),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: Rc::new(ty::Ty::Application {
+                                constructor: Rc::new(ty::Ty::Constructor(
+                                    ir::TyConstructor::Reference,
+                                )),
+                                arguments: Rc::new(ty::Ty::Cons {
+                                    head: ty.clone(),
+                                    tail: Rc::new(ty::Ty::Nil),
+                                }),
+                            }),
+                            tail: Rc::new(ty::Ty::Nil),
+                        }),
+                    }),
+                }),
+                Expression::Dereference(ty),
+            )
+        }
+        ir::Function::Identity => {
+            let ty = Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0)))));
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: ty.clone(),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: ty.clone(),
+                            tail: Rc::new(ty::Ty::Nil),
+                        }),
+                    }),
+                }),
+                Expression::Identity(ty),
+            )
+        }
+        ir::Function::Delete => {
+            let ty = Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0)))));
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: Rc::new(ty::Ty::Application {
+                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
+                            arguments: Rc::new(ty::Ty::Nil),
+                        }),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: ty.clone(),
+                            tail: Rc::new(ty::Ty::Nil),
+                        }),
+                    }),
+                }),
+                Expression::Delete(ty),
+            )
+        }
+        ir::Function::Assign => {
+            let ty = Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0)))));
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: Rc::new(ty::Ty::Application {
+                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
+                            arguments: Rc::new(ty::Ty::Nil),
+                        }),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: Rc::new(ty::Ty::Application {
+                                constructor: Rc::new(ty::Ty::Constructor(
+                                    ir::TyConstructor::Reference,
+                                )),
+                                arguments: Rc::new(ty::Ty::Cons {
+                                    head: ty.clone(),
+                                    tail: Rc::new(ty::Ty::Nil),
+                                }),
+                            }),
+                            tail: Rc::new(ty::Ty::Cons {
+                                head: ty.clone(),
+                                tail: Rc::new(ty::Ty::Nil),
+                            }),
+                        }),
+                    }),
+                }),
+                Expression::Assign(ty),
+            )
+        }
         _ => todo!(),
     }
 }
 
 fn translate_expression(
-    expr: ir::Expression,
-    variables_ty: &[Ty],
-    functions_ty: &[ir::FunctionTy],
-) -> (Ty, Expression) {
-    match expr {
+    expression: &ir::Expression,
+    local_variables_ty: &[Rc<ty::Ty>],
+    global_variables_ty: &[Rc<ty::Ty>],
+    ir_functions_ty: &[ir::FunctionTy],
+) -> (Rc<ty::Ty>, Expression) {
+    match expression {
         ir::Expression::Integer(value) => (
-            Ty {
-                inner: Rc::new(RefCell::new(TyInner::Constructor(
-                    ir::TyConstructor::Integer,
-                ))),
-            },
-            Expression::Integer(value),
+            Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
+            Expression::Integer(*value),
         ),
         ir::Expression::Float(value) => (
-            Ty {
-                inner: Rc::new(RefCell::new(TyInner::Constructor(ir::TyConstructor::Float))),
-            },
-            Expression::Float(value),
+            Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float)),
+            Expression::Float(*value),
         ),
-        ir::Expression::String(value) => todo!(),
+        ir::Expression::String(value) => (
+            Rc::new(ty::Ty::Constructor(ir::TyConstructor::String)),
+            Expression::String(value.clone()),
+        ),
         ir::Expression::Function { candidates, calls } => {
-            let calls: Vec<Vec<_>> = calls
-                .into_iter()
-                .map(|ir::Call { arguments }| {
-                    arguments
-                        .into_iter()
-                        .map(|argument| translate_expression(argument, variables_ty, functions_ty))
-                        .collect()
-                })
-                .collect();
-            eprintln!("{}", candidates.len());
             let candidates: Vec<_> = candidates
-                .iter()
-                .filter_map(|candidate| {
-                    let mut unifications = Unifications {
-                        history: Vec::new(),
-                    };
-                    let ret_ty = calls.iter().try_fold(
-                        get_function_ty(candidate, functions_ty),
-                        |function_ty, arguments| {
-                            let TyInner::Application {
-                                ref constructor,
-                                arguments: ref return_and_parameters_ty,
-                            } = *function_ty.inner.borrow()
-                            else {
-                                return None;
-                            };
-                            let TyInner::Constructor(ir::TyConstructor::Function) =
-                                *constructor.inner.borrow()
-                            else {
-                                return None;
-                            };
-                            let return_ty = &return_and_parameters_ty[0];
-                            let TyInner::List(ref parameters_ty) =
-                                *return_and_parameters_ty[1].inner.borrow()
-                            else {
-                                return None;
-                            };
-                            if arguments.len() != parameters_ty.len() {
-                                return None;
-                            }
-                            let mut depths = HashMap::new();
-                            depths.insert(None, Some(0));
-                            let mut inequalities = Vec::new();
-                            for ((argument_ty, _), parameter_ty) in
-                                arguments.iter().zip(parameters_ty)
-                            {
-                                let (argument_return_ty, argument_depth) =
-                                    argument_ty.extract_function_ty();
-                                let (parameter_return_ty, parameter_depth) =
-                                    parameter_ty.extract_function_ty();
-                                if let Some(ref argument_return_ty) = argument_return_ty {
-                                    depths.insert(Some(argument_return_ty.clone()), None);
-                                }
-                                if let Some(ref parameter_return_ty) = parameter_return_ty {
-                                    depths.insert(Some(parameter_return_ty.clone()), None);
-                                }
-                                inequalities.push((
-                                    argument_return_ty,
-                                    parameter_return_ty,
-                                    argument_depth - parameter_depth,
-                                ));
-                            }
-                            for i in 0..depths.len() {
-                                let mut updated = false;
-                                for (argument, parameter, diff) in &inequalities {
-                                    let Some(argument_depth) = depths[argument] else {
-                                        continue;
-                                    };
-                                    let new_parameter_depth = argument_depth + diff;
-                                    let parameter_depth = depths.get_mut(parameter).unwrap();
-                                    if parameter_depth
-                                        .is_none_or(|depth| depth > new_parameter_depth)
-                                    {
-                                        *parameter_depth = Some(new_parameter_depth);
-                                        updated = true;
-                                    }
-                                }
-                                if i == depths.len() - 1 && updated {
-                                    return None;
-                                }
-                            }
-                            let nums_extra_calls: Option<Vec<_>> = inequalities
-                                .iter()
-                                .map(|(argument_ty, parameter_ty, diff)| {
-                                    let Some(argument_depth) = depths[argument_ty] else {
-                                        return None;
-                                    };
-                                    let Some(parameter_depth) = depths[parameter_ty] else {
-                                        return None;
-                                    };
-                                    (diff + argument_depth - parameter_depth).try_into().ok()
-                                })
-                                .collect();
-                            let Some(nums_extra_calls) = nums_extra_calls else {
-                                return None;
-                            };
-                            let extra_calls: Vec<_> =
-                                (0..nums_extra_calls.iter().cloned().max().unwrap_or(0))
-                                    .map(|_| Ty {
-                                        inner: Rc::new(RefCell::new(TyInner::Undetermined)),
-                                    })
-                                    .collect();
-                            for (((argument_ty, _), parameter_ty), num_extra_calls) in
-                                arguments.iter().zip(parameters_ty).zip(nums_extra_calls)
-                            {
-                                if !unifications.unify(
-                                    &extra_calls[..num_extra_calls].iter().fold(
-                                        parameter_ty.clone(),
-                                        |parameter_ty, extra_call| Ty {
-                                            inner: Rc::new(RefCell::new(TyInner::Application {
-                                                constructor: Ty {
-                                                    inner: Rc::new(RefCell::new(
-                                                        TyInner::Constructor(
-                                                            ir::TyConstructor::Function,
-                                                        ),
-                                                    )),
-                                                },
-                                                arguments: vec![parameter_ty, extra_call.clone()],
-                                            })),
-                                        },
-                                    ),
-                                    argument_ty,
-                                ) {
-                                    return None;
-                                }
-                            }
-
-                            Some(return_ty.clone())
+                .into_iter()
+                .filter_map(|ir_function| {
+                    let mut unifications = ty::Unifications::new();
+                    let ret = calls.iter().try_fold(
+                        translate_function(&ir_function, ir_functions_ty),
+                        |function, call| {
+                            translate_call(
+                                function,
+                                call,
+                                &mut unifications,
+                                local_variables_ty,
+                                global_variables_ty,
+                                ir_functions_ty,
+                            )
                         },
                     );
-                    unifications.undo();
-                    ret_ty.map(|ret_ty| (ret_ty, unifications))
+                    let undo = unifications.undo();
+                    ret.map(|ret| (ret, undo))
                 })
                 .collect();
-            eprintln!("{} candidates found", candidates.len());
-            match &candidates[..] {
-                [(ty, unifications)] => {
-                    unifications.redo();
-                    (ty.clone(), Expression::Integer(0))
-                }
-                _ => todo!(),
+            if candidates.len() == 1 {
+                let (ret, undo) = candidates.into_iter().next().unwrap();
+                undo.undo();
+                ret
+            } else {
+                todo!("{}", candidates.len());
             }
         }
         ir::Expression::Variable(storage, index) => {
-            todo!();
+            let ty = match storage {
+                ir::Storage::Local => local_variables_ty[*index].clone(),
+                ir::Storage::Global => global_variables_ty[*index].clone(),
+            };
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: ty,
+                        tail: Rc::new(ty::Ty::Nil),
+                    }),
+                }),
+                Expression::Variable(*storage, *index),
+            )
         }
     }
 }
 
+fn translate_call(
+    (function_ty, function): (Rc<ty::Ty>, Expression),
+    call: &ir::Call,
+    unifications: &mut ty::Unifications,
+    local_variables_ty: &[Rc<ty::Ty>],
+    global_variables_ty: &[Rc<ty::Ty>],
+    ir_functions_ty: &[ir::FunctionTy],
+) -> Option<(Rc<ty::Ty>, Expression)> {
+    let ty::Ty::Application {
+        constructor,
+        arguments: return_and_parameters_ty,
+    } = function_ty.as_ref()
+    else {
+        return None;
+    };
+    let ty::Ty::Constructor(ir::TyConstructor::Function) = constructor.as_ref() else {
+        return None;
+    };
+    let ty::Ty::Cons {
+        head: return_ty,
+        tail: parameters_ty,
+    } = return_and_parameters_ty.as_ref()
+    else {
+        return None;
+    };
+    let parameters_ty = {
+        let mut parameters_ty_ref: &ty::Ty = parameters_ty;
+        let mut parameters_ty_vec = Vec::new();
+        while let ty::Ty::Cons { head, tail } = parameters_ty_ref {
+            parameters_ty_vec.push(head.clone());
+            parameters_ty_ref = tail;
+        }
+        parameters_ty_vec
+    };
+    if call.arguments.len() != parameters_ty.len() {
+        return None;
+    }
+    let arguments: Vec<_> = call
+        .arguments
+        .iter()
+        .map(|argument| {
+            translate_expression(
+                &argument,
+                local_variables_ty,
+                global_variables_ty,
+                ir_functions_ty,
+            )
+        })
+        .collect();
+    let mut min_order = 0;
+    let mut max_order = 0;
+    let mut inequalities = Vec::new();
+    for ((argument_ty, _), parameter_ty) in arguments.iter().zip(&parameters_ty) {
+        let (argument_return_ty, argument_depth) = argument_ty.extract_function_ty();
+        let (parameter_return_ty, parameter_depth) = parameter_ty.extract_function_ty();
+        let gap = argument_depth - parameter_depth;
+        inequalities.push((argument_return_ty, parameter_return_ty, gap));
+        max_order += gap.abs();
+    }
+    let get_depths = |order| {
+        let mut depths = HashMap::new();
+        depths.insert(None, Some(0));
+        for (argument_return_ty, parameter_return_ty, _) in &inequalities {
+            if let Some(argument_return_ty) = argument_return_ty {
+                depths.insert(Some(Rc::as_ptr(argument_return_ty)), None);
+            }
+            if let Some(parameter_return_ty) = parameter_return_ty {
+                depths.insert(Some(Rc::as_ptr(parameter_return_ty)), None);
+            }
+        }
+        for _ in 0..depths.len() {
+            let mut updated = false;
+            for (argument, parameter, diff) in &inequalities {
+                let Some(argument_depth) = depths[&argument.as_ref().map(Rc::as_ptr)] else {
+                    continue;
+                };
+                let new_parameter_depth = argument_depth + diff + order;
+                let parameter_depth = depths.get_mut(&parameter.as_ref().map(Rc::as_ptr)).unwrap();
+                if parameter_depth.is_none_or(|depth| depth > new_parameter_depth) {
+                    *parameter_depth = Some(new_parameter_depth);
+                    updated = true;
+                }
+            }
+            if !updated {
+                return Some(depths);
+            }
+        }
+        None
+    };
+    let Some(mut depths) = get_depths(max_order) else {
+        return None;
+    };
+    while min_order < max_order - 1 {
+        let mid_order = (min_order + max_order) / 2;
+        match get_depths(mid_order) {
+            Some(new_depths) => {
+                max_order = mid_order;
+                depths = new_depths;
+            }
+            None => {
+                min_order = mid_order;
+            }
+        }
+    }
+
+    let nums_extra_calls: Option<Vec<_>> = inequalities
+        .iter()
+        .map(|(argument_ty, parameter_ty, diff)| {
+            let Some(argument_depth) = depths[&argument_ty.as_ref().map(Rc::as_ptr)] else {
+                return None;
+            };
+            let Some(parameter_depth) = depths[&parameter_ty.as_ref().map(Rc::as_ptr)] else {
+                return None;
+            };
+            (diff + argument_depth - parameter_depth).try_into().ok()
+        })
+        .collect();
+    let Some(nums_extra_calls) = nums_extra_calls else {
+        return None;
+    };
+    let extra_calls: Vec<_> = (0..max_order)
+        .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
+        .collect();
+    for (((argument_ty, _), parameter_ty), num_extra_calls) in
+        arguments.iter().zip(&parameters_ty).zip(nums_extra_calls)
+    {
+        if !unifications.unify(
+            &extra_calls[..num_extra_calls].iter().fold(
+                parameter_ty.clone(),
+                |parameter_ty, extra_call| {
+                    Rc::new(ty::Ty::Application {
+                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                        arguments: Rc::new(ty::Ty::Cons {
+                            head: parameter_ty,
+                            tail: extra_call.clone(),
+                        }),
+                    })
+                },
+            ),
+            argument_ty,
+        ) {
+            return None;
+        }
+    }
+
+    match max_order {
+        0 => Some((
+            return_ty.clone(),
+            Expression::App {
+                function: Box::new(Expression::Compile {
+                    expression: Box::new(function),
+                    parameters_ty: parameters_ty,
+                    return_ty: return_ty.clone(),
+                }),
+                arguments: arguments
+                    .into_iter()
+                    .map(|(_, argument)| argument)
+                    .collect(),
+            },
+        )),
+        1 => Some((
+            return_ty.clone(),
+            Expression::App {
+                function: Box::new(function),
+                arguments: arguments
+                    .into_iter()
+                    .map(|(_, argument)| argument)
+                    .collect(),
+            },
+        )),
+        _ => todo!(),
+    }
+}
+
+#[cfg_attr(test, derive(Serialize))]
+struct Program {
+    function_definitions: Vec<FunctionDefinition>,
+}
+
+#[cfg_attr(test, derive(Serialize))]
+struct FunctionDefinition {
+    body_rev: Vec<Block>,
+}
+
+#[cfg_attr(test, derive(Serialize))]
+struct Block {
+    expressions: Vec<Expression>,
+    next: Next,
+}
+
+#[cfg_attr(test, derive(Serialize))]
+enum Next {
+    Jump(Option<usize>),
+    Br(Expression, Option<usize>, Option<usize>),
+}
+
+#[cfg_attr(test, derive(Serialize))]
 enum Expression {
     Integer(i32),
     Float(f64),
-    Variable(usize),
+    String(String),
+    Function {
+        index: usize,
+        ty_parameters: Vec<Rc<ty::Ty>>,
+    },
+    Variable(ir::Storage, usize),
+    AddInteger,
+    Dereference(Rc<ty::Ty>),
+    Identity(Rc<ty::Ty>),
+    Delete(Rc<ty::Ty>),
+    Assign(Rc<ty::Ty>),
+    Compile {
+        expression: Box<Expression>,
+        parameters_ty: Vec<Rc<ty::Ty>>,
+        return_ty: Rc<ty::Ty>,
+    },
+    App {
+        function: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
 }

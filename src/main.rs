@@ -17,6 +17,7 @@
  */
 
 mod backend;
+mod ffi;
 mod frontend;
 mod ir;
 mod log;
@@ -33,12 +34,13 @@ struct CommandLineArguments {
 fn main() -> ExitCode {
     let command_line_arguments = CommandLineArguments::parse();
     let mut logger = log::Logger::new(Box::new(std::io::stderr()));
-    let Ok(program) = frontend::read_input(
-        std::path::Path::new(&command_line_arguments.filename),
-        &mut logger,
-    ) else {
+    let Ok(ir_program) =
+        frontend::read_input(command_line_arguments.filename.as_ref(), &mut logger)
+    else {
         return ExitCode::FAILURE;
     };
-
-    ExitCode::SUCCESS
+    let Ok(entry) = backend::translate(ir_program) else {
+        return ExitCode::FAILURE;
+    };
+    ExitCode::from(unsafe { entry() })
 }

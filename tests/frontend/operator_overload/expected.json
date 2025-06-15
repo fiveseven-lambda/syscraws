@@ -56,7 +56,7 @@
       "body": {
         "statements": [
           {
-            "Expr": [
+            "Expressions": [
               {
                 "Integer": 0
               }
@@ -71,7 +71,7 @@
       "body": {
         "statements": [
           {
-            "Expr": [
+            "Expressions": [
               {
                 "Integer": 1
               }
@@ -86,7 +86,7 @@
       "body": {
         "statements": [
           {
-            "Expr": [
+            "Expressions": [
               {
                 "Integer": 2
               }
@@ -101,10 +101,11 @@
       "body": {
         "statements": [
           {
-            "Expr": [
+            "Expressions": [
               {
                 "Function": {
                   "candidates": [
+                    "Assign",
                     {
                       "UserDefined": 0
                     }
@@ -129,6 +130,7 @@
               {
                 "Function": {
                   "candidates": [
+                    "Assign",
                     {
                       "UserDefined": 1
                     }
@@ -153,6 +155,7 @@
               {
                 "Function": {
                   "candidates": [
+                    "Assign",
                     {
                       "UserDefined": 0
                     },
@@ -183,6 +186,7 @@
               {
                 "Function": {
                   "candidates": [
+                    "Assign",
                     {
                       "UserDefined": 0
                     },
@@ -213,6 +217,7 @@
               {
                 "Function": {
                   "candidates": [
+                    "Assign",
                     {
                       "UserDefined": 0
                     },
@@ -243,7 +248,7 @@
               {
                 "Function": {
                   "candidates": [
-                    "DeleteInteger"
+                    "Delete"
                   ],
                   "calls": [
                     {
@@ -262,7 +267,7 @@
               {
                 "Function": {
                   "candidates": [
-                    "DeleteInteger"
+                    "Delete"
                   ],
                   "calls": [
                     {
@@ -281,7 +286,7 @@
               {
                 "Function": {
                   "candidates": [
-                    "DeleteInteger"
+                    "Delete"
                   ],
                   "calls": [
                     {
@@ -304,5 +309,5 @@
       }
     }
   ],
-  "num_global_variables": 0
+  "num_global_variables": 3
 }
