@@ -57,7 +57,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe fn() -> u8, ()> {
         function_definitions: Vec::new(),
     };
     for definition in ir_program.function_definitions {
-        let mut body = Vec::new();
+        let mut body_rev = Vec::new();
 
         let variables_ty: Vec<_> = (0..definition.num_local_variables)
             .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
@@ -65,15 +65,15 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe fn() -> u8, ()> {
 
         translate_block(
             &definition.body,
-            &mut body,
-            definition.body.size,
+            &mut body_rev,
+            None,
             &variables_ty,
             &ir_program.functions_ty,
         );
 
         program
             .function_definitions
-            .push(FunctionDefinition { body });
+            .push(FunctionDefinition { body_rev });
     }
     todo!();
 }
@@ -81,94 +81,74 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe fn() -> u8, ()> {
 fn translate_block(
     block: &ir::Block,
     blocks: &mut Vec<Block>,
-    next: usize,
+    mut next: Option<usize>,
     variables_ty: &[Rc<ty::Ty>],
     ir_functions_ty: &[ir::FunctionTy],
-) {
-    for (index, statement) in block.statements.iter().enumerate() {
+) -> Option<usize> {
+    for statement in block.statements.iter().rev() {
         match statement {
-            ir::Statement::Expr(expressions) => {
+            ir::Statement::Expressions(ir_expressions) => {
+                let index = blocks.len();
                 blocks.push(Block {
-                    expressions: expressions
+                    expressions: ir_expressions
                         .iter()
-                        .map(|expression| {
-                            translate_expression(expression, variables_ty, ir_functions_ty).1
+                        .map(|ir_expression| {
+                            translate_expression(ir_expression, variables_ty, ir_functions_ty).1
                         })
                         .collect(),
-                    next: Next::Jump(if index == block.statements.len() - 1 {
-                        next
-                    } else {
-                        blocks.len() + 1
-                    }),
+                    next: Next::Jump(next),
                 });
+                next = Some(index);
             }
             ir::Statement::If {
-                antecedents,
-                condition,
+                antecedents: ir_antecedents,
+                condition: ir_condition,
                 then_block,
                 else_block,
             } => {
-                let then_index = blocks.len() + 1;
-                let else_index = then_index + then_block.size;
-                let mut expressions = Vec::new();
-                for antecedent in antecedents {
-                    expressions
-                        .push(translate_expression(antecedent, variables_ty, ir_functions_ty).1);
-                }
+                let else_index =
+                    translate_block(else_block, blocks, next, variables_ty, ir_functions_ty);
+                let then_index =
+                    translate_block(then_block, blocks, next, variables_ty, ir_functions_ty);
                 let (condition_ty, condition) =
-                    translate_expression(condition, variables_ty, ir_functions_ty);
+                    translate_expression(ir_condition, variables_ty, ir_functions_ty);
+                let condition_index = blocks.len();
                 blocks.push(Block {
-                    expressions,
+                    expressions: ir_antecedents
+                        .iter()
+                        .map(|ir_expression| {
+                            translate_expression(ir_expression, variables_ty, ir_functions_ty).1
+                        })
+                        .collect(),
                     next: Next::Br(condition, then_index, else_index),
                 });
-                let next_index = if index == block.statements.len() - 1 {
-                    next
-                } else {
-                    else_index + else_block.size
-                };
-                translate_block(
-                    then_block,
-                    blocks,
-                    next_index,
-                    variables_ty,
-                    ir_functions_ty,
-                );
-                translate_block(
-                    else_block,
-                    blocks,
-                    next_index,
-                    variables_ty,
-                    ir_functions_ty,
-                );
+                next = Some(condition_index);
             }
             ir::Statement::While {
-                condition,
+                condition: ir_condition,
                 do_block,
             } => {
-                let condition_index = blocks.len();
-                let do_index = condition_index + 1;
-                let next_index = if index == block.statements.len() - 1 {
-                    next
-                } else {
-                    do_index + do_block.size
-                };
-                let (condition_ty, condition) =
-                    translate_expression(condition, variables_ty, ir_functions_ty);
-                blocks.push(Block {
-                    expressions: Vec::new(),
-                    next: Next::Br(condition, do_index, next_index),
-                });
-                translate_block(
+                let condition_index = blocks.len() + do_block.size;
+                let do_index = translate_block(
                     do_block,
                     blocks,
-                    condition_index,
+                    Some(condition_index),
                     variables_ty,
                     ir_functions_ty,
                 );
+                assert_eq!(blocks.len(), condition_index);
+                let (condition_ty, condition) =
+                    translate_expression(ir_condition, variables_ty, ir_functions_ty);
+                blocks.push(Block {
+                    expressions: Vec::new(),
+                    next: Next::Br(condition, do_index, next),
+                });
+                next = Some(condition_index);
             }
             _ => todo!(),
         }
     }
+    next
 }
 
 fn translate_function(
@@ -471,16 +451,33 @@ fn translate_call(
         }
     }
 
-    Some((
-        return_ty.clone(),
-        Expression::Call {
-            function: Box::new(function),
-            arguments: arguments
-                .into_iter()
-                .map(|(_, argument)| argument)
-                .collect(),
-        },
-    ))
+    match max_order {
+        0 => Some((
+            return_ty.clone(),
+            Expression::App {
+                function: Box::new(Expression::Compile {
+                    expression: Box::new(function),
+                    parameters_ty: parameters_ty,
+                    return_ty: return_ty.clone(),
+                }),
+                arguments: arguments
+                    .into_iter()
+                    .map(|(_, argument)| argument)
+                    .collect(),
+            },
+        )),
+        1 => Some((
+            return_ty.clone(),
+            Expression::App {
+                function: Box::new(function),
+                arguments: arguments
+                    .into_iter()
+                    .map(|(_, argument)| argument)
+                    .collect(),
+            },
+        )),
+        _ => todo!(),
+    }
 }
 
 struct Program {
@@ -488,7 +485,7 @@ struct Program {
 }
 
 struct FunctionDefinition {
-    body: Vec<Block>,
+    body_rev: Vec<Block>,
 }
 
 struct Block {
@@ -497,8 +494,8 @@ struct Block {
 }
 
 enum Next {
-    Jump(usize),
-    Br(Expression, usize, usize),
+    Jump(Option<usize>),
+    Br(Expression, Option<usize>, Option<usize>),
 }
 
 enum Expression {
@@ -514,7 +511,12 @@ enum Expression {
     Dereference(Rc<ty::Ty>),
     Identity(Rc<ty::Ty>),
     Delete,
-    Call {
+    Compile {
+        expression: Box<Expression>,
+        parameters_ty: Vec<Rc<ty::Ty>>,
+        return_ty: Rc<ty::Ty>,
+    },
+    App {
         function: Box<Expression>,
         arguments: Vec<Expression>,
     },

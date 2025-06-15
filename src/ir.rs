@@ -121,7 +121,7 @@ pub struct Block {
 
 #[cfg_attr(test, derive(Serialize))]
 pub enum Statement {
-    Expr(Vec<Expression>),
+    Expressions(Vec<Expression>),
     If {
         antecedents: Vec<Expression>,
         condition: Expression,
