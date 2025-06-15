@@ -16,6 +16,8 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#[cfg(test)]
+use serde::ser::{Serialize, SerializeMap, SerializeStruct, SerializeStructVariant, Serializer};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -36,10 +38,55 @@ pub enum Ty {
     Var(Rc<RefCell<Var>>),
 }
 
+#[cfg(test)]
+impl Serialize for Ty {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Ty::Constructor(constructor) => {
+                serializer.serialize_newtype_variant("Ty", 0, "Constructor", constructor)
+            }
+            Ty::Parameter(index) => {
+                serializer.serialize_newtype_variant("Ty", 1, "Parameter", index)
+            }
+            Ty::Application {
+                constructor,
+                arguments,
+            } => {
+                let mut state = serializer.serialize_struct_variant("Ty", 2, "Application", 2)?;
+                state.serialize_field("constructor", constructor)?;
+                state.serialize_field("arguments", arguments)?;
+                state.end()
+            }
+            Ty::Nil => serializer.serialize_unit_variant("Ty", 3, "Nil"),
+            Ty::Cons { head, tail } => {
+                let mut state = serializer.serialize_struct_variant("Ty", 4, "Cons", 2)?;
+                state.serialize_field("head", head)?;
+                state.serialize_field("tail", tail)?;
+                state.end()
+            }
+            Ty::Var(var) => var.serialize(serializer),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum Var {
     Assigned(Rc<Ty>),
     Unassigned(u32),
+}
+
+#[cfg(test)]
+impl Serialize for Var {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Var::Assigned(ty) => ty.serialize(serializer),
+            Var::Unassigned(rank) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("Unassigned", rank)?;
+                map.end()
+            }
+        }
+    }
 }
 
 struct Unification {

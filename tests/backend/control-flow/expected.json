@@ -1,0 +1,76 @@
+{
+  "function_definitions": [
+    {
+      "body_rev": [
+        {
+          "expressions": [
+            {
+              "App": {
+                "arguments": [
+                  {
+                    "Variable": [
+                      "Local",
+                      0
+                    ]
+                  }
+                ],
+                "function": {
+                  "Compile": {
+                    "expression": {
+                      "Delete": {
+                        "Application": {
+                          "arguments": {
+                            "Cons": {
+                              "head": {
+                                "Unassigned": 0
+                              },
+                              "tail": "Nil"
+                            }
+                          },
+                          "constructor": {
+                            "Constructor": "Reference"
+                          }
+                        }
+                      }
+                    },
+                    "parameters_ty": [
+                      {
+                        "Application": {
+                          "constructor": {
+                            "Constructor": "Reference"
+                          },
+                          "arguments": {
+                            "Cons": {
+                              "head": {
+                                "Unassigned": 0
+                              },
+                              "tail": "Nil"
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "return_ty": {
+                      "Application": {
+                        "constructor": {
+                          "Constructor": "Tuple"
+                        },
+                        "arguments": "Nil"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "next": {
+            "Jump": null
+          }
+        }
+      ]
+    },
+    {
+      "body_rev": []
+    }
+  ]
+}

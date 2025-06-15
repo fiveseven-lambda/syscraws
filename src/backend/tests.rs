@@ -18,6 +18,10 @@
 
 #![cfg(test)]
 
+use std::path::Path;
+
+use crate::{frontend, log};
+
 use super::*;
 
 #[test]
@@ -36,4 +40,41 @@ fn unify() {
         &x,
         &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
     ));
+}
+
+fn test(dir: impl AsRef<Path>) {
+    let dir = dir.as_ref();
+    let mut logger = log::Logger::new(Box::new(std::io::stderr()));
+    let ir_program = frontend::read_input(&dir.join("input"), &mut logger).unwrap();
+    let mut program = Program {
+        function_definitions: Vec::new(),
+    };
+    for definition in ir_program.function_definitions {
+        let mut body_rev = Vec::new();
+
+        let variables_ty: Vec<_> = (0..definition.num_local_variables)
+            .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
+            .collect();
+
+        translate_block(
+            &definition.body,
+            &mut body_rev,
+            None,
+            &variables_ty,
+            &ir_program.functions_ty,
+        );
+
+        program
+            .function_definitions
+            .push(FunctionDefinition { body_rev });
+    }
+    let program = serde_json::to_value(&program).unwrap();
+    let expected = std::fs::read_to_string(dir.join("expected.json")).unwrap();
+    let expected: serde_json::Value = serde_json::from_str(&expected).unwrap();
+    assert_json_diff::assert_json_eq!(program, expected);
+}
+
+#[test]
+fn control_flow() {
+    test("tests/backend/control-flow")
 }

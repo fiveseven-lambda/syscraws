@@ -25,6 +25,8 @@ use crate::ir;
 mod tests;
 mod ty;
 
+#[cfg(test)]
+use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -247,7 +249,7 @@ fn translate_function(
                         }),
                     }),
                 }),
-                Expression::Identity(ty),
+                Expression::Delete(ty),
             )
         }
         _ => todo!(),
@@ -480,24 +482,29 @@ fn translate_call(
     }
 }
 
+#[cfg_attr(test, derive(Serialize))]
 struct Program {
     function_definitions: Vec<FunctionDefinition>,
 }
 
+#[cfg_attr(test, derive(Serialize))]
 struct FunctionDefinition {
     body_rev: Vec<Block>,
 }
 
+#[cfg_attr(test, derive(Serialize))]
 struct Block {
     expressions: Vec<Expression>,
     next: Next,
 }
 
+#[cfg_attr(test, derive(Serialize))]
 enum Next {
     Jump(Option<usize>),
     Br(Expression, Option<usize>, Option<usize>),
 }
 
+#[cfg_attr(test, derive(Serialize))]
 enum Expression {
     Integer(i32),
     Float(f64),
@@ -510,7 +517,7 @@ enum Expression {
     AddInteger,
     Dereference(Rc<ty::Ty>),
     Identity(Rc<ty::Ty>),
-    Delete,
+    Delete(Rc<ty::Ty>),
     Compile {
         expression: Box<Expression>,
         parameters_ty: Vec<Rc<ty::Ty>>,
