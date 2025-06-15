@@ -91,6 +91,7 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
             num_local_variables: 0,
             body,
         });
+    reader.ir_program.num_global_variables = reader.global_variables.num_total();
     Ok(reader.ir_program)
 }
 
@@ -204,7 +205,7 @@ impl Reader {
                 String::from("print"),
                 (None, Item::Function(vec![ir::Function::Print])),
             )]),
-            methods: HashMap::new(),
+            methods: HashMap::from([(String::from("assign"), vec![ir::Function::Assign])]),
         };
         for ast::WithExtraTokens {
             content: ast_import,

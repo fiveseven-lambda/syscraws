@@ -17,7 +17,7 @@
  */
 
 #[cfg(test)]
-use serde::ser::{Serialize, SerializeMap, SerializeStruct, SerializeStructVariant, Serializer};
+use serde::ser::{Serialize, SerializeMap, SerializeStructVariant, Serializer};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -190,7 +190,7 @@ impl Unifications {
 
     pub fn undo(self) -> Unifications {
         let mut ret = Unifications::new();
-        for Unification { var, old } in self.0 {
+        for Unification { var, old } in self.0.into_iter().rev() {
             ret.bind(&var, old);
         }
         ret

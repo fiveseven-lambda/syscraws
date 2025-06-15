@@ -1,0 +1,125 @@
+{
+  "function_definitions": [
+    {
+      "body_rev": [
+        {
+          "expressions": [
+            {
+              "App": {
+                "arguments": [
+                  {
+                    "Variable": [
+                      "Global",
+                      0
+                    ]
+                  },
+                  {
+                    "Integer": 10
+                  }
+                ],
+                "function": {
+                  "Compile": {
+                    "expression": {
+                      "Assign": {
+                        "Constructor": "Integer"
+                      }
+                    },
+                    "parameters_ty": [
+                      {
+                        "Application": {
+                          "arguments": {
+                            "Cons": {
+                              "head": {
+                                "Constructor": "Integer"
+                              },
+                              "tail": "Nil"
+                            }
+                          },
+                          "constructor": {
+                            "Constructor": "Reference"
+                          }
+                        }
+                      },
+                      {
+                        "Constructor": "Integer"
+                      }
+                    ],
+                    "return_ty": {
+                      "Application": {
+                        "arguments": "Nil",
+                        "constructor": {
+                          "Constructor": "Tuple"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "App": {
+                "arguments": [
+                  {
+                    "Variable": [
+                      "Global",
+                      0
+                    ]
+                  }
+                ],
+                "function": {
+                  "Compile": {
+                    "expression": {
+                      "Delete": {
+                        "Application": {
+                          "arguments": {
+                            "Cons": {
+                              "head": {
+                                "Constructor": "Integer"
+                              },
+                              "tail": "Nil"
+                            }
+                          },
+                          "constructor": {
+                            "Constructor": "Reference"
+                          }
+                        }
+                      }
+                    },
+                    "parameters_ty": [
+                      {
+                        "Application": {
+                          "arguments": {
+                            "Cons": {
+                              "head": {
+                                "Constructor": "Integer"
+                              },
+                              "tail": "Nil"
+                            }
+                          },
+                          "constructor": {
+                            "Constructor": "Reference"
+                          }
+                        }
+                      }
+                    ],
+                    "return_ty": {
+                      "Application": {
+                        "arguments": "Nil",
+                        "constructor": {
+                          "Constructor": "Tuple"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "next": {
+            "Jump": null
+          }
+        }
+      ]
+    }
+  ]
+}

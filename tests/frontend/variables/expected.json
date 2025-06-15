@@ -42,7 +42,9 @@
                     "Expressions": [
                       {
                         "Function": {
-                          "candidates": [],
+                          "candidates": [
+                            "Assign"
+                          ],
                           "calls": [
                             {
                               "arguments": [
@@ -62,7 +64,9 @@
                       },
                       {
                         "Function": {
-                          "candidates": [],
+                          "candidates": [
+                            "Assign"
+                          ],
                           "calls": [
                             {
                               "arguments": [
@@ -82,7 +86,9 @@
                       },
                       {
                         "Function": {
-                          "candidates": [],
+                          "candidates": [
+                            "Assign"
+                          ],
                           "calls": [
                             {
                               "arguments": [
@@ -168,7 +174,9 @@
                     "Expressions": [
                       {
                         "Function": {
-                          "candidates": [],
+                          "candidates": [
+                            "Assign"
+                          ],
                           "calls": [
                             {
                               "arguments": [
@@ -240,5 +248,5 @@
       }
     }
   ],
-  "num_global_variables": 0
+  "num_global_variables": 2
 }

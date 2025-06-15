@@ -33,10 +33,20 @@ fn unify() {
         &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
     ));
     assert!(!u1.unify(&x, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
-    u1.undo();
+    let u1 = u1.undo();
     let mut u2 = ty::Unifications::new();
     assert!(u2.unify(&x, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
     assert!(!u2.unify(
+        &x,
+        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
+    ));
+    u2.undo();
+    eprintln!("{}", serde_json::to_string(&x).unwrap());
+    u1.undo();
+    eprintln!("{}", serde_json::to_string(&x).unwrap());
+    let mut u3 = ty::Unifications::new();
+    assert!(!u3.unify(&x, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
+    assert!(u3.unify(
         &x,
         &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
     ));
@@ -49,10 +59,13 @@ fn test(dir: impl AsRef<Path>) {
     let mut program = Program {
         function_definitions: Vec::new(),
     };
+    let global_variables_ty: Vec<_> = (0..ir_program.num_global_variables)
+        .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
+        .collect();
     for definition in ir_program.function_definitions {
         let mut body_rev = Vec::new();
 
-        let variables_ty: Vec<_> = (0..definition.num_local_variables)
+        let local_variables_ty: Vec<_> = (0..definition.num_local_variables)
             .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
             .collect();
 
@@ -60,7 +73,8 @@ fn test(dir: impl AsRef<Path>) {
             &definition.body,
             &mut body_rev,
             None,
-            &variables_ty,
+            &local_variables_ty,
+            &global_variables_ty,
             &ir_program.functions_ty,
         );
 
@@ -77,4 +91,9 @@ fn test(dir: impl AsRef<Path>) {
 #[test]
 fn control_flow() {
     test("tests/backend/control-flow")
+}
+
+#[test]
+fn add_integer() {
+    test("tests/backend/assign-integer")
 }

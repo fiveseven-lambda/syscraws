@@ -55,13 +55,16 @@ fn translate_tys(ir_tys: &[ir::Ty], ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> 
 }
 
 pub fn translate(ir_program: ir::Program) -> Result<unsafe fn() -> u8, ()> {
+    let global_variables_ty: Vec<_> = (0..ir_program.num_global_variables)
+        .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
+        .collect();
     let mut program = Program {
         function_definitions: Vec::new(),
     };
     for definition in ir_program.function_definitions {
         let mut body_rev = Vec::new();
 
-        let variables_ty: Vec<_> = (0..definition.num_local_variables)
+        let local_variables_ty: Vec<_> = (0..definition.num_local_variables)
             .map(|_| Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))))
             .collect();
 
@@ -69,7 +72,8 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe fn() -> u8, ()> {
             &definition.body,
             &mut body_rev,
             None,
-            &variables_ty,
+            &local_variables_ty,
+            &global_variables_ty,
             &ir_program.functions_ty,
         );
 
@@ -84,7 +88,8 @@ fn translate_block(
     block: &ir::Block,
     blocks: &mut Vec<Block>,
     mut next: Option<usize>,
-    variables_ty: &[Rc<ty::Ty>],
+    local_variables_ty: &[Rc<ty::Ty>],
+    global_variables_ty: &[Rc<ty::Ty>],
     ir_functions_ty: &[ir::FunctionTy],
 ) -> Option<usize> {
     for statement in block.statements.iter().rev() {
@@ -95,7 +100,13 @@ fn translate_block(
                     expressions: ir_expressions
                         .iter()
                         .map(|ir_expression| {
-                            translate_expression(ir_expression, variables_ty, ir_functions_ty).1
+                            translate_expression(
+                                ir_expression,
+                                local_variables_ty,
+                                global_variables_ty,
+                                ir_functions_ty,
+                            )
+                            .1
                         })
                         .collect(),
                     next: Next::Jump(next),
@@ -108,18 +119,40 @@ fn translate_block(
                 then_block,
                 else_block,
             } => {
-                let else_index =
-                    translate_block(else_block, blocks, next, variables_ty, ir_functions_ty);
-                let then_index =
-                    translate_block(then_block, blocks, next, variables_ty, ir_functions_ty);
-                let (condition_ty, condition) =
-                    translate_expression(ir_condition, variables_ty, ir_functions_ty);
+                let else_index = translate_block(
+                    else_block,
+                    blocks,
+                    next,
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
+                let then_index = translate_block(
+                    then_block,
+                    blocks,
+                    next,
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
+                let (condition_ty, condition) = translate_expression(
+                    ir_condition,
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
                 let condition_index = blocks.len();
                 blocks.push(Block {
                     expressions: ir_antecedents
                         .iter()
                         .map(|ir_expression| {
-                            translate_expression(ir_expression, variables_ty, ir_functions_ty).1
+                            translate_expression(
+                                ir_expression,
+                                local_variables_ty,
+                                global_variables_ty,
+                                ir_functions_ty,
+                            )
+                            .1
                         })
                         .collect(),
                     next: Next::Br(condition, then_index, else_index),
@@ -135,12 +168,17 @@ fn translate_block(
                     do_block,
                     blocks,
                     Some(condition_index),
-                    variables_ty,
+                    local_variables_ty,
+                    global_variables_ty,
                     ir_functions_ty,
                 );
                 assert_eq!(blocks.len(), condition_index);
-                let (condition_ty, condition) =
-                    translate_expression(ir_condition, variables_ty, ir_functions_ty);
+                let (condition_ty, condition) = translate_expression(
+                    ir_condition,
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
                 blocks.push(Block {
                     expressions: Vec::new(),
                     next: Next::Br(condition, do_index, next),
@@ -252,13 +290,44 @@ fn translate_function(
                 Expression::Delete(ty),
             )
         }
+        ir::Function::Assign => {
+            let ty = Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0)))));
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: Rc::new(ty::Ty::Application {
+                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
+                            arguments: Rc::new(ty::Ty::Nil),
+                        }),
+                        tail: Rc::new(ty::Ty::Cons {
+                            head: Rc::new(ty::Ty::Application {
+                                constructor: Rc::new(ty::Ty::Constructor(
+                                    ir::TyConstructor::Reference,
+                                )),
+                                arguments: Rc::new(ty::Ty::Cons {
+                                    head: ty.clone(),
+                                    tail: Rc::new(ty::Ty::Nil),
+                                }),
+                            }),
+                            tail: Rc::new(ty::Ty::Cons {
+                                head: ty.clone(),
+                                tail: Rc::new(ty::Ty::Nil),
+                            }),
+                        }),
+                    }),
+                }),
+                Expression::Assign(ty),
+            )
+        }
         _ => todo!(),
     }
 }
 
 fn translate_expression(
     expression: &ir::Expression,
-    variables_ty: &[Rc<ty::Ty>],
+    local_variables_ty: &[Rc<ty::Ty>],
+    global_variables_ty: &[Rc<ty::Ty>],
     ir_functions_ty: &[ir::FunctionTy],
 ) -> (Rc<ty::Ty>, Expression) {
     match expression {
@@ -286,7 +355,8 @@ fn translate_expression(
                                 function,
                                 call,
                                 &mut unifications,
-                                variables_ty,
+                                local_variables_ty,
+                                global_variables_ty,
                                 ir_functions_ty,
                             )
                         },
@@ -303,16 +373,22 @@ fn translate_expression(
                 todo!("{}", candidates.len());
             }
         }
-        ir::Expression::Variable(storage, index) => (
-            Rc::new(ty::Ty::Application {
-                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
-                arguments: Rc::new(ty::Ty::Cons {
-                    head: variables_ty[*index].clone(),
-                    tail: Rc::new(ty::Ty::Nil),
+        ir::Expression::Variable(storage, index) => {
+            let ty = match storage {
+                ir::Storage::Local => local_variables_ty[*index].clone(),
+                ir::Storage::Global => global_variables_ty[*index].clone(),
+            };
+            (
+                Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
+                    arguments: Rc::new(ty::Ty::Cons {
+                        head: ty,
+                        tail: Rc::new(ty::Ty::Nil),
+                    }),
                 }),
-            }),
-            Expression::Variable(*storage, *index),
-        ),
+                Expression::Variable(*storage, *index),
+            )
+        }
     }
 }
 
@@ -320,7 +396,8 @@ fn translate_call(
     (function_ty, function): (Rc<ty::Ty>, Expression),
     call: &ir::Call,
     unifications: &mut ty::Unifications,
-    variables_ty: &[Rc<ty::Ty>],
+    local_variables_ty: &[Rc<ty::Ty>],
+    global_variables_ty: &[Rc<ty::Ty>],
     ir_functions_ty: &[ir::FunctionTy],
 ) -> Option<(Rc<ty::Ty>, Expression)> {
     let ty::Ty::Application {
@@ -355,7 +432,14 @@ fn translate_call(
     let arguments: Vec<_> = call
         .arguments
         .iter()
-        .map(|argument| translate_expression(&argument, variables_ty, ir_functions_ty))
+        .map(|argument| {
+            translate_expression(
+                &argument,
+                local_variables_ty,
+                global_variables_ty,
+                ir_functions_ty,
+            )
+        })
         .collect();
     let mut min_order = 0;
     let mut max_order = 0;
@@ -518,6 +602,7 @@ enum Expression {
     Dereference(Rc<ty::Ty>),
     Identity(Rc<ty::Ty>),
     Delete(Rc<ty::Ty>),
+    Assign(Rc<ty::Ty>),
     Compile {
         expression: Box<Expression>,
         parameters_ty: Vec<Rc<ty::Ty>>,
