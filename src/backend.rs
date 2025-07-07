@@ -20,7 +20,6 @@
  * Receives intermediate representation ([`ir`]) and executes it.
  */
 
-use crate::ffi::create_integer;
 use crate::{ffi, ir};
 
 mod tests;
@@ -100,7 +99,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
         for (block_index, block) in definition.body_rev.into_iter().rev().enumerate() {
             unsafe {
                 ffi::set_insert_point(context, block_index);
-                ffi::add_return(context, create_integer(42));
+                block.codegen(context);
             }
         }
         if function_index == num_definitions - 1 {
@@ -474,49 +473,41 @@ fn translate_call(
     let mut min_order = 0;
     let mut max_order = 0;
     let mut inequalities = Vec::new();
+
+    let mut ty_variable_indices = HashMap::new();
     for ((argument_ty, _), parameter_ty) in arguments.iter().zip(&parameters_ty) {
         let (argument_return_ty, argument_depth) = argument_ty.extract_function_ty();
+        let argument_ret = match argument_return_ty {
+            Some(ptr) => {
+                let next_index = ty_variable_indices.len() + 1;
+                *ty_variable_indices.entry(ptr).or_insert(next_index)
+            }
+            None => 0,
+        };
         let (parameter_return_ty, parameter_depth) = parameter_ty.extract_function_ty();
+        let parameter_ret = match parameter_return_ty {
+            Some(ptr) => {
+                let next_index = ty_variable_indices.len() + 1;
+                *ty_variable_indices.entry(ptr).or_insert(next_index)
+            }
+            None => 0,
+        };
         let gap = argument_depth - parameter_depth;
-        inequalities.push((argument_return_ty, parameter_return_ty, gap));
+        inequalities.push(Inequality {
+            actual_argument: argument_ret,
+            formal_parameter: parameter_ret,
+            gap,
+        });
         max_order += gap.abs();
     }
-    let get_depths = |order| {
-        let mut depths = HashMap::new();
-        depths.insert(None, Some(0));
-        for (argument_return_ty, parameter_return_ty, _) in &inequalities {
-            if let Some(argument_return_ty) = argument_return_ty {
-                depths.insert(Some(Rc::as_ptr(argument_return_ty)), None);
-            }
-            if let Some(parameter_return_ty) = parameter_return_ty {
-                depths.insert(Some(Rc::as_ptr(parameter_return_ty)), None);
-            }
-        }
-        for _ in 0..depths.len() {
-            let mut updated = false;
-            for (argument, parameter, diff) in &inequalities {
-                let Some(argument_depth) = depths[&argument.as_ref().map(Rc::as_ptr)] else {
-                    continue;
-                };
-                let new_parameter_depth = argument_depth + diff + order;
-                let parameter_depth = depths.get_mut(&parameter.as_ref().map(Rc::as_ptr)).unwrap();
-                if parameter_depth.is_none_or(|depth| depth > new_parameter_depth) {
-                    *parameter_depth = Some(new_parameter_depth);
-                    updated = true;
-                }
-            }
-            if !updated {
-                return Some(depths);
-            }
-        }
-        None
-    };
-    let Some(mut depths) = get_depths(max_order) else {
+    let num_ty_variables = ty_variable_indices.len();
+    drop(ty_variable_indices);
+    let Some(mut depths) = get_depths(&inequalities, num_ty_variables, max_order) else {
         return None;
     };
     while min_order < max_order - 1 {
         let mid_order = (min_order + max_order) / 2;
-        match get_depths(mid_order) {
+        match get_depths(&inequalities, num_ty_variables, mid_order) {
             Some(new_depths) => {
                 max_order = mid_order;
                 depths = new_depths;
@@ -528,16 +519,18 @@ fn translate_call(
     }
 
     let nums_extra_calls: Option<Vec<_>> = inequalities
-        .iter()
-        .map(|(argument_ty, parameter_ty, diff)| {
-            let Some(argument_depth) = depths[&argument_ty.as_ref().map(Rc::as_ptr)] else {
-                return None;
-            };
-            let Some(parameter_depth) = depths[&parameter_ty.as_ref().map(Rc::as_ptr)] else {
-                return None;
-            };
-            (diff + argument_depth - parameter_depth).try_into().ok()
-        })
+        .into_iter()
+        .map(
+            |Inequality {
+                 actual_argument,
+                 formal_parameter,
+                 gap,
+             }| {
+                let argument_depth = depths[actual_argument];
+                let parameter_depth = depths[formal_parameter];
+                (gap + argument_depth - parameter_depth).try_into().ok()
+            },
+        )
         .collect();
     let Some(nums_extra_calls) = nums_extra_calls else {
         return None;
@@ -583,7 +576,13 @@ fn translate_call(
             },
         )),
         1 => Some((
-            return_ty.clone(),
+            Rc::new(ty::Ty::Application {
+                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                arguments: Rc::new(ty::Ty::Cons {
+                    head: return_ty.clone(),
+                    tail: extra_calls[0].clone(),
+                }),
+            }),
             Expression::App {
                 function: Box::new(function),
                 arguments: arguments
@@ -594,6 +593,53 @@ fn translate_call(
         )),
         _ => todo!(),
     }
+}
+
+#[derive(Debug)]
+struct Inequality {
+    actual_argument: usize,
+    formal_parameter: usize,
+    gap: i32,
+}
+
+fn get_depths(inequalities: &[Inequality], num_vars: usize, max_order: i32) -> Option<Vec<i32>> {
+    let mut depths = vec![None; num_vars + 1];
+    depths[0] = Some(0);
+    for _ in 0..=num_vars {
+        let mut updated = false;
+        for &Inequality {
+            actual_argument,
+            formal_parameter,
+            gap,
+        } in inequalities
+        {
+            match (depths[actual_argument], depths[formal_parameter]) {
+                (None, None) => {}
+                (Some(argument_depth), None) => {
+                    depths[formal_parameter] = Some(argument_depth + gap);
+                    updated = true;
+                }
+                (None, Some(parameter_depth)) => {
+                    depths[actual_argument] = Some(parameter_depth - gap + max_order);
+                    updated = true;
+                }
+                (Some(argument_depth), Some(parameter_depth)) => {
+                    if parameter_depth < argument_depth + gap {
+                        depths[formal_parameter] = Some(argument_depth + gap);
+                        updated = true;
+                    }
+                    if argument_depth < parameter_depth - gap + max_order {
+                        depths[actual_argument] = Some(parameter_depth - gap + max_order);
+                        updated = true;
+                    }
+                }
+            }
+        }
+        if !updated {
+            return Some(depths.into_iter().map(Option::unwrap).collect());
+        }
+    }
+    None
 }
 
 #[cfg_attr(test, derive(Serialize))]
@@ -610,6 +656,15 @@ struct FunctionDefinition {
 struct Block {
     expressions: Vec<Expression>,
     next: Next,
+}
+
+impl Block {
+    unsafe fn codegen(&self, context: *mut ffi::Context) {
+        for expression in &self.expressions {
+            unsafe { ffi::add_expression(context, expression.codegen()) };
+        }
+        unsafe { ffi::add_return(context, ffi::create_integer(42)) }
+    }
 }
 
 #[cfg_attr(test, derive(Serialize))]
@@ -642,4 +697,18 @@ enum Expression {
         function: Box<Expression>,
         arguments: Vec<Expression>,
     },
+}
+
+impl Expression {
+    unsafe fn codegen(&self) -> *const ffi::Expression {
+        match *self {
+            Expression::Integer(value) => unsafe { ffi::create_integer(value) },
+            Expression::Variable(storage, index) => unsafe { ffi::create_integer(0) },
+            Expression::App {
+                ref function,
+                ref arguments,
+            } => unsafe { ffi::create_integer(0) },
+            _ => todo!(),
+        }
+    }
 }
