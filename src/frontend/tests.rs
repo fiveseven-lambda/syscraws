@@ -59,3 +59,8 @@ fn test_break() {
 fn test_print() {
     test("tests/frontend/print");
 }
+
+#[test]
+fn test_return() {
+    test("tests/frontend/return");
+}
