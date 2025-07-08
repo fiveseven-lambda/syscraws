@@ -134,6 +134,10 @@ pub enum Statement {
     },
     Break(Vec<Expression>),
     Continue(Vec<Expression>),
+    Return {
+        antecedents: Vec<Expression>,
+        value: Expression,
+    },
 }
 
 #[cfg_attr(test, derive(Serialize))]

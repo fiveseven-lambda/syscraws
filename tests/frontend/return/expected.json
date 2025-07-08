@@ -1,0 +1,95 @@
+{
+  "function_definitions": [
+    {
+      "body": {
+        "size": 2,
+        "statements": [
+          {
+            "Return": {
+              "antecedents": [
+                {
+                  "Function": {
+                    "candidates": [
+                      "Delete"
+                    ],
+                    "calls": [
+                      {
+                        "arguments": [
+                          {
+                            "Variable": [
+                              "Global",
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ],
+              "value": {
+                "Function": {
+                  "candidates": [
+                    "Dereference"
+                  ],
+                  "calls": [
+                    {
+                      "arguments": [
+                        {
+                          "Variable": [
+                            "Global",
+                            0
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "Expressions": [
+              {
+                "Function": {
+                  "candidates": [
+                    "Delete"
+                  ],
+                  "calls": [
+                    {
+                      "arguments": [
+                        {
+                          "Variable": [
+                            "Global",
+                            0
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "num_local_variables": 0
+    }
+  ],
+  "functions_ty": [
+    {
+      "num_ty_parameters": 0,
+      "parameters_ty": [],
+      "return_ty": {
+        "Application": {
+          "arguments": [],
+          "constructor": {
+            "Constructor": "Tuple"
+          }
+        }
+      }
+    }
+  ],
+  "num_global_variables": 1,
+  "structures": []
+}
