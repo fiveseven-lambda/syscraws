@@ -503,6 +503,19 @@ impl Context {
                 variables.free(num_outer_variables, builder);
                 builder.add_continue();
             }
+            ast::Statement::Return { value } => {
+                let value = match value {
+                    Some(value) => {
+                        match self.translate_term(value, false, exports, files, logger) {
+                            Ok(Term::Expression(value)) => value,
+                            _ => todo!(),
+                        }
+                    }
+                    None => todo!(),
+                };
+                variables.free(0, builder);
+                builder.add_return(value);
+            }
         }
     }
 

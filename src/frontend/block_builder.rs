@@ -75,6 +75,13 @@ impl BlockBuilder {
         self.block.size += 1;
         self.block.statements.push(Statement::Continue(antecedents));
     }
+    pub fn add_return(&mut self, value: Expression) {
+        let antecedents = std::mem::take(&mut self.expressions);
+        self.block.size += 1;
+        self.block
+            .statements
+            .push(Statement::Return { antecedents, value });
+    }
     pub fn finish(mut self) -> Block {
         if !self.expressions.is_empty() {
             self.block

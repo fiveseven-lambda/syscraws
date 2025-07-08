@@ -504,6 +504,10 @@ impl Parser<'_, '_> {
             Ok(Some(ast::Statement::Break))
         } else if let Some(Token::KeywordContinue) = self.current.token {
             Ok(Some(ast::Statement::Continue))
+        } else if let Some(Token::KeywordReturn) = self.current.token {
+            self.consume_token()?;
+            let value = self.parse_assign(false)?;
+            Ok(Some(ast::Statement::Return { value }))
         } else if let Some(term) = self.parse_assign(false)? {
             Ok(Some(ast::Statement::Term(term)))
         } else {

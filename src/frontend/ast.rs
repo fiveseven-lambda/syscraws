@@ -256,6 +256,9 @@ pub enum Statement {
     },
     Break,
     Continue,
+    Return {
+        value: Option<TermWithPos>,
+    },
 }
 
 /**
