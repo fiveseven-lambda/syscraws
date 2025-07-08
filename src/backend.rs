@@ -214,6 +214,32 @@ fn translate_block(
                 });
                 next = Some(condition_index);
             }
+            ir::Statement::Return {
+                antecedents: ir_antecedents,
+                value: ir_value,
+            } => {
+                let (value_ty, value) = translate_expression(
+                    ir_value,
+                    local_variables_ty,
+                    global_variables_ty,
+                    ir_functions_ty,
+                );
+                blocks.push(Block {
+                    expressions: ir_antecedents
+                        .iter()
+                        .map(|ir_expression| {
+                            translate_expression(
+                                ir_expression,
+                                local_variables_ty,
+                                global_variables_ty,
+                                ir_functions_ty,
+                            )
+                            .1
+                        })
+                        .collect(),
+                    next: Next::Return(value),
+                });
+            }
             _ => todo!(),
         }
     }
@@ -663,7 +689,12 @@ impl Block {
         for expression in &self.expressions {
             unsafe { ffi::add_expression(context, expression.codegen()) };
         }
-        unsafe { ffi::add_return(context, ffi::create_integer(42)) }
+        match self.next {
+            Next::Return(ref value) => {
+                unsafe { ffi::add_return(context, value.codegen()) };
+            }
+            _ => todo!(),
+        }
     }
 }
 
@@ -671,6 +702,7 @@ impl Block {
 enum Next {
     Jump(Option<usize>),
     Br(Expression, Option<usize>, Option<usize>),
+    Return(Expression),
 }
 
 #[cfg_attr(test, derive(Serialize))]
