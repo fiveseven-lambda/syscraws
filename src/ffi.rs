@@ -63,5 +63,5 @@ unsafe extern "C" {
     pub fn create_parameter(index: usize) -> *const Expression;
     pub fn create_integer(value: c_int) -> *const Expression;
     pub fn create_size(value: usize) -> *const Expression;
-    pub fn create_app(value: usize) -> *const Expression;
+    pub fn create_app(function: *const Expression, num_arguments: usize, ...) -> *const Expression;
 }

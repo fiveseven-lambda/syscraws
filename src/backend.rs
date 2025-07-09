@@ -375,6 +375,22 @@ fn translate_function(
                 Expression::Assign(ty),
             )
         }
+        ir::Function::Print => (
+            Rc::new(ty::Ty::Application {
+                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                arguments: Rc::new(ty::Ty::Cons {
+                    head: Rc::new(ty::Ty::Application {
+                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
+                        arguments: Rc::new(ty::Ty::Nil),
+                    }),
+                    tail: Rc::new(ty::Ty::Cons {
+                        head: Rc::new(ty::Ty::Var(Rc::new(RefCell::new(ty::Var::Unassigned(0))))),
+                        tail: Rc::new(ty::Ty::Nil),
+                    }),
+                }),
+            }),
+            Expression::Print,
+        ),
         _ => todo!(),
     }
 }
@@ -720,6 +736,7 @@ enum Expression {
     Identity(Rc<ty::Ty>),
     Delete(Rc<ty::Ty>),
     Assign(Rc<ty::Ty>),
+    Print,
     Compile {
         expression: Box<Expression>,
         parameters_ty: Vec<Rc<ty::Ty>>,
@@ -739,7 +756,11 @@ impl Expression {
             Expression::App {
                 ref function,
                 ref arguments,
-            } => unsafe { ffi::create_integer(0) },
+            } => match arguments.len() {
+                0 => unsafe { ffi::create_app(function.codegen(), 0) },
+                1 => unsafe { ffi::create_app(function.codegen(), 1, arguments[0].codegen()) },
+                _ => todo!(),
+            },
             _ => todo!(),
         }
     }

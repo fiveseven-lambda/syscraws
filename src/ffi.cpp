@@ -96,6 +96,19 @@ Integer::codegen(llvm::IRBuilderBase &builder,
   return llvm::ConstantInt::get(integer_type, value);
 }
 
+  App::App(const Expression *function, std::vector<const Expression *>arguments):
+  function(function), arguments(arguments) {}
+
+llvm::Value *
+App::codegen(llvm::IRBuilderBase &builder,
+                 const std::vector<llvm::Value *> &parameters) const {
+  std::vector<llvm::Value *> intermediates;
+  for (const Expression *argument : arguments) {
+    intermediates.push_back(argument->codegen(builder, parameters));
+  }
+  return function->codegen(builder, intermediates);
+                 }
+
 extern "C" void initialize_jit() {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
@@ -182,4 +195,17 @@ extern "C" const Type *get_function_type(bool is_variadic,
 
 extern "C" const Expression *create_integer(int value) {
   return new Integer(value);
+}
+
+extern "C" const Expression *create_app(const Expression *function, std::size_t num_arguments, ...) {
+  std::va_list va_list;
+  va_start(va_list, num_arguments);
+  std::vector<const Expression *> arguments;
+  for (std::size_t argument_index = 0; argument_index < num_arguments;
+       argument_index++) {
+    arguments.push_back(va_arg(va_list, const Expression *));
+  }
+  va_end(va_list);
+
+  return new App(function, arguments);
 }

@@ -123,13 +123,13 @@ public:
 };
 
 class App : public Expression {
-  Expression *function;
-  std::vector<Expression *> arguments;
+  const Expression *function;
+  std::vector<const Expression *> arguments;
   llvm::Value *codegen(llvm::IRBuilderBase &,
                        const std::vector<llvm::Value *> &) const override;
 
 public:
-  App(Expression *, std::vector<Expression *>);
+  App(const Expression *, std::vector<const Expression *>);
 };
 
 class AddInteger : public Expression {
