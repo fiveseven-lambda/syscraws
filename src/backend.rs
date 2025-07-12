@@ -83,14 +83,12 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             .push(FunctionDefinition { body_rev });
     }
     unsafe { ffi::initialize_jit() };
-    let context = unsafe { ffi::create_context() };
     let num_definitions = program.function_definitions.len();
     for (function_index, definition) in program.function_definitions.into_iter().enumerate() {
         let function_name = CString::new(format!("{}", function_index)).unwrap();
         unsafe {
             let function_type = ffi::get_function_type(false, ffi::get_integer_type(), 0);
             ffi::add_function(
-                context,
                 function_name.as_ptr(),
                 function_type,
                 definition.body_rev.len(),
@@ -98,15 +96,12 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
         }
         for (block_index, block) in definition.body_rev.into_iter().rev().enumerate() {
             unsafe {
-                ffi::set_insert_point(context, block_index);
-                block.codegen(context);
+                ffi::set_insert_point(block_index);
+                block.codegen();
             }
         }
         if function_index == num_definitions - 1 {
-            let pointer = unsafe { ffi::compile_function(context, function_name.as_ptr()) };
-            unsafe {
-                ffi::delete_context(context);
-            }
+            let pointer = unsafe { ffi::compile_function(function_name.as_ptr()) };
             return Ok(pointer);
         }
     }
@@ -701,13 +696,13 @@ struct Block {
 }
 
 impl Block {
-    unsafe fn codegen(&self, context: *mut ffi::Context) {
+    unsafe fn codegen(&self) {
         for expression in &self.expressions {
-            unsafe { ffi::add_expression(context, expression.codegen()) };
+            unsafe { expression.codegen() };
         }
         match self.next {
             Next::Return(ref value) => {
-                unsafe { ffi::add_return(context, value.codegen()) };
+                unsafe { ffi::create_return(value.codegen()) };
             }
             _ => todo!(),
         }
@@ -749,7 +744,7 @@ enum Expression {
 }
 
 impl Expression {
-    unsafe fn codegen(&self) -> *const ffi::Expression {
+    unsafe fn codegen(&self) -> *mut ffi::Value {
         match *self {
             Expression::Integer(value) => unsafe { ffi::create_integer(value) },
             Expression::Variable(storage, index) => unsafe { ffi::create_integer(0) },
@@ -757,8 +752,6 @@ impl Expression {
                 ref function,
                 ref arguments,
             } => match arguments.len() {
-                0 => unsafe { ffi::create_app(function.codegen(), 0) },
-                1 => unsafe { ffi::create_app(function.codegen(), 1, arguments[0].codegen()) },
                 _ => todo!(),
             },
             _ => todo!(),

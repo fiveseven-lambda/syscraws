@@ -19,26 +19,11 @@
 #ifndef FFI_HPP
 #define FFI_HPP
 
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/ConstantFolder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include <memory>
-#include <unordered_set>
 #include <vector>
-
-struct Context {
-  std::unique_ptr<llvm::LLVMContext> llvm_context;
-  llvm::IRBuilder<llvm::ConstantFolder, llvm::IRBuilderDefaultInserter> builder;
-  std::unique_ptr<llvm::Module> module;
-  std::vector<llvm::BasicBlock *> basic_blocks;
-
-public:
-  Context();
-};
 
 class Type {
 public:
@@ -78,14 +63,6 @@ public:
   struct Hasher {
     std::size_t operator()(const FunctionType &) const;
   };
-};
-
-struct TypeContext {
-  BooleanType boolean_type;
-  IntegerType integer_type;
-  SizeType size_type;
-  StringType string_type;
-  std::unordered_set<FunctionType, FunctionType::Hasher> function_types;
 };
 
 class Expression {
@@ -159,23 +136,21 @@ public:
 
 extern "C" {
 void initialize_jit();
-Context *create_context();
-void add_function(Context *, const char *, const Type *, std::size_t);
-void set_insert_point(Context *, std::size_t);
-void add_expression(Context *, const Expression *);
-void add_return(Context *, const Expression *);
-void *compile_function(Context *, const char *);
-void delete_context(Context *);
+void add_function(const char *, const Type *, std::size_t);
+void set_insert_point(std::size_t);
+llvm::Value *create_integer(int);
+void create_return(llvm::Value *);
+void *compile_function(const char *);
 const Type *get_boolean_type();
 const Type *get_integer_type();
 const Type *get_size_type();
 const Type *get_string_type();
 const Type *get_function_type(bool, const Type *, std::size_t, ...);
-const Expression *create_parameter(std::size_t);
-const Expression *create_integer(int);
-const Expression *create_size(std::size_t);
-const Expression *create_app(const Expression *, std::size_t, ...);
-const Expression *create_add_integer();
+const Expression *new_parameter(std::size_t);
+const Expression *new_integer(int);
+const Expression *new_size(std::size_t);
+const Expression *new_app(const Expression *, std::size_t, ...);
+const Expression *new_add_integer();
 void *compile_expression(const Expression *, const Type *);
 }
 

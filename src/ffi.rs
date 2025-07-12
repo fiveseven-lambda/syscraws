@@ -19,7 +19,7 @@
 use std::ffi::{c_char, c_int};
 
 #[repr(C)]
-pub struct Context {
+pub struct Value {
     _private: [u8; 0],
 }
 
@@ -28,28 +28,17 @@ pub struct Type {
     _private: [u8; 0],
 }
 
-#[repr(C)]
-pub struct Expression {
-    _private: [u8; 0],
-}
-
 unsafe extern "C" {
     pub fn initialize_jit();
-    pub fn create_context() -> *mut Context;
     pub fn add_function(
-        context: *mut Context,
         function_name: *const c_char,
         function_type: *const Type,
         num_blocks: usize,
     );
-    pub fn set_insert_point(context: *mut Context, block_index: usize);
-    pub fn add_expression(context: *mut Context, expression: *const Expression);
-    pub fn add_return(context: *mut Context, expression: *const Expression);
-    pub fn compile_function(
-        context: *mut Context,
-        function_name: *const c_char,
-    ) -> unsafe extern "C" fn() -> u8;
-    pub fn delete_context(context: *mut Context);
+    pub fn set_insert_point(block_index: usize);
+    pub fn create_integer(value: c_int) -> *mut Value;
+    pub fn create_return(value: *mut Value);
+    pub fn compile_function(function_name: *const c_char) -> unsafe extern "C" fn() -> u8;
     pub fn get_boolean_type() -> *const Type;
     pub fn get_integer_type() -> *const Type;
     pub fn get_size_type() -> *const Type;
@@ -60,8 +49,4 @@ unsafe extern "C" {
         num_parameters: usize,
         ...
     ) -> *const Type;
-    pub fn create_parameter(index: usize) -> *const Expression;
-    pub fn create_integer(value: c_int) -> *const Expression;
-    pub fn create_size(value: usize) -> *const Expression;
-    pub fn create_app(function: *const Expression, num_arguments: usize, ...) -> *const Expression;
 }

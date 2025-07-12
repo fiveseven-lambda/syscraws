@@ -19,18 +19,35 @@
 #include "ffi.hpp"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/ConstantFolder.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include <boost/functional/hash.hpp>
 #include <cstdarg>
+#include <memory>
+#include <unordered_set>
 
 static llvm::ExitOnError exit_on_error;
 
-static std::unique_ptr<llvm::orc::LLJIT> jit;
+static BooleanType boolean_type;
+static IntegerType integer_type;
+static SizeType size_type;
+static StringType string_type;
+static std::unordered_set<FunctionType, FunctionType::Hasher> function_types;
 
-static TypeContext global_type_context;
+static std::unique_ptr<llvm::LLVMContext> llvm_context =
+    std::make_unique<llvm::LLVMContext>();
+static llvm::IRBuilder<llvm::ConstantFolder, llvm::IRBuilderDefaultInserter>
+    ir_builder(*llvm_context);
+static std::unique_ptr<llvm::Module> main_module =
+    std::make_unique<llvm::Module>("", *llvm_context);
+static std::vector<llvm::BasicBlock *> basic_blocks;
+static std::unique_ptr<llvm::orc::LLJIT> jit;
 
 Type::~Type() = default;
 
@@ -80,10 +97,6 @@ FunctionType::Hasher::operator()(const FunctionType &function_type) const {
   return seed;
 }
 
-Context::Context()
-    : llvm_context(new llvm::LLVMContext), builder(*llvm_context),
-      module(new llvm::Module("", *llvm_context)) {}
-
 Expression::~Expression() = default;
 
 Integer::Integer(int value) : value(value) {}
@@ -96,18 +109,17 @@ Integer::codegen(llvm::IRBuilderBase &builder,
   return llvm::ConstantInt::get(integer_type, value);
 }
 
-  App::App(const Expression *function, std::vector<const Expression *>arguments):
-  function(function), arguments(arguments) {}
+App::App(const Expression *function, std::vector<const Expression *> arguments)
+    : function(function), arguments(arguments) {}
 
-llvm::Value *
-App::codegen(llvm::IRBuilderBase &builder,
-                 const std::vector<llvm::Value *> &parameters) const {
+llvm::Value *App::codegen(llvm::IRBuilderBase &builder,
+                          const std::vector<llvm::Value *> &parameters) const {
   std::vector<llvm::Value *> intermediates;
   for (const Expression *argument : arguments) {
     intermediates.push_back(argument->codegen(builder, parameters));
   }
   return function->codegen(builder, intermediates);
-                 }
+}
 
 extern "C" void initialize_jit() {
   llvm::InitializeNativeTarget();
@@ -121,60 +133,59 @@ extern "C" void initialize_jit() {
   jit->getMainJITDylib().addGenerator(std::move(generator));
 }
 
-extern "C" Context *create_context() { return new Context; }
-
-extern "C" void add_function(Context *context, const char *function_name,
+extern "C" void add_function(const char *function_name,
                              const Type *function_type,
                              std::size_t num_blocks) {
   llvm::FunctionType *llvm_function_type = llvm::dyn_cast<llvm::FunctionType>(
-      function_type->into_llvm_type(*context->llvm_context));
+      function_type->into_llvm_type(*llvm_context));
   llvm::Function *function = llvm::Function::Create(
       llvm_function_type, llvm::Function::ExternalLinkage, function_name,
-      *context->module);
-  context->basic_blocks = std::vector<llvm::BasicBlock *>();
+      *main_module);
+  basic_blocks = std::vector<llvm::BasicBlock *>();
   for (std::size_t block_index = 0; block_index < num_blocks; block_index++) {
-    context->basic_blocks.push_back(
-        llvm::BasicBlock::Create(*context->llvm_context, "", function));
+    basic_blocks.push_back(
+        llvm::BasicBlock::Create(*llvm_context, "", function));
   }
 }
 
-extern "C" void set_insert_point(Context *context, std::size_t block_index) {
-  context->builder.SetInsertPoint(context->basic_blocks[block_index]);
+extern "C" void set_insert_point(std::size_t block_index) {
+  ir_builder.SetInsertPoint(basic_blocks[block_index]);
 }
 
-extern "C" void add_expression(Context *context, const Expression *expression) {
-  expression->codegen(context->builder, {});
+extern "C" llvm::Value *create_integer(int value) {
+  llvm::Type *integer_type =
+      get_integer_type()->into_llvm_type(ir_builder.getContext());
+  return llvm::ConstantInt::get(integer_type, value);
 }
 
-extern "C" void add_return(Context *context, const Expression *expression) {
-  llvm::Value *value = expression->codegen(context->builder, {});
-  context->builder.CreateRet(value);
+extern "C" void create_return(llvm::Value *value) {
+  ir_builder.CreateRet(value);
 }
 
-extern "C" void *compile_function(Context *context, const char *function_name) {
-  // context->module->print(llvm::outs(), nullptr);
+extern "C" void add_expression(const Expression *expression) {
+  expression->codegen(ir_builder, {});
+}
+
+extern "C" void add_return(const Expression *expression) {
+  llvm::Value *value = expression->codegen(ir_builder, {});
+  ir_builder.CreateRet(value);
+}
+
+extern "C" void *compile_function(const char *function_name) {
+  // main_module->print(llvm::outs(), nullptr);
   exit_on_error(jit->addIRModule(llvm::orc::ThreadSafeModule(
-      std::move(context->module), std::move(context->llvm_context))));
-  return exit_on_error(jit->lookup(function_name)).toPtr<void *>();
+      std::move(main_module), std::move(llvm_context))));
+  llvm::orc::ExecutorAddr addr = exit_on_error(jit->lookup(function_name));
+  return addr.toPtr<void *>();
 }
 
-extern "C" void delete_context(Context *context) { delete context; }
+extern "C" const Type *get_boolean_type() { return &boolean_type; }
 
-extern "C" const Type *get_boolean_type() {
-  return &global_type_context.boolean_type;
-}
+extern "C" const Type *get_integer_type() { return &integer_type; }
 
-extern "C" const Type *get_integer_type() {
-  return &global_type_context.integer_type;
-}
+extern "C" const Type *get_size_type() { return &size_type; }
 
-extern "C" const Type *get_size_type() {
-  return &global_type_context.size_type;
-}
-
-extern "C" const Type *get_string_type() {
-  return &global_type_context.string_type;
-}
+extern "C" const Type *get_string_type() { return &string_type; }
 
 extern "C" const Type *get_function_type(bool is_variadic,
                                          const Type *return_type,
@@ -188,16 +199,16 @@ extern "C" const Type *get_function_type(bool is_variadic,
   }
   va_end(va_list);
 
-  return &*global_type_context.function_types
-               .emplace(is_variadic, return_type, parameters_type)
+  return &*function_types.emplace(is_variadic, return_type, parameters_type)
                .first;
 }
 
-extern "C" const Expression *create_integer(int value) {
+extern "C" const Expression *new_integer(int value) {
   return new Integer(value);
 }
 
-extern "C" const Expression *create_app(const Expression *function, std::size_t num_arguments, ...) {
+extern "C" const Expression *new_app(const Expression *function,
+                                     std::size_t num_arguments, ...) {
   std::va_list va_list;
   va_start(va_list, num_arguments);
   std::vector<const Expression *> arguments;
