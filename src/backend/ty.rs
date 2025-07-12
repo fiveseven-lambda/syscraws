@@ -215,7 +215,7 @@ impl Ty {
         }
     }
 
-    pub fn extract_function_ty(self: &Rc<Ty>) -> (Option<Rc<RefCell<Var>>>, i32) {
+    pub fn extract_function_ty(self: &Rc<Ty>) -> (Option<*const Var>, i32) {
         match self.as_ref() {
             Ty::Application {
                 constructor,
@@ -235,7 +235,7 @@ impl Ty {
             },
             Ty::Var(var) => match *var.borrow() {
                 Var::Assigned(ref ty) => ty.extract_function_ty(),
-                Var::Unassigned(_) => (Some(var.clone()), 0),
+                Var::Unassigned(_) => (Some(var.as_ptr()), 0),
             },
             _ => (None, 0),
         }
