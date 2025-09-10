@@ -75,7 +75,7 @@ fn test(dir: impl AsRef<Path>) {
             None,
             &local_variables_ty,
             &global_variables_ty,
-            &ir_program.functions_ty,
+            &ir_program.function_tys,
         );
 
         program

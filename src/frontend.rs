@@ -56,11 +56,12 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         num_functions: 0,
         ir_program: ir::Program {
             structures: Vec::new(),
-            functions_ty: Vec::new(),
+            function_tys: Vec::new(),
             function_definitions: Vec::new(),
             num_global_variables: 0,
         },
         global_builder: BlockBuilder::new(),
+        global_overloads: Vec::new(),
         global_variables: Variables::new(ir::Storage::Global),
         exports: Vec::new(),
         files: Vec::new(),
@@ -74,11 +75,13 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         logger.aborting();
         return Err(());
     }
-    reader.global_variables.free(0, &mut reader.global_builder);
+    reader
+        .global_variables
+        .free(0, &mut reader.global_builder, &mut reader.global_overloads);
     let body = reader.global_builder.finish();
-    reader.ir_program.functions_ty.push(ir::FunctionTy {
+    reader.ir_program.function_tys.push(ir::FunctionTy {
         num_ty_parameters: 0,
-        parameters_ty: Vec::new(),
+        parameter_tys: Vec::new(),
         return_ty: ir::Ty::Application {
             constructor: Box::new(ir::Ty::Constructor(ir::TyConstructor::Tuple)),
             arguments: vec![],
@@ -90,6 +93,7 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         .push(ir::FunctionDefinition {
             num_local_variables: 0,
             body,
+            overloads: reader.global_overloads,
         });
     reader.ir_program.num_global_variables = reader.global_variables.num_total();
     Ok(reader.ir_program)
@@ -117,6 +121,10 @@ struct Reader {
      * Holds the global statements, which are later added as a single entry-point function.
      */
     global_builder: BlockBuilder,
+    /**
+     * Function overloads in global statements.
+     */
+    global_overloads: Vec<Vec<ir::Function>>,
     /**
      * List of global variables alive.
      * Variables in a block (e.g. if) are removed at the end of the block.
@@ -275,7 +283,7 @@ impl Reader {
                         &self.files,
                         logger,
                     ) {
-                        self.ir_program.functions_ty.push(ty);
+                        self.ir_program.function_tys.push(ty);
                         self.ir_program.function_definitions.push(definition);
                     }
                     assert_eq!(context.items.len(), num_current_items);
@@ -284,6 +292,7 @@ impl Reader {
                     context.translate_statement(
                         statement,
                         &mut self.global_builder,
+                        &mut self.global_overloads,
                         &mut self.global_variables,
                         0,
                         &self.exports,

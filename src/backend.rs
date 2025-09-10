@@ -75,7 +75,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             None,
             &local_variables_ty,
             &global_variables_ty,
-            &ir_program.functions_ty,
+            &ir_program.function_tys,
         );
 
         program
@@ -256,7 +256,7 @@ fn translate_function(
                     constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
                     arguments: Rc::new(ty::Ty::Cons {
                         head: translate_ty(&ir_function_ty.return_ty, &ty_parameters),
-                        tail: translate_tys(&ir_function_ty.parameters_ty, &ty_parameters),
+                        tail: translate_tys(&ir_function_ty.parameter_tys, &ty_parameters),
                     }),
                 }),
                 Expression::Function {
@@ -409,35 +409,11 @@ fn translate_expression(
             Rc::new(ty::Ty::Constructor(ir::TyConstructor::String)),
             Expression::String(value.clone()),
         ),
-        ir::Expression::Function { candidates, calls } => {
-            let candidates: Vec<_> = candidates
-                .into_iter()
-                .filter_map(|ir_function| {
-                    let mut unifications = ty::Unifications::new();
-                    let ret = calls.iter().try_fold(
-                        translate_function(&ir_function, ir_functions_ty),
-                        |function, call| {
-                            translate_call(
-                                function,
-                                call,
-                                &mut unifications,
-                                local_variables_ty,
-                                global_variables_ty,
-                                ir_functions_ty,
-                            )
-                        },
-                    );
-                    let undo = unifications.undo();
-                    ret.map(|ret| (ret, undo))
-                })
-                .collect();
-            if candidates.len() == 1 {
-                let (ret, undo) = candidates.into_iter().next().unwrap();
-                undo.undo();
-                ret
-            } else {
-                todo!("{}", candidates.len());
-            }
+        ir::Expression::Function {
+            overload_index,
+            calls,
+        } => {
+            todo!();
         }
         ir::Expression::Variable(storage, index) => {
             let ty = match storage {

@@ -102,9 +102,10 @@ impl Variables {
         &mut self,
         len: usize,
         builder: &mut BlockBuilder,
+        overloads: &mut Vec<Vec<ir::Function>>,
         context: &mut Context,
     ) {
-        self.free(len, builder);
+        self.free(len, builder, overloads);
         for (name, index) in self.name_and_indices.split_off(len) {
             match context.items.remove(&name).unwrap() {
                 (_, Item::Variable(s, i)) => {
@@ -122,11 +123,18 @@ impl Variables {
      * It is used when control flow exits a block early,
      * such as in a `break` or `continue` statement.
      */
-    pub fn free(&mut self, len: usize, builder: &mut BlockBuilder) {
+    pub fn free(
+        &mut self,
+        len: usize,
+        builder: &mut BlockBuilder,
+        overloads: &mut Vec<Vec<ir::Function>>,
+    ) {
         for &(_, index) in self.name_and_indices[len..].iter().rev() {
             let expr = ir::Expression::Variable(self.storage, index);
+            let overload_index = overloads.len();
+            overloads.push(vec![ir::Function::Delete]);
             builder.add_expression(ir::Expression::Function {
-                candidates: vec![ir::Function::Delete],
+                overload_index,
                 calls: vec![ir::Call {
                     arguments: vec![expr],
                 }],

@@ -27,7 +27,7 @@ use serde::Serialize;
 #[cfg_attr(test, derive(Serialize))]
 pub struct Program {
     pub structures: Vec<(TyKind, Structure)>,
-    pub functions_ty: Vec<FunctionTy>,
+    pub function_tys: Vec<FunctionTy>,
     pub function_definitions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
 }
@@ -35,14 +35,14 @@ pub struct Program {
 #[cfg_attr(test, derive(Serialize))]
 pub struct Structure {
     pub num_ty_parameters: usize,
-    pub fields_ty: Vec<Ty>,
+    pub field_tys: Vec<Ty>,
 }
 
 #[derive(Clone)]
 #[cfg_attr(test, derive(Serialize))]
 pub struct FunctionTy {
     pub num_ty_parameters: usize,
-    pub parameters_ty: Vec<Ty>,
+    pub parameter_tys: Vec<Ty>,
     pub return_ty: Ty,
 }
 
@@ -72,6 +72,7 @@ pub enum Function {
 pub struct FunctionDefinition {
     pub num_local_variables: usize,
     pub body: Block,
+    pub overloads: Vec<Vec<Function>>,
 }
 
 #[derive(Clone)]
@@ -147,7 +148,7 @@ pub enum Expression {
     String(String),
     Variable(Storage, usize),
     Function {
-        candidates: Vec<Function>,
+        overload_index: usize,
         calls: Vec<Call>,
     },
 }
