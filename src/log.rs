@@ -21,27 +21,38 @@ use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-pub struct Logger {
-    pub num_errors: usize,
-    pub err: Box<dyn Write>,
+pub struct Config {
+    pub write: Box<dyn Write>,
 }
 
-impl Logger {
-    pub fn new(err: Box<dyn Write>) -> Logger {
-        Logger { num_errors: 0, err }
-    }
+pub struct Logger {
+    pub config: Config,
+    pub num_errors: usize,
+    pub files: Vec<File>,
+}
 
+impl Config {
     /**
      * Called by [`frontend::read_input`](crate::frontend::read_input).
      */
     pub fn root_file_not_found(&mut self, path: &Path, err: std::io::Error) {
         writeln!(
-            self.err,
+            self.write,
             "ERROR: File `{}` not found. {}",
             path.display(),
             err
         )
         .unwrap();
+    }
+}
+
+impl Logger {
+    pub fn new(config: Config) -> Logger {
+        Logger {
+            config,
+            num_errors: 0,
+            files: Vec::new(),
+        }
     }
 
     /**
@@ -49,7 +60,7 @@ impl Logger {
      */
     pub fn cannot_read_root_file(&mut self, path: &Path, err: std::io::Error) {
         writeln!(
-            self.err,
+            self.config.write,
             "ERROR: Cannot read file `{}`. {}",
             path.display(),
             err
@@ -63,7 +74,7 @@ impl Logger {
      */
     pub fn aborting(&mut self) {
         writeln!(
-            self.err,
+            self.config.write,
             "Aborting due to {} previous {}.",
             self.num_errors,
             if self.num_errors == 1 {
@@ -90,14 +101,13 @@ impl Logger {
             start,
             end,
         }: Pos,
-        files: &[File],
     ) {
-        let file = &files[file_index];
+        let file = &self.files[file_index];
         match end.line - start.line {
             0 => {
                 let line = &file.content[file.lines[start.line].clone()];
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "L{}: {} !-> {} <-! {}",
                     start.line + 1,
                     &line[..start.column],
@@ -110,7 +120,7 @@ impl Logger {
                 let start_line = &file.content[file.lines[start.line].clone()];
                 let end_line = &file.content[file.lines[end.line].clone()];
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "L{}: {} !-> {}",
                     start.line + 1,
                     &start_line[..start.column],
@@ -118,7 +128,7 @@ impl Logger {
                 )
                 .unwrap();
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "L{}: {} <-! {}",
                     end.line + 1,
                     &end_line[..end.column],
@@ -131,16 +141,16 @@ impl Logger {
                 let mid_line = &file.content[file.lines[start.line + 1].clone()];
                 let end_line = &file.content[file.lines[end.line].clone()];
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "L{}: {} !-> {}",
                     start.line + 1,
                     &start_line[..start.column],
                     &start_line[start.column..],
                 )
                 .unwrap();
-                writeln!(self.err, "L{}: {}", start.line + 2, mid_line).unwrap();
+                writeln!(self.config.write, "L{}: {}", start.line + 2, mid_line).unwrap();
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "L{}: {} <-! {}",
                     end.line + 1,
                     &end_line[..end.column],
@@ -152,16 +162,16 @@ impl Logger {
                 let start_line = &file.content[file.lines[start.line].clone()];
                 let end_line = &file.content[file.lines[end.line].clone()];
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "L{}: {} !-> {}",
                     start.line + 1,
                     &start_line[..start.column],
                     &start_line[start.column..],
                 )
                 .unwrap();
-                writeln!(self.err, "({} lines)", num_lines - 1).unwrap();
+                writeln!(self.config.write, "({} lines)", num_lines - 1).unwrap();
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "L{}: {} <-! {}",
                     end.line + 1,
                     &end_line[..end.column],
@@ -170,7 +180,7 @@ impl Logger {
                 .unwrap();
             }
         }
-        writeln!(self.err).unwrap();
+        writeln!(self.config.write).unwrap();
     }
 }
 
@@ -229,400 +239,494 @@ pub enum ParseError {
 }
 
 impl Logger {
-    pub fn parse_error(&mut self, err: ParseError, files: &[File]) {
+    pub fn parse_error(&mut self, err: ParseError) {
         match err {
             ParseError::UnexpectedCharacter(pos) => {
-                writeln!(self.err, "{}", files[pos.file].path.display()).unwrap();
-                writeln!(self.err, "Unexpected character at {pos}.").unwrap();
-                self.quote(pos, files);
+                writeln!(self.config.write, "{}", self.files[pos.file].path.display()).unwrap();
+                writeln!(self.config.write, "Unexpected character at {pos}.").unwrap();
+                self.quote(pos);
             }
             ParseError::UnterminatedStringLiteral(pos) => {
-                writeln!(self.err, "{}", files[pos.file].path.display()).unwrap();
-                writeln!(self.err, "Unterminated string literal started at {pos}.").unwrap();
-                self.quote(pos, files);
+                writeln!(self.config.write, "{}", self.files[pos.file].path.display()).unwrap();
+                writeln!(
+                    self.config.write,
+                    "Unterminated string literal started at {pos}."
+                )
+                .unwrap();
+                self.quote(pos);
             }
             ParseError::InvalidEscapeSequence(pos) => {
-                writeln!(self.err, "{}", files[pos.file].path.display()).unwrap();
-                writeln!(self.err, "Invalid escape squence at {pos}.").unwrap();
-                self.quote(pos, files);
+                writeln!(self.config.write, "{}", self.files[pos.file].path.display()).unwrap();
+                writeln!(self.config.write, "Invalid escape squence at {pos}.").unwrap();
+                self.quote(pos);
             }
             ParseError::UnexpectedTokenInStringLiteral {
                 unexpected_token_pos,
                 dollar_pos,
             } => {
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "{}",
-                    files[unexpected_token_pos.file].path.display()
+                    self.files[unexpected_token_pos.file].path.display()
                 )
                 .unwrap();
-                writeln!(self.err, "Unexpected token at {unexpected_token_pos}.").unwrap();
-                self.quote(unexpected_token_pos, files);
                 writeln!(
-                    self.err,
+                    self.config.write,
+                    "Unexpected token at {unexpected_token_pos}."
+                )
+                .unwrap();
+                self.quote(unexpected_token_pos);
+                writeln!(
+                    self.config.write,
                     "Note: A placeholder in string literal started at {dollar_pos}."
                 )
                 .unwrap();
-                self.quote(dollar_pos, files);
+                self.quote(dollar_pos);
             }
             ParseError::UnterminatedComment(comment_pos) => {
-                writeln!(self.err, "{}", files[comment_pos.file].path.display()).unwrap();
-                writeln!(self.err, "Unterminated comment at {comment_pos}:").unwrap();
-                self.quote(comment_pos, files);
+                writeln!(
+                    self.config.write,
+                    "{}",
+                    self.files[comment_pos.file].path.display()
+                )
+                .unwrap();
+                writeln!(self.config.write, "Unterminated comment at {comment_pos}:").unwrap();
+                self.quote(comment_pos);
             }
             ParseError::InvalidBlockComment { start_pos } => {
-                writeln!(self.err, "{}", files[start_pos.file].path.display()).unwrap();
                 writeln!(
-                    self.err,
+                    self.config.write,
+                    "{}",
+                    self.files[start_pos.file].path.display()
+                )
+                .unwrap();
+                writeln!(
+                    self.config.write,
                     "A block comment must start at the beginning of the line, allowing only \
                      leading whitespaces."
                 )
                 .unwrap();
-                self.quote(start_pos, files);
+                self.quote(start_pos);
             }
             ParseError::UnexpectedToken(unexpected_token_pos) => {
-                writeln!(self.err, "Unexpected token at {}.", unexpected_token_pos).unwrap();
-                self.quote(unexpected_token_pos, files);
+                writeln!(
+                    self.config.write,
+                    "Unexpected token at {}.",
+                    unexpected_token_pos
+                )
+                .unwrap();
+                self.quote(unexpected_token_pos);
             }
             ParseError::UnexpectedTokenAfterKeywordStruct {
                 unexpected_token_pos,
                 keyword_struct_pos,
             } => {
-                writeln!(self.err, "Unexpected token at {}.", unexpected_token_pos).unwrap();
-                self.quote(unexpected_token_pos, files);
                 writeln!(
-                    self.err,
+                    self.config.write,
+                    "Unexpected token at {}.",
+                    unexpected_token_pos
+                )
+                .unwrap();
+                self.quote(unexpected_token_pos);
+                writeln!(
+                    self.config.write,
                     "Expected an identifier after `struct` at {}.",
                     keyword_struct_pos
                 )
                 .unwrap();
-                self.quote(keyword_struct_pos, files);
+                self.quote(keyword_struct_pos);
             }
             ParseError::UnexpectedTokenAfterKeywordFuncOrMethod {
                 unexpected_token_pos,
                 keyword_pos,
             } => {
-                writeln!(self.err, "Unexpected token at {}.", unexpected_token_pos).unwrap();
-                self.quote(unexpected_token_pos, files);
                 writeln!(
-                    self.err,
+                    self.config.write,
+                    "Unexpected token at {}.",
+                    unexpected_token_pos
+                )
+                .unwrap();
+                self.quote(unexpected_token_pos);
+                writeln!(
+                    self.config.write,
                     "Expected an identifier after keyword at {}.",
                     keyword_pos
                 )
                 .unwrap();
-                self.quote(keyword_pos, files);
+                self.quote(keyword_pos);
             }
             ParseError::UnclosedBlock { pos, starts_pos } => {
-                writeln!(self.err, "Blocks are unclosed at {}.", pos).unwrap();
-                self.quote(pos, files);
-                writeln!(self.err, "Blocks opened at:").unwrap();
+                writeln!(self.config.write, "Blocks are unclosed at {}.", pos).unwrap();
+                self.quote(pos);
+                writeln!(self.config.write, "Blocks opened at:").unwrap();
                 for start_pos in &starts_pos {
-                    self.quote(start_pos.clone(), files);
+                    self.quote(start_pos.clone());
                 }
             }
             ParseError::MissingFieldAfterDot { dot_pos } => {
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "Missing field name or number after `.` at {dot_pos}."
                 )
                 .unwrap();
-                self.quote(dot_pos, files);
+                self.quote(dot_pos);
             }
             ParseError::UnexpectedTokenAfterDot {
                 unexpected_token_pos,
                 dot_pos,
             } => {
-                writeln!(self.err, "Unexpected token at {}.", unexpected_token_pos).unwrap();
-                self.quote(unexpected_token_pos, files);
                 writeln!(
-                    self.err,
+                    self.config.write,
+                    "Unexpected token at {}.",
+                    unexpected_token_pos
+                )
+                .unwrap();
+                self.quote(unexpected_token_pos);
+                writeln!(
+                    self.config.write,
                     "Note: expected a field name or number after `.` at {dot_pos}."
                 )
                 .unwrap();
-                self.quote(dot_pos, files);
+                self.quote(dot_pos);
             }
             ParseError::UnexpectedTokenInParentheses {
                 unexpected_token_pos,
                 opening_parenthesis_pos,
             } => {
-                writeln!(self.err, "Unexpected token at {}.", unexpected_token_pos).unwrap();
-                self.quote(unexpected_token_pos, files);
                 writeln!(
-                    self.err,
+                    self.config.write,
+                    "Unexpected token at {}.",
+                    unexpected_token_pos
+                )
+                .unwrap();
+                self.quote(unexpected_token_pos);
+                writeln!(
+                    self.config.write,
                     "Note: opening parenthesis at {}.",
                     opening_parenthesis_pos
                 )
                 .unwrap();
-                self.quote(opening_parenthesis_pos, files);
+                self.quote(opening_parenthesis_pos);
             }
             ParseError::UnclosedParenthesis {
                 opening_parenthesis_pos,
             } => {
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "Unclosed parenthesis opened at {}.",
                     opening_parenthesis_pos
                 )
                 .unwrap();
-                self.quote(opening_parenthesis_pos, files);
+                self.quote(opening_parenthesis_pos);
             }
             ParseError::UnexpectedTokenInBrackets {
                 unexpected_token_pos,
                 opening_bracket_pos,
             } => {
-                writeln!(self.err, "Unexpected token at {}.", unexpected_token_pos).unwrap();
-                self.quote(unexpected_token_pos, files);
                 writeln!(
-                    self.err,
+                    self.config.write,
+                    "Unexpected token at {}.",
+                    unexpected_token_pos
+                )
+                .unwrap();
+                self.quote(unexpected_token_pos);
+                writeln!(
+                    self.config.write,
                     "Note: opening bracket at {}.",
                     opening_bracket_pos
                 )
                 .unwrap();
-                self.quote(opening_bracket_pos, files);
+                self.quote(opening_bracket_pos);
             }
             ParseError::UnclosedBracket {
                 opening_bracket_pos,
             } => {
                 writeln!(
-                    self.err,
+                    self.config.write,
                     "Unclosed bracket opened at {}.",
                     opening_bracket_pos
                 )
                 .unwrap();
-                self.quote(opening_bracket_pos, files);
+                self.quote(opening_bracket_pos);
             }
         }
         self.num_errors += 1;
     }
 
-    pub fn extra_tokens(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Extra tokens at {}.", pos).unwrap();
-        self.quote(pos, files);
+    pub fn extra_tokens(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Extra tokens at {}.", pos).unwrap();
+        self.quote(pos);
         self.num_errors += 1;
     }
 
-    pub fn expected_lvalue(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Expression at {} is not a lvalue", pos).unwrap();
-        self.quote(pos, files);
+    pub fn expected_lvalue(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Expression at {} is not a lvalue", pos).unwrap();
+        self.quote(pos);
         self.num_errors += 1;
     }
 
-    pub fn cannot_parse_integer(&mut self, pos: Pos, err: std::num::ParseIntError, files: &[File]) {
-        writeln!(self.err, "Cannot parse integer literal at {}: {}", pos, err).unwrap();
-        self.quote(pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn cannot_parse_float(&mut self, pos: Pos, err: std::num::ParseFloatError, files: &[File]) {
-        writeln!(self.err, "Cannot parse float literal at {}: {}", pos, err).unwrap();
-        self.quote(pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn duplicate_definition(&mut self, pos: Pos, prev_pos: Pos, files: &[File]) {
-        writeln!(self.err, "Duplicate definition at {}.", pos).unwrap();
-        self.quote(pos, files);
-        writeln!(self.err, "Previously defined at {}.", prev_pos).unwrap();
-        self.quote(prev_pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn missing_import_target(&mut self, keyword_import_pos: Pos, files: &[File]) {
+    pub fn cannot_parse_integer(&mut self, pos: Pos, err: std::num::ParseIntError) {
         writeln!(
-            self.err,
+            self.config.write,
+            "Cannot parse integer literal at {}: {}",
+            pos, err
+        )
+        .unwrap();
+        self.quote(pos);
+        self.num_errors += 1;
+    }
+
+    pub fn cannot_parse_float(&mut self, pos: Pos, err: std::num::ParseFloatError) {
+        writeln!(
+            self.config.write,
+            "Cannot parse float literal at {}: {}",
+            pos, err
+        )
+        .unwrap();
+        self.quote(pos);
+        self.num_errors += 1;
+    }
+
+    pub fn duplicate_definition(&mut self, pos: Pos, prev_pos: Pos) {
+        writeln!(self.config.write, "Duplicate definition at {}.", pos).unwrap();
+        self.quote(pos);
+        writeln!(self.config.write, "Previously defined at {}.", prev_pos).unwrap();
+        self.quote(prev_pos);
+        self.num_errors += 1;
+    }
+
+    pub fn missing_import_target(&mut self, keyword_import_pos: Pos) {
+        writeln!(
+            self.config.write,
             "Missing import target after keyword `import` at {keyword_import_pos}"
         )
         .unwrap();
-        self.quote(keyword_import_pos, files);
+        self.quote(keyword_import_pos);
         self.num_errors += 1;
     }
 
-    pub fn invalid_import_target(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Invalid import target at {pos}").unwrap();
-        self.quote(pos, files);
+    pub fn invalid_import_target(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Invalid import target at {pos}").unwrap();
+        self.quote(pos);
         self.num_errors += 1;
     }
 
-    pub fn placeholder_in_import_path(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Import path at {pos} contains a placeholder").unwrap();
-        self.quote(pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn empty_argument(&mut self, comma_pos: Pos, files: &[File]) {
-        writeln!(self.err, "Empty argument before comma at {comma_pos}").unwrap();
-        self.quote(comma_pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn cannot_read_file(&mut self, pos: Pos, path: &Path, err: std::io::Error, files: &[File]) {
-        writeln!(self.err, "Cannot read file `{}`. {}", path.display(), err).unwrap();
-        self.quote(pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn circular_imports(&mut self, pos: Pos, path: &Path, files: &[File]) {
-        writeln!(self.err, "Circular imports of `{}`.", path.display()).unwrap();
-        self.quote(pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn missing_structure_name(&mut self, keyword_struct_pos: Pos, files: &[File]) {
+    pub fn placeholder_in_import_path(&mut self, pos: Pos) {
         writeln!(
-            self.err,
+            self.config.write,
+            "Import path at {pos} contains a placeholder"
+        )
+        .unwrap();
+        self.quote(pos);
+        self.num_errors += 1;
+    }
+
+    pub fn empty_argument(&mut self, comma_pos: Pos) {
+        writeln!(
+            self.config.write,
+            "Empty argument before comma at {comma_pos}"
+        )
+        .unwrap();
+        self.quote(comma_pos);
+        self.num_errors += 1;
+    }
+
+    pub fn cannot_read_file(&mut self, pos: Pos, path: &Path, err: std::io::Error) {
+        writeln!(
+            self.config.write,
+            "Cannot read file `{}`. {}",
+            path.display(),
+            err
+        )
+        .unwrap();
+        self.quote(pos);
+        self.num_errors += 1;
+    }
+
+    pub fn circular_imports(&mut self, pos: Pos, path: &Path) {
+        writeln!(
+            self.config.write,
+            "Circular imports of `{}`.",
+            path.display()
+        )
+        .unwrap();
+        self.quote(pos);
+        self.num_errors += 1;
+    }
+
+    pub fn missing_structure_name(&mut self, keyword_struct_pos: Pos) {
+        writeln!(
+            self.config.write,
             "Missing structure name after `struct` at {}.",
             keyword_struct_pos
         )
         .unwrap();
-        self.quote(keyword_struct_pos, files);
+        self.quote(keyword_struct_pos);
         self.num_errors += 1;
     }
 
-    pub fn missing_function_name(&mut self, keyword_pos: Pos, files: &[File]) {
+    pub fn missing_function_name(&mut self, keyword_pos: Pos) {
         writeln!(
-            self.err,
+            self.config.write,
             "Missing function name after keyword at {}.",
             keyword_pos
         )
         .unwrap();
-        self.quote(keyword_pos, files);
+        self.quote(keyword_pos);
         self.num_errors += 1;
     }
 
-    pub fn empty_ty_parameter(&mut self, comma_pos: Pos, files: &[File]) {
-        writeln!(self.err, "Empty type parameter before comma at {comma_pos}").unwrap();
-        self.quote(comma_pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn invalid_ty_parameter(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Invalid type parameter at {}.", pos).unwrap();
-        self.quote(pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn empty_parameter(&mut self, comma_pos: Pos, files: &[File]) {
-        writeln!(self.err, "Empty parameter before comma at {comma_pos}").unwrap();
-        self.quote(comma_pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn invalid_parameter(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Invalid parameter at {}.", pos).unwrap();
-        self.quote(pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn invalid_structure_field(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Invalid structure field at {}.", pos).unwrap();
-        self.quote(pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn missing_ty(&mut self, colon_pos: Pos, files: &[File]) {
-        writeln!(self.err, "Missing type after colon at {}.", colon_pos).unwrap();
-        self.quote(colon_pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn missing_parameter_list(&mut self, signature_pos: Pos, files: &[File]) {
+    pub fn empty_ty_parameter(&mut self, comma_pos: Pos) {
         writeln!(
-            self.err,
+            self.config.write,
+            "Empty type parameter before comma at {comma_pos}"
+        )
+        .unwrap();
+        self.quote(comma_pos);
+        self.num_errors += 1;
+    }
+
+    pub fn invalid_ty_parameter(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Invalid type parameter at {}.", pos).unwrap();
+        self.quote(pos);
+        self.num_errors += 1;
+    }
+
+    pub fn empty_parameter(&mut self, comma_pos: Pos) {
+        writeln!(
+            self.config.write,
+            "Empty parameter before comma at {comma_pos}"
+        )
+        .unwrap();
+        self.quote(comma_pos);
+        self.num_errors += 1;
+    }
+
+    pub fn invalid_parameter(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Invalid parameter at {}.", pos).unwrap();
+        self.quote(pos);
+        self.num_errors += 1;
+    }
+
+    pub fn invalid_structure_field(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Invalid structure field at {}.", pos).unwrap();
+        self.quote(pos);
+        self.num_errors += 1;
+    }
+
+    pub fn missing_ty(&mut self, colon_pos: Pos) {
+        writeln!(
+            self.config.write,
+            "Missing type after colon at {}.",
+            colon_pos
+        )
+        .unwrap();
+        self.quote(colon_pos);
+        self.num_errors += 1;
+    }
+
+    pub fn missing_parameter_list(&mut self, signature_pos: Pos) {
+        writeln!(
+            self.config.write,
             "Missing parameter list in function signature at {signature_pos}"
         )
         .unwrap();
-        self.quote(signature_pos, files);
+        self.quote(signature_pos);
         self.num_errors += 1;
     }
 
-    pub fn missing_variable_name(&mut self, keyword_var_pos: Pos, files: &[File]) {
+    pub fn missing_variable_name(&mut self, keyword_var_pos: Pos) {
         writeln!(
-            self.err,
+            self.config.write,
             "Missing variable name after keyword `var` at {}.",
             keyword_var_pos
         )
         .unwrap();
-        self.quote(keyword_var_pos, files);
+        self.quote(keyword_var_pos);
     }
 
-    pub fn invalid_variable_name(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Invalid variable name at {}.", pos).unwrap();
-        self.quote(pos, files);
+    pub fn invalid_variable_name(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Invalid variable name at {}.", pos).unwrap();
+        self.quote(pos);
     }
 
-    pub fn expected_expression(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Expected an expression at {pos}").unwrap();
-        self.quote(pos, files);
+    pub fn expected_expression(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Expected an expression at {pos}").unwrap();
+        self.quote(pos);
         self.num_errors += 1;
     }
 
-    pub fn expected_ty(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Expected a type at {pos}").unwrap();
-        self.quote(pos, files);
+    pub fn expected_ty(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Expected a type at {pos}").unwrap();
+        self.quote(pos);
         self.num_errors += 1;
     }
 
-    pub fn expected_function(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "The expression at {pos} is not a function").unwrap();
-        self.quote(pos, files);
-        self.num_errors += 1;
-    }
-
-    pub fn missing_if_condition(&mut self, keyword_if_pos: Pos, files: &[File]) {
+    pub fn expected_function(&mut self, pos: Pos) {
         writeln!(
-            self.err,
+            self.config.write,
+            "The expression at {pos} is not a function"
+        )
+        .unwrap();
+        self.quote(pos);
+        self.num_errors += 1;
+    }
+
+    pub fn missing_if_condition(&mut self, keyword_if_pos: Pos) {
+        writeln!(
+            self.config.write,
             "Missing condition after keyword `if` at {keyword_if_pos}"
         )
         .unwrap();
-        self.quote(keyword_if_pos, files);
+        self.quote(keyword_if_pos);
         self.num_errors += 1;
     }
 
-    pub fn missing_while_condition(&mut self, keyword_while_pos: Pos, files: &[File]) {
+    pub fn missing_while_condition(&mut self, keyword_while_pos: Pos) {
         writeln!(
-            self.err,
+            self.config.write,
             "Missing condition after keyword `while` at {keyword_while_pos}"
         )
         .unwrap();
-        self.quote(keyword_while_pos, files);
+        self.quote(keyword_while_pos);
         self.num_errors += 1;
     }
 
-    pub fn undefined_variable(&mut self, pos: Pos, files: &[File]) {
-        writeln!(self.err, "Undefined variable at {pos}").unwrap();
-        self.quote(pos, files);
+    pub fn undefined_variable(&mut self, pos: Pos) {
+        writeln!(self.config.write, "Undefined variable at {pos}").unwrap();
+        self.quote(pos);
         self.num_errors += 1;
     }
 
-    pub fn undefined_item(&mut self, name: &str, pos: Pos, file_index: usize, files: &[File]) {
+    pub fn undefined_item(&mut self, name: &str, pos: Pos, file_index: usize) {
         writeln!(
-            self.err,
+            self.config.write,
             "`{}` is not defined in {}",
             name,
-            files[file_index].path.display()
+            self.files[file_index].path.display()
         )
         .unwrap();
-        self.quote(pos, files);
+        self.quote(pos);
         self.num_errors += 1;
     }
 
-    pub fn empty_left_operand(&mut self, operator_pos: Pos, files: &[File]) {
+    pub fn empty_left_operand(&mut self, operator_pos: Pos) {
         writeln!(
-            self.err,
+            self.config.write,
             "Empty left operand before operator at {operator_pos}"
         )
         .unwrap();
-        self.quote(operator_pos, files);
+        self.quote(operator_pos);
         self.num_errors += 1;
     }
 
-    pub fn empty_right_operand(&mut self, operator_pos: Pos, files: &[File]) {
+    pub fn empty_right_operand(&mut self, operator_pos: Pos) {
         writeln!(
-            self.err,
+            self.config.write,
             "Empty right operand after operator at {operator_pos}"
         )
         .unwrap();
-        self.quote(operator_pos, files);
+        self.quote(operator_pos);
         self.num_errors += 1;
     }
 }

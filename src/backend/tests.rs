@@ -54,8 +54,10 @@ fn unify() {
 
 fn test(dir: impl AsRef<Path>) {
     let dir = dir.as_ref();
-    let mut logger = log::Logger::new(Box::new(std::io::stderr()));
-    let ir_program = frontend::read_input(&dir.join("input"), &mut logger).unwrap();
+    let config = log::Config {
+        write: Box::new(std::io::stderr()),
+    };
+    let ir_program = frontend::read_input(&dir.join("input"), config).unwrap();
     let mut program = Program {
         function_definitions: Vec::new(),
     };

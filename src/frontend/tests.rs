@@ -22,8 +22,10 @@ use super::*;
 
 fn test(dir: impl AsRef<Path>) {
     let dir = dir.as_ref();
-    let mut logger = log::Logger::new(Box::new(std::io::stderr()));
-    let definitions = read_input(&dir.join("input"), &mut logger).unwrap();
+    let config = log::Config {
+        write: Box::new(std::io::stderr()),
+    };
+    let definitions = read_input(&dir.join("input"), config).unwrap();
     let definitions = serde_json::to_value(&definitions).unwrap();
     let expected = std::fs::read_to_string(dir.join("expected.json")).unwrap();
     let expected: serde_json::Value = serde_json::from_str(&expected).unwrap();

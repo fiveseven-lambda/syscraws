@@ -33,10 +33,12 @@ struct CommandLineArguments {
 
 fn main() -> ExitCode {
     let command_line_arguments = CommandLineArguments::parse();
-    let mut logger = log::Logger::new(Box::new(std::io::stderr()));
-    let Ok(ir_program) =
-        frontend::read_input(command_line_arguments.filename.as_ref(), &mut logger)
-    else {
+    let Ok(ir_program) = frontend::read_input(
+        command_line_arguments.filename.as_ref(),
+        log::Config {
+            write: Box::new(std::io::stderr()),
+        },
+    ) else {
         return ExitCode::FAILURE;
     };
     let Ok(entry) = backend::translate(ir_program) else {
