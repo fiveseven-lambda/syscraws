@@ -63,15 +63,15 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         global_builder: BlockBuilder::new(),
         global_variables: Variables::new(ir::Storage::Global),
         exports: Vec::new(),
-        files: Vec::new(),
+        logger,
         file_indices: HashMap::new(),
         import_chain: HashSet::from([root_file_path.clone()]),
     };
-    if let Err(err) = reader.read_file(&root_file_path, logger) {
-        logger.cannot_read_root_file(&root_file_path, err);
+    if let Err(err) = reader.read_file(&root_file_path) {
+        reader.logger.cannot_read_root_file(&root_file_path, err);
     }
-    if logger.num_errors > 0 {
-        logger.aborting();
+    if reader.logger.num_errors > 0 {
+        reader.logger.aborting();
         return Err(());
     }
     reader.global_variables.free(0, &mut reader.global_builder);
@@ -98,7 +98,7 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
 /**
  * A structure to read files recursively and convert them to intermediate representation (IR) defined in [`ir`].
  */
-struct Reader {
+struct Reader<'logger> {
     /**
      * Total number of structures defined in all files. Used and updated by
      * [`declare_structure`](Reader::declare_structure) method.
@@ -128,9 +128,9 @@ struct Reader {
      */
     exports: Vec<Context>,
     /**
-     * File imformation for error reporting, in preorder.
+     * Logger to report errors.
      */
-    files: Vec<log::File>,
+    logger: &'logger mut log::Logger,
     /**
      * Maps each file path to its postorder index (`None` if a parse error occurred).
      * Used to resolve imports and to avoid reading the same file multiple times.
@@ -166,15 +166,11 @@ pub enum Item {
     Variable(ir::Storage, usize),
 }
 
-impl Reader {
+impl Reader<'_> {
     /**
      * Reads the file specified by `path`.
      */
-    fn read_file(
-        &mut self,
-        path: &Path,
-        logger: &mut log::Logger,
-    ) -> Result<Option<usize>, std::io::Error> {
+    fn read_file(&mut self, path: &Path) -> Result<Option<usize>, std::io::Error> {
         if let Some(&index) = self.file_indices.get(path) {
             /* The file was already read. Since circular imports should have been
              * detected in `Reader::import_file`, this is not circular imports but
@@ -185,9 +181,9 @@ impl Reader {
         let mut content = String::new();
         file.read_to_string(&mut content)?;
         let mut chars_peekable = CharsPeekable::new(&content);
-        let preorder_index = self.files.len();
+        let preorder_index = self.logger.files.len();
         let result = parser::parse_file(&mut chars_peekable, preorder_index);
-        self.files.push(log::File {
+        self.logger.files.push(log::File {
             path: path.to_path_buf(),
             lines: chars_peekable.lines(),
             content,
@@ -195,7 +191,7 @@ impl Reader {
         let ast_file = match result {
             Ok(ast) => ast,
             Err(err) => {
-                logger.parse_error(err, &self.files);
+                self.logger.parse_error(err);
                 self.file_indices.insert(path.to_path_buf(), None);
                 return Ok(None);
             }
@@ -213,15 +209,15 @@ impl Reader {
         } in ast_file.imports
         {
             if let Some(extra_tokens_pos) = extra_tokens_pos {
-                logger.extra_tokens(extra_tokens_pos, &self.files);
+                self.logger.extra_tokens(extra_tokens_pos);
             }
             if let Ok((name, pos, Some(index))) =
-                self.import_file(ast_import, path.parent().unwrap(), logger)
+                self.import_file(ast_import, path.parent().unwrap())
             {
                 match context.items.entry(name) {
                     std::collections::hash_map::Entry::Occupied(mut entry) => {
                         if let (Some(prev_pos), _) = entry.get() {
-                            logger.duplicate_definition(pos, prev_pos.clone(), &self.files);
+                            self.logger.duplicate_definition(pos, prev_pos.clone());
                         } else {
                             entry.insert((Some(pos), Item::Import(index)));
                         }
@@ -244,10 +240,10 @@ impl Reader {
             }
         }
         for name in ast_file.structure_names {
-            self.declare_structure(name, &mut context, logger);
+            self.declare_structure(name, &mut context);
         }
         for name in ast_file.function_names {
-            self.declare_function(name, &mut context, logger);
+            self.declare_function(name, &mut context);
         }
         for ast::WithExtraTokens {
             content: statement,
@@ -255,15 +251,14 @@ impl Reader {
         } in ast_file.top_level_statements
         {
             if let Some(extra_tokens_pos) = extra_tokens_pos {
-                logger.extra_tokens(extra_tokens_pos, &self.files);
+                self.logger.extra_tokens(extra_tokens_pos);
             }
             match statement {
                 ast::TopLevelStatement::StructureDefinition(structure_definition) => {
                     let (kind, definition) = context.translate_structure_definition(
                         structure_definition,
                         &self.exports,
-                        &self.files,
-                        logger,
+                        &mut self.logger,
                     );
                     self.ir_program.structures.push((kind, definition));
                 }
@@ -272,8 +267,7 @@ impl Reader {
                     if let Some((ty, definition)) = context.translate_function_definition(
                         function_definition,
                         &self.exports,
-                        &self.files,
-                        logger,
+                        &mut self.logger,
                     ) {
                         self.ir_program.functions_ty.push(ty);
                         self.ir_program.function_definitions.push(definition);
@@ -287,8 +281,7 @@ impl Reader {
                         &mut self.global_variables,
                         0,
                         &self.exports,
-                        &self.files,
-                        logger,
+                        &mut self.logger,
                     );
                 }
             }
@@ -307,10 +300,9 @@ impl Reader {
             target,
         }: ast::Import,
         parent_directory: &Path,
-        logger: &mut log::Logger,
     ) -> Result<(String, log::Pos, Option<usize>), ()> {
         let Some(target) = target else {
-            logger.missing_import_target(keyword_import_pos, &self.files);
+            self.logger.missing_import_target(keyword_import_pos);
             return Err(());
         };
         let (name, path, name_pos, path_pos) = match target.term {
@@ -325,7 +317,7 @@ impl Reader {
                 let name = match function.term {
                     ast::Term::Identifier(name) => name,
                     _ => {
-                        logger.invalid_import_target(target.pos, &self.files);
+                        self.logger.invalid_import_target(target.pos);
                         return Err(());
                     }
                 };
@@ -336,10 +328,8 @@ impl Reader {
                             for component in components {
                                 match component {
                                     ast::StringLiteralComponent::PlaceHolder { .. } => {
-                                        logger.placeholder_in_import_path(
-                                            argument.pos.clone(),
-                                            &self.files,
-                                        );
+                                        self.logger
+                                            .placeholder_in_import_path(argument.pos.clone());
                                         return Err(());
                                     }
                                     ast::StringLiteralComponent::String(value) => {
@@ -350,23 +340,23 @@ impl Reader {
                             (parent_directory.join(&path), argument.pos)
                         }
                         _ => {
-                            logger.invalid_import_target(target.pos, &self.files);
+                            self.logger.invalid_import_target(target.pos);
                             return Err(());
                         }
                     },
                     Some(ast::ListElement::Empty { comma_pos }) => {
-                        logger.empty_argument(comma_pos, &self.files);
+                        self.logger.empty_argument(comma_pos);
                         return Err(());
                     }
                     None => {
-                        logger.missing_import_target(target.pos, &self.files);
+                        self.logger.missing_import_target(target.pos);
                         return Err(());
                     }
                 };
                 (name, path, function.pos, path_pos)
             }
             _ => {
-                logger.invalid_import_target(target.pos, &self.files);
+                self.logger.invalid_import_target(target.pos);
                 return Err(());
             }
         };
@@ -374,22 +364,22 @@ impl Reader {
         let path = match path.canonicalize() {
             Ok(path) => path,
             Err(err) => {
-                logger.cannot_read_file(path_pos, &path, err, &self.files);
+                self.logger.cannot_read_file(path_pos, &path, err);
                 return Err(());
             }
         };
         if self.import_chain.insert(path.clone()) {
-            let result = self.read_file(&path, logger);
+            let result = self.read_file(&path);
             self.import_chain.remove(&path);
             match result {
                 Ok(n) => Ok((name, name_pos, n)),
                 Err(err) => {
-                    logger.cannot_read_file(path_pos, &path, err, &self.files);
+                    self.logger.cannot_read_file(path_pos, &path, err);
                     Err(())
                 }
             }
         } else {
-            logger.circular_imports(path_pos, &path, &self.files);
+            self.logger.circular_imports(path_pos, &path);
             Err(())
         }
     }
@@ -401,16 +391,15 @@ impl Reader {
             name_and_pos: name,
         }: ast::StructureName,
         context: &mut Context,
-        logger: &mut log::Logger,
     ) {
         let Some((name, pos)) = name else {
-            logger.missing_structure_name(keyword_struct_pos, &self.files);
+            self.logger.missing_structure_name(keyword_struct_pos);
             return;
         };
         match context.items.entry(name) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 if let (Some(prev_pos), _) = entry.get() {
-                    logger.duplicate_definition(pos, prev_pos.clone(), &self.files);
+                    self.logger.duplicate_definition(pos, prev_pos.clone());
                 } else {
                     entry.insert((
                         Some(pos),
@@ -440,10 +429,9 @@ impl Reader {
             is_method,
         }: ast::FunctionName,
         context: &mut Context,
-        logger: &mut log::Logger,
     ) {
         let Some((name, pos)) = name else {
-            logger.missing_function_name(keyword_pos, &self.files);
+            self.logger.missing_function_name(keyword_pos);
             return;
         };
         if is_method {
@@ -459,7 +447,8 @@ impl Reader {
                     if let Item::Function(functions) = item {
                         functions.push(ir::Function::UserDefined(self.num_functions));
                     } else {
-                        logger.duplicate_definition(pos, prev_pos.clone().unwrap(), &self.files);
+                        self.logger
+                            .duplicate_definition(pos, prev_pos.clone().unwrap());
                     }
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
