@@ -42,12 +42,12 @@ use variables::Variables;
  * Reads the file specified by `root_file_path` and any other files it imports,
  * and emits intermediate representation defined in [`ir`].
  */
-pub fn read_input(root_file_path: &Path, mut config: log::Config) -> Result<ir::Program, ()> {
+pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir::Program, ()> {
     let root_file_path = root_file_path.with_extension("sysc");
     let root_file_path = match root_file_path.canonicalize() {
         Ok(path) => path,
         Err(err) => {
-            config.root_file_not_found(&root_file_path, err);
+            logger.root_file_not_found(&root_file_path, err);
             return Err(());
         }
     };
@@ -63,7 +63,7 @@ pub fn read_input(root_file_path: &Path, mut config: log::Config) -> Result<ir::
         global_builder: BlockBuilder::new(),
         global_variables: Variables::new(ir::Storage::Global),
         exports: Vec::new(),
-        logger: log::Logger::new(config),
+        logger,
         file_indices: HashMap::new(),
         import_chain: HashSet::from([root_file_path.clone()]),
     };
@@ -98,7 +98,7 @@ pub fn read_input(root_file_path: &Path, mut config: log::Config) -> Result<ir::
 /**
  * A structure to read files recursively and convert them to intermediate representation (IR) defined in [`ir`].
  */
-struct Reader {
+struct Reader<'logger> {
     /**
      * Total number of structures defined in all files. Used and updated by
      * [`declare_structure`](Reader::declare_structure) method.
@@ -130,7 +130,7 @@ struct Reader {
     /**
      * Logger to report errors.
      */
-    logger: log::Logger,
+    logger: &'logger mut log::Logger,
     /**
      * Maps each file path to its postorder index (`None` if a parse error occurred).
      * Used to resolve imports and to avoid reading the same file multiple times.
@@ -166,7 +166,7 @@ pub enum Item {
     Variable(ir::Storage, usize),
 }
 
-impl Reader {
+impl Reader<'_> {
     /**
      * Reads the file specified by `path`.
      */
