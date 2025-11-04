@@ -102,10 +102,10 @@ impl Variables {
         &mut self,
         len: usize,
         builder: &mut BlockBuilder,
-        overloads: &mut Vec<Vec<ir::Function>>,
+        function_uses: &mut Vec<ir::FunctionUse>,
         context: &mut Context,
     ) {
-        self.free(len, builder, overloads);
+        self.free(len, builder, function_uses);
         for (name, index) in self.name_and_indices.split_off(len) {
             match context.items.remove(&name).unwrap() {
                 (_, Item::Variable(s, i)) => {
@@ -127,18 +127,18 @@ impl Variables {
         &mut self,
         len: usize,
         builder: &mut BlockBuilder,
-        overloads: &mut Vec<Vec<ir::Function>>,
+        function_uses: &mut Vec<ir::FunctionUse>,
     ) {
         for &(_, index) in self.name_and_indices[len..].iter().rev() {
             let expr = ir::Expression::Variable(self.storage, index);
-            let overload_index = overloads.len();
-            overloads.push(vec![ir::Function::Delete]);
-            builder.add_expression(ir::Expression::Function {
-                overload_index,
+            let function_use_index = function_uses.len();
+            function_uses.push(ir::FunctionUse {
+                candidates: vec![ir::Function::Delete],
                 calls: vec![ir::Call {
                     arguments: vec![expr],
                 }],
             });
+            builder.add_expression(ir::Expression::FunctionUse(function_use_index));
         }
     }
 }

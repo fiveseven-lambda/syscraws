@@ -35,7 +35,7 @@ pub enum Ty {
         head: Rc<Ty>,
         tail: Rc<Ty>,
     },
-    Var(Rc<RefCell<Var>>),
+    Var(RefCell<Var>),
 }
 
 #[cfg(test)]
@@ -90,7 +90,7 @@ impl Serialize for Var {
 }
 
 struct Unification {
-    var: Rc<RefCell<Var>>,
+    ty: Rc<Ty>,
     old: Var,
 }
 
@@ -143,14 +143,30 @@ impl Unifications {
                 if left_var.as_ptr() != right_var.as_ptr() {
                     match left_rank.cmp(&right_rank) {
                         std::cmp::Ordering::Greater => {
-                            self.bind(right_var, Var::Assigned(left.clone()));
+                            self.0.push(Unification {
+                                ty: right.clone(),
+                                old: right_var.borrow().clone(),
+                            });
+                            *right_var.borrow_mut() = Var::Assigned(left.clone());
                         }
                         std::cmp::Ordering::Less => {
-                            self.bind(left_var, Var::Assigned(right.clone()));
+                            self.0.push(Unification {
+                                ty: left.clone(),
+                                old: left_var.borrow().clone(),
+                            });
+                            *left_var.borrow_mut() = Var::Assigned(right.clone());
                         }
                         std::cmp::Ordering::Equal => {
-                            self.bind(left_var, Var::Unassigned(left_rank + 1));
-                            self.bind(right_var, Var::Assigned(left.clone()));
+                            self.0.push(Unification {
+                                ty: left.clone(),
+                                old: left_var.borrow().clone(),
+                            });
+                            *left_var.borrow_mut() = Var::Unassigned(left_rank + 1);
+                            self.0.push(Unification {
+                                ty: right.clone(),
+                                old: right_var.borrow().clone(),
+                            });
+                            *right_var.borrow_mut() = Var::Assigned(left.clone());
                         }
                     }
                 }
@@ -162,7 +178,11 @@ impl Unifications {
                 } else if right.contains(left_var) {
                     false
                 } else {
-                    self.bind(left_var, Var::Assigned(right.clone()));
+                    self.0.push(Unification {
+                        ty: left.clone(),
+                        old: left_var.borrow().clone(),
+                    });
+                    *left_var.borrow_mut() = Var::Assigned(right.clone());
                     true
                 }
             }
@@ -172,7 +192,11 @@ impl Unifications {
                 } else if left.contains(right_var) {
                     false
                 } else {
-                    self.bind(right_var, Var::Assigned(left.clone()));
+                    self.0.push(Unification {
+                        ty: right.clone(),
+                        old: right_var.borrow().clone(),
+                    });
+                    *right_var.borrow_mut() = Var::Assigned(left.clone());
                     true
                 }
             }
@@ -180,20 +204,20 @@ impl Unifications {
         }
     }
 
-    fn bind(&mut self, left: &Rc<RefCell<Var>>, right: Var) {
-        self.0.push(Unification {
-            var: left.clone(),
-            old: left.borrow().clone(),
-        });
-        *left.borrow_mut() = right;
-    }
-
     pub fn undo(self) -> Unifications {
-        let mut ret = Unifications::new();
-        for Unification { var, old } in self.0.into_iter().rev() {
-            ret.bind(&var, old);
-        }
-        ret
+        Unifications(
+            self.0
+                .into_iter()
+                .rev()
+                .map(|Unification { ty, old }| {
+                    let Ty::Var(ref var) = *ty else {
+                        unreachable!()
+                    };
+                    let old = var.replace(old);
+                    Unification { ty, old }
+                })
+                .collect(),
+        )
     }
 }
 

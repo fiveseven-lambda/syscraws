@@ -28,7 +28,9 @@ use serde::Serialize;
 pub struct Program {
     pub structures: Vec<(TyKind, Structure)>,
     pub function_tys: Vec<FunctionTy>,
-    pub function_definitions: Vec<FunctionDefinition>,
+    pub num_local_variables: Vec<usize>,
+    pub function_definitions: Vec<Block>,
+    pub function_uses: Vec<FunctionUse>,
     pub num_global_variables: usize,
 }
 
@@ -69,10 +71,9 @@ pub enum Function {
 }
 
 #[cfg_attr(test, derive(Serialize))]
-pub struct FunctionDefinition {
-    pub num_local_variables: usize,
-    pub body: Block,
-    pub overloads: Vec<Vec<Function>>,
+pub struct FunctionUse {
+    pub candidates: Vec<Function>,
+    pub calls: Vec<Call>,
 }
 
 #[derive(Clone)]
@@ -147,19 +148,15 @@ pub enum Expression {
     Float(f64),
     String(String),
     Variable(Storage, usize),
-    Function {
-        overload_index: usize,
-        calls: Vec<Call>,
-    },
+    FunctionUse(usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(test, derive(Serialize))]
 pub enum Storage {
     Global,
-    Local,
+    Local(usize),
 }
-
 #[cfg_attr(test, derive(Serialize))]
 pub struct Call {
     pub arguments: Vec<Expression>,

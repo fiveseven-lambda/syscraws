@@ -148,6 +148,7 @@ impl Context {
 
     pub fn translate_function_definition(
         &mut self,
+        function_index: usize,
         ast::FunctionDefinition {
             ty_parameters: ast_ty_parameters,
             parameters: ast_parameters,
@@ -155,10 +156,11 @@ impl Context {
             body: ast_body,
             extra_tokens_pos,
         }: ast::FunctionDefinition,
+        function_uses: &mut Vec<ir::FunctionUse>,
         exports: &[Context],
         files: &[log::File],
         logger: &mut log::Logger,
-    ) -> Option<(ir::FunctionTy, ir::FunctionDefinition)> {
+    ) -> Option<(ir::FunctionTy, ir::Block, usize)> {
         let mut ty_parameters_name = Vec::new();
         if let Some(ast_ty_parameters) = ast_ty_parameters {
             for ast_ty_parameter in ast_ty_parameters {
@@ -199,7 +201,7 @@ impl Context {
                 }
             }
         }
-        let mut local_variables = Variables::new(ir::Storage::Local);
+        let mut local_variables = Variables::new(ir::Storage::Local(function_index));
         let mut parameter_tys = Vec::new();
         match ast_parameters {
             Ok(ast_parameters) => {
@@ -285,7 +287,6 @@ impl Context {
             logger.extra_tokens(extra_tokens_pos, &files);
         }
         let mut builder = BlockBuilder::new();
-        let mut overloads = Vec::new();
         for ast::WithExtraTokens {
             content: ast_statement,
             extra_tokens_pos,
@@ -297,7 +298,7 @@ impl Context {
             self.translate_statement(
                 ast_statement,
                 &mut builder,
-                &mut overloads,
+                function_uses,
                 &mut local_variables,
                 0,
                 &exports,
@@ -305,7 +306,7 @@ impl Context {
                 logger,
             );
         }
-        local_variables.free_and_remove(0, &mut builder, &mut overloads, self);
+        local_variables.free_and_remove(0, &mut builder, function_uses, self);
         let body = builder.finish();
         for ty_parameter_name in &ty_parameters_name {
             self.items.remove(ty_parameter_name);
@@ -316,11 +317,8 @@ impl Context {
                 parameter_tys,
                 return_ty,
             },
-            ir::FunctionDefinition {
-                num_local_variables: local_variables.num_total(),
-                body,
-                overloads,
-            },
+            body,
+            local_variables.num_total(),
         ))
     }
 
@@ -328,7 +326,7 @@ impl Context {
         &mut self,
         statement: ast::Statement,
         builder: &mut BlockBuilder,
-        overloads: &mut Vec<Vec<ir::Function>>,
+        function_uses: &mut Vec<ir::FunctionUse>,
         variables: &mut Variables,
         num_outer_variables: usize,
         exports: &[Context],
@@ -338,7 +336,8 @@ impl Context {
         match statement {
             ast::Statement::Term(term) => {
                 let term_pos = term.pos.clone();
-                let Ok(term) = self.translate_term(term, false, overloads, exports, files, logger)
+                let Ok(term) =
+                    self.translate_term(term, false, function_uses, exports, files, logger)
                 else {
                     return;
                 };
@@ -385,7 +384,7 @@ impl Context {
             } => {
                 let condition = if let Some(ast_condition) = ast_condition {
                     let condition_pos = ast_condition.pos.clone();
-                    self.translate_term(ast_condition, false, overloads, exports, files, logger)
+                    self.translate_term(ast_condition, false, function_uses, exports, files, logger)
                         .and_then(|term| match term {
                             Term::Expression(condition) => Ok(condition),
                             _ => {
@@ -410,7 +409,7 @@ impl Context {
                     self.translate_statement(
                         stmt,
                         &mut then_builder,
-                        overloads,
+                        function_uses,
                         variables,
                         num_outer_variables,
                         exports,
@@ -418,7 +417,7 @@ impl Context {
                         logger,
                     );
                 }
-                variables.free_and_remove(num_variables, &mut then_builder, overloads, self);
+                variables.free_and_remove(num_variables, &mut then_builder, function_uses, self);
                 let then_block = then_builder.finish();
                 let mut else_builder = BlockBuilder::new();
                 if let Some(ast::ElseBlock {
@@ -435,7 +434,7 @@ impl Context {
                         self.translate_statement(
                             stmt,
                             &mut else_builder,
-                            overloads,
+                            function_uses,
                             variables,
                             num_outer_variables,
                             exports,
@@ -443,7 +442,12 @@ impl Context {
                             logger,
                         );
                     }
-                    variables.free_and_remove(num_variables, &mut else_builder, overloads, self);
+                    variables.free_and_remove(
+                        num_variables,
+                        &mut else_builder,
+                        function_uses,
+                        self,
+                    );
                 }
                 let else_block = else_builder.finish();
                 builder.add_if_statement(condition.unwrap(), then_block, else_block);
@@ -456,7 +460,7 @@ impl Context {
             } => {
                 let condition = if let Some(ast_condition) = ast_condition {
                     let condition_pos = ast_condition.pos.clone();
-                    self.translate_term(ast_condition, false, overloads, exports, files, logger)
+                    self.translate_term(ast_condition, false, function_uses, exports, files, logger)
                         .and_then(|term| match term {
                             Term::Expression(condition) => Ok(condition),
                             _ => {
@@ -481,7 +485,7 @@ impl Context {
                     self.translate_statement(
                         stmt,
                         &mut do_builder,
-                        overloads,
+                        function_uses,
                         variables,
                         num_variables,
                         exports,
@@ -489,29 +493,36 @@ impl Context {
                         logger,
                     );
                 }
-                variables.free_and_remove(num_variables, &mut do_builder, overloads, self);
+                variables.free_and_remove(num_variables, &mut do_builder, function_uses, self);
                 let do_block = do_builder.finish();
                 builder.add_while_statement(condition.unwrap(), do_block);
             }
             ast::Statement::Break => {
-                variables.free(num_outer_variables, builder, overloads);
+                variables.free(num_outer_variables, builder, function_uses);
                 builder.add_break();
             }
             ast::Statement::Continue => {
-                variables.free(num_outer_variables, builder, overloads);
+                variables.free(num_outer_variables, builder, function_uses);
                 builder.add_continue();
             }
             ast::Statement::Return { value } => {
                 let value = match value {
                     Some(value) => {
-                        match self.translate_term(value, false, overloads, exports, files, logger) {
+                        match self.translate_term(
+                            value,
+                            false,
+                            function_uses,
+                            exports,
+                            files,
+                            logger,
+                        ) {
                             Ok(Term::Expression(value)) => value,
                             _ => todo!(),
                         }
                     }
                     None => todo!(),
                 };
-                variables.free(0, builder, overloads);
+                variables.free(0, builder, function_uses);
                 builder.add_return(value);
             }
         }
@@ -524,7 +535,7 @@ impl Context {
             pos,
         }: ast::TermWithPos,
         reference: bool,
-        overloads: &mut Vec<Vec<ir::Function>>,
+        function_uses: &mut Vec<ir::FunctionUse>,
         exports: &[Context],
         files: &[log::File],
         logger: &mut log::Logger,
@@ -579,16 +590,22 @@ impl Context {
                         ast::StringLiteralComponent::PlaceHolder { format, value } => {
                             if let Some(value) = value {
                                 if let Ok(Term::Expression(expression)) = self.translate_term(
-                                    value, reference, overloads, exports, files, logger,
+                                    value,
+                                    reference,
+                                    function_uses,
+                                    exports,
+                                    files,
+                                    logger,
                                 ) {
-                                    let overload_index = overloads.len();
-                                    overloads.push(vec![ir::Function::IntegerToString]);
-                                    components.push(ir::Expression::Function {
-                                        overload_index,
+                                    let function_use_index = function_uses.len();
+                                    function_uses.push(ir::FunctionUse {
+                                        candidates: vec![ir::Function::IntegerToString],
                                         calls: vec![ir::Call {
                                             arguments: vec![expression],
                                         }],
                                     });
+                                    components
+                                        .push(ir::Expression::FunctionUse(function_use_index));
                                 }
                             }
                         }
@@ -598,28 +615,30 @@ impl Context {
                     components
                         .into_iter()
                         .reduce(|left, right| {
-                            let overload_index = overloads.len();
-                            overloads.push(vec![ir::Function::ConcatenateString]);
-                            ir::Expression::Function {
-                                overload_index,
+                            let function_use_index = function_uses.len();
+                            function_uses.push(ir::FunctionUse {
+                                candidates: vec![ir::Function::ConcatenateString],
                                 calls: vec![ir::Call {
                                     arguments: vec![left, right],
                                 }],
-                            }
+                            });
+                            ir::Expression::FunctionUse(function_use_index)
                         })
                         .unwrap_or(ir::Expression::String(String::new())),
                 ))
             }
             ast::Term::Identity => {
-                let overload_index = overloads.len();
-                overloads.push(vec![ir::Function::Identity]);
-                Ok(Term::Expression(ir::Expression::Function {
-                    overload_index,
+                let function_use_index = function_uses.len();
+                function_uses.push(ir::FunctionUse {
+                    candidates: vec![ir::Function::Identity],
                     calls: vec![],
-                }))
+                });
+                Ok(Term::Expression(ir::Expression::FunctionUse(
+                    function_use_index,
+                )))
             }
             ast::Term::Identifier(name) => {
-                self.get_named_item(&name, reference, pos, overloads, files, logger)
+                self.get_named_item(&name, reference, pos, function_uses, files, logger)
             }
             ast::Term::FieldByName {
                 term_left: ast_term_left,
@@ -627,7 +646,7 @@ impl Context {
             } => match self.translate_term(
                 *ast_term_left,
                 reference,
-                overloads,
+                function_uses,
                 exports,
                 files,
                 logger,
@@ -636,22 +655,27 @@ impl Context {
                 Term::Ty(_) => {
                     todo!();
                 }
-                Term::Import(file_index) => exports[file_index]
-                    .get_named_item(&name, reference, pos, overloads, files, logger),
+                Term::Import(file_index) => exports[file_index].get_named_item(
+                    &name,
+                    reference,
+                    pos,
+                    function_uses,
+                    files,
+                    logger,
+                ),
             },
             ast::Term::FunctionCall {
                 function: ast_function,
                 arguments: ast_arguments,
             } => {
                 let function_pos = ast_function.pos.clone();
-                let function = self
-                    .translate_term(*ast_function, false, overloads, exports, files, logger)
+                let function_use_index = self
+                    .translate_term(*ast_function, false, function_uses, exports, files, logger)
                     .and_then(|term| match term {
                         Term::Expression(function) => match function {
-                            ir::Expression::Function {
-                                overload_index,
-                                calls,
-                            } => Ok((overload_index, calls)),
+                            ir::Expression::FunctionUse(function_use_index) => {
+                                Ok(function_use_index)
+                            }
                             _ => {
                                 logger.expected_function(function_pos, files);
                                 Err(())
@@ -672,9 +696,14 @@ impl Context {
                         ast::ListElement::NonEmpty(ast_argument) => ast_argument,
                     };
                     let argument_pos = ast_argument.pos.clone();
-                    let Ok(argument) =
-                        self.translate_term(ast_argument, false, overloads, exports, files, logger)
-                    else {
+                    let Ok(argument) = self.translate_term(
+                        ast_argument,
+                        false,
+                        function_uses,
+                        exports,
+                        files,
+                        logger,
+                    ) else {
                         continue;
                     };
                     match argument {
@@ -686,12 +715,13 @@ impl Context {
                         }
                     }
                 }
-                let (overload_index, mut calls) = function?;
-                calls.push(ir::Call { arguments });
-                Ok(Term::Expression(ir::Expression::Function {
-                    overload_index,
-                    calls,
-                }))
+                let function_use_index = function_use_index?;
+                function_uses[function_use_index]
+                    .calls
+                    .push(ir::Call { arguments });
+                Ok(Term::Expression(ir::Expression::FunctionUse(
+                    function_use_index,
+                )))
             }
             ast::Term::Assignment {
                 left_hand_side: ast_left_hand_side,
@@ -705,7 +735,7 @@ impl Context {
                         self.translate_term(
                             *ast_left_hand_side,
                             true,
-                            overloads,
+                            function_uses,
                             exports,
                             files,
                             logger,
@@ -729,7 +759,7 @@ impl Context {
                         self.translate_term(
                             *ast_right_hand_side,
                             false,
-                            overloads,
+                            function_uses,
                             exports,
                             files,
                             logger,
@@ -752,14 +782,16 @@ impl Context {
                     .get(operator_name)
                     .cloned()
                     .unwrap_or_else(Vec::new);
-                let overload_index = overloads.len();
-                overloads.push(candidates);
-                Ok(Term::Expression(ir::Expression::Function {
-                    overload_index,
+                let function_use_index = function_uses.len();
+                function_uses.push(ir::FunctionUse {
+                    candidates,
                     calls: vec![ir::Call {
                         arguments: vec![left_hand_side?, right_hand_side?],
                     }],
-                }))
+                });
+                Ok(Term::Expression(ir::Expression::FunctionUse(
+                    function_use_index,
+                )))
             }
             ast::Term::TypeParameters {
                 term_left: ast_term_left,
@@ -767,7 +799,7 @@ impl Context {
             } => {
                 let term_left_pos = ast_term_left.pos.clone();
                 let term_left = self
-                    .translate_term(*ast_term_left, false, overloads, exports, files, logger)
+                    .translate_term(*ast_term_left, false, function_uses, exports, files, logger)
                     .and_then(|term_left| match term_left {
                         Term::Ty(ty) => Ok(ty),
                         _ => {
@@ -786,7 +818,7 @@ impl Context {
                     };
                     let parameter_pos = ast_parameter.pos.clone();
                     let parameter = self
-                        .translate_term(ast_parameter, false, overloads, exports, files, logger)
+                        .translate_term(ast_parameter, false, function_uses, exports, files, logger)
                         .and_then(|term_left| match term_left {
                             Term::Ty(ty) => Ok(ty),
                             _ => {
@@ -816,7 +848,7 @@ impl Context {
         name: &str,
         reference: bool,
         pos: log::Pos,
-        overloads: &mut Vec<Vec<ir::Function>>,
+        function_uses: &mut Vec<ir::FunctionUse>,
         files: &[log::File],
         logger: &mut log::Logger,
     ) -> Result<Term, ()> {
@@ -826,12 +858,14 @@ impl Context {
                     logger.expected_lvalue(pos, files);
                     Err(())
                 } else {
-                    let overload_index = overloads.len();
-                    overloads.push(candidates.clone());
-                    Ok(Term::Expression(ir::Expression::Function {
-                        overload_index,
+                    let function_use_index = function_uses.len();
+                    function_uses.push(ir::FunctionUse {
+                        candidates: candidates.clone(),
                         calls: vec![],
-                    }))
+                    });
+                    Ok(Term::Expression(ir::Expression::FunctionUse(
+                        function_use_index,
+                    )))
                 }
             }
             Some(&(_, Item::Variable(storage, index))) => {
@@ -839,14 +873,14 @@ impl Context {
                 Ok(Term::Expression(if reference {
                     expr
                 } else {
-                    let overload_index = overloads.len();
-                    overloads.push(vec![ir::Function::Dereference]);
-                    ir::Expression::Function {
-                        overload_index,
+                    let function_use_index = function_uses.len();
+                    function_uses.push(ir::FunctionUse {
+                        candidates: vec![ir::Function::Dereference],
                         calls: vec![ir::Call {
                             arguments: vec![expr],
                         }],
-                    }
+                    });
+                    ir::Expression::FunctionUse(function_use_index)
                 }))
             }
             Some(&(_, Item::Import(index))) => Ok(Term::Import(index)),
