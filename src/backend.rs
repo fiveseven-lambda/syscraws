@@ -67,14 +67,15 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                 .collect()
         })
         .collect();
-    let function_use_tys: Vec<Rc<ty::Ty>> = Vec::new();
+    let mut function_use_tys: Vec<Rc<ty::Ty>> = Vec::new();
+    let mut function_use_orders = Vec::new();
     for function_use in &ir_program.function_uses {
         let mut candidates: Vec<_> = function_use
             .candidates
             .iter()
             .map(|ir_function| {
                 let (function_ty, _) = translate_function(ir_function, &ir_program.function_tys);
-                Some(function_ty)
+                Some((function_ty, Vec::new()))
             })
             .collect();
         for call in &function_use.calls {
@@ -110,8 +111,8 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                 .collect();
             candidates = candidates
                 .into_iter()
-                .map(|candidate_ty| {
-                    let Some(candidate_ty) = candidate_ty else {
+                .map(|candidate| {
+                    let Some((candidate_ty, mut orders_list)) = candidate else {
                         return None;
                     };
                     let (return_ty, mut parameter_tys) = match *candidate_ty {
@@ -134,6 +135,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                     };
                     let mut ty_vars = argument_ty_vars.clone();
                     let mut inequalities = Vec::new();
+                    let mut diff_sum = 0;
                     for &(argument_index, argument_order) in &argument_orders {
                         let ty::Ty::Cons { head, tail } = parameter_tys.as_ref() else {
                             return None;
@@ -142,22 +144,65 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                         let next_index = ty_vars.len();
                         let parameter_index = *ty_vars.entry(var).or_insert(next_index);
                         parameter_tys = tail;
-                        inequalities.push((
-                            argument_index,
-                            parameter_index,
-                            argument_order - parameter_order,
-                        ));
+                        let diff = argument_order - parameter_order;
+                        diff_sum += diff;
+                        inequalities.push((argument_index, parameter_index, diff));
                     }
                     if !matches!(parameter_tys.as_ref(), ty::Ty::Nil) {
                         return None;
                     }
-                    // binary search and Dijkstra's algorithm
-                    todo!();
+                    let num_ty_vars = ty_vars.len();
+                    let mut min_order = 0;
+                    let mut max_order = diff_sum;
+                    let mut orders = None;
+                    while max_order - min_order > 1 {
+                        let mid_order = (min_order + max_order) / 2;
+                        match get_orders(&inequalities, num_ty_vars, mid_order) {
+                            Some(ords) => {
+                                orders = Some(ords);
+                                max_order = mid_order;
+                            }
+                            None => {
+                                min_order = mid_order;
+                            }
+                        }
+                    }
+                    orders_list.push(orders);
+                    // TODO: unify types here
+                    Some((return_ty.clone(), orders_list))
                 })
                 .collect();
         }
+        let passed_candidates: Vec<_> = candidates.into_iter().flatten().collect();
+        if passed_candidates.len() > 1 {
+            todo!("Error not implemented: ambiguous function call");
+        } else if let Some((function_ty, orders_list)) = passed_candidates.into_iter().next() {
+            function_use_tys.push(function_ty);
+            function_use_orders.push(orders_list);
+        } else {
+            todo!("Error not implemented: no matching function found");
+        }
     }
     todo!();
+}
+
+fn get_orders(
+    inequalities: &[(usize, usize, i32)],
+    num_ty_vars: usize,
+    max_order: i32,
+) -> Option<Vec<i32>> {
+    let mut orders = vec![None; num_ty_vars];
+    orders[0] = Some(0);
+    for _ in 0..num_ty_vars {
+        let mut updated = false;
+        for &(arg, param, diff) in inequalities {
+            todo!();
+        }
+        if !updated {
+            return orders.into_iter().collect();
+        }
+    }
+    None
 }
 
 fn translate_function(
