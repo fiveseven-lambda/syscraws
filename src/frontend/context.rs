@@ -53,7 +53,6 @@ impl Context {
             extra_tokens_pos,
         }: ast::StructureDefinition,
         exports: &[Context],
-        files: &[log::File],
         logger: &mut log::Logger,
     ) -> (ir::TyKind, ir::Structure) {
         let mut ty_parameters_name = Vec::new();
@@ -61,7 +60,7 @@ impl Context {
             for ast_ty_parameter in ast_ty_parameters {
                 let ast_ty_parameter = match ast_ty_parameter {
                     ast::ListElement::Empty { comma_pos } => {
-                        logger.empty_ty_parameter(comma_pos, &files);
+                        logger.empty_ty_parameter(comma_pos);
                         continue;
                     }
                     ast::ListElement::NonEmpty(ast_ty_parameter) => ast_ty_parameter,
@@ -70,11 +69,7 @@ impl Context {
                     ast::Term::Identifier(name) => match self.items.entry(name.clone()) {
                         std::collections::hash_map::Entry::Occupied(mut entry) => {
                             if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(
-                                    ast_ty_parameter.pos,
-                                    pos.clone(),
-                                    &files,
-                                );
+                                logger.duplicate_definition(ast_ty_parameter.pos, pos.clone());
                             } else {
                                 entry.insert((
                                     Some(ast_ty_parameter.pos),
@@ -92,7 +87,7 @@ impl Context {
                         }
                     },
                     _ => {
-                        logger.invalid_ty_parameter(ast_ty_parameter.pos, &files);
+                        logger.invalid_ty_parameter(ast_ty_parameter.pos);
                     }
                 }
             }
@@ -106,7 +101,7 @@ impl Context {
             ir::TyKind::Ty
         };
         if let Some(extra_tokens_pos) = extra_tokens_pos {
-            logger.extra_tokens(extra_tokens_pos, &files);
+            logger.extra_tokens(extra_tokens_pos);
         }
         let mut field_tys = Vec::new();
         for ast::WithExtraTokens {
@@ -121,17 +116,17 @@ impl Context {
                     term_right: Some(ast_field_ty),
                 } => {
                     let field_ty_pos = ast_field_ty.pos.clone();
-                    match self.translate_ty(*ast_field_ty, &exports, &files, logger) {
+                    match self.translate_ty(*ast_field_ty, &exports, logger) {
                         Ok(field_ty) => field_tys.push(field_ty),
                         Err(()) => {}
                     }
                 }
                 _ => {
-                    logger.invalid_structure_field(ast_field.pos, &files);
+                    logger.invalid_structure_field(ast_field.pos);
                 }
             }
             if let Some(extra_tokens_pos) = extra_tokens_pos {
-                logger.extra_tokens(extra_tokens_pos, &files);
+                logger.extra_tokens(extra_tokens_pos);
             }
         }
         for ty_parameter_name in &ty_parameters_name {
@@ -158,7 +153,6 @@ impl Context {
         }: ast::FunctionDefinition,
         function_uses: &mut Vec<ir::FunctionUse>,
         exports: &[Context],
-        files: &[log::File],
         logger: &mut log::Logger,
     ) -> Option<(ir::FunctionTy, ir::Block, usize)> {
         let mut ty_parameters_name = Vec::new();
@@ -166,7 +160,7 @@ impl Context {
             for ast_ty_parameter in ast_ty_parameters {
                 let ast_ty_parameter = match ast_ty_parameter {
                     ast::ListElement::Empty { comma_pos } => {
-                        logger.empty_ty_parameter(comma_pos, &files);
+                        logger.empty_ty_parameter(comma_pos);
                         continue;
                     }
                     ast::ListElement::NonEmpty(ast_ty_parameter) => ast_ty_parameter,
@@ -175,11 +169,7 @@ impl Context {
                     match self.items.entry(name.clone()) {
                         std::collections::hash_map::Entry::Occupied(mut entry) => {
                             if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(
-                                    ast_ty_parameter.pos,
-                                    pos.clone(),
-                                    &files,
-                                );
+                                logger.duplicate_definition(ast_ty_parameter.pos, pos.clone());
                             } else {
                                 entry.insert((
                                     Some(ast_ty_parameter.pos),
@@ -197,7 +187,7 @@ impl Context {
                         }
                     }
                 } else {
-                    logger.invalid_ty_parameter(ast_ty_parameter.pos, &files);
+                    logger.invalid_ty_parameter(ast_ty_parameter.pos);
                 }
             }
         }
@@ -208,7 +198,7 @@ impl Context {
                 for ast_parameter in ast_parameters {
                     let ast_parameter = match ast_parameter {
                         ast::ListElement::Empty { comma_pos } => {
-                            logger.empty_parameter(comma_pos, &files);
+                            logger.empty_parameter(comma_pos);
                             continue;
                         }
                         ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
@@ -227,7 +217,6 @@ impl Context {
                                                 logger.duplicate_definition(
                                                     ast_parameter.pos,
                                                     pos.clone(),
-                                                    &files,
                                                 );
                                             } else {
                                                 let item = local_variables.add(name);
@@ -241,40 +230,39 @@ impl Context {
                                     }
                                 }
                                 _ => {
-                                    logger.invalid_parameter(ast_parameter.pos, &files);
+                                    logger.invalid_parameter(ast_parameter.pos);
                                 }
                             }
                             if let Some(ast_parameter_ty) = ast_parameter_ty {
                                 let parameter_pos = ast_parameter_ty.pos.clone();
-                                match self.translate_ty(*ast_parameter_ty, &exports, &files, logger)
-                                {
+                                match self.translate_ty(*ast_parameter_ty, &exports, logger) {
                                     Ok(parameter_ty) => parameter_tys.push(parameter_ty),
-                                    Ok(_) => logger.expected_ty(parameter_pos, &files),
+                                    Ok(_) => logger.expected_ty(parameter_pos),
                                     Err(()) => {}
                                 }
                             } else {
-                                logger.missing_ty(colon_pos, &files);
+                                logger.missing_ty(colon_pos);
                             }
                         }
                         _ => {
-                            logger.invalid_parameter(ast_parameter.pos, &files);
+                            logger.invalid_parameter(ast_parameter.pos);
                         }
                     }
                 }
             }
             Err(signature_pos) => {
-                logger.missing_parameter_list(signature_pos, &files);
+                logger.missing_parameter_list(signature_pos);
             }
         }
         let return_ty = if let Some(ast_return_ty) = ast_return_ty {
             if let Some(ast_return_ty) = ast_return_ty.ty {
                 let return_ty_pos = ast_return_ty.pos.clone();
-                match self.translate_ty(ast_return_ty, &exports, &files, logger) {
+                match self.translate_ty(ast_return_ty, &exports, logger) {
                     Ok(return_ty) => return_ty,
                     Err(()) => return None,
                 }
             } else {
-                logger.missing_ty(ast_return_ty.colon_pos, &files);
+                logger.missing_ty(ast_return_ty.colon_pos);
                 return None;
             }
         } else {
@@ -284,7 +272,7 @@ impl Context {
             }
         };
         if let Some(extra_tokens_pos) = extra_tokens_pos {
-            logger.extra_tokens(extra_tokens_pos, &files);
+            logger.extra_tokens(extra_tokens_pos);
         }
         let mut builder = BlockBuilder::new();
         for ast::WithExtraTokens {
@@ -293,7 +281,7 @@ impl Context {
         } in ast_body
         {
             if let Some(extra_tokens_pos) = extra_tokens_pos {
-                logger.extra_tokens(extra_tokens_pos, &files);
+                logger.extra_tokens(extra_tokens_pos);
             }
             self.translate_statement(
                 ast_statement,
@@ -302,7 +290,6 @@ impl Context {
                 &mut local_variables,
                 0,
                 &exports,
-                &files,
                 logger,
             );
         }
@@ -330,20 +317,18 @@ impl Context {
         variables: &mut Variables,
         num_outer_variables: usize,
         exports: &[Context],
-        files: &[log::File],
         logger: &mut log::Logger,
     ) {
         match statement {
             ast::Statement::Term(term) => {
                 let term_pos = term.pos.clone();
-                let Ok(term) =
-                    self.translate_term(term, false, function_uses, exports, files, logger)
+                let Ok(term) = self.translate_term(term, false, function_uses, exports, logger)
                 else {
                     return;
                 };
                 match term {
                     Term::Expression(expr) => builder.add_expression(expr),
-                    _ => logger.expected_expression(term_pos, files),
+                    _ => logger.expected_expression(term_pos),
                 }
             }
             ast::Statement::VariableDeclaration {
@@ -351,14 +336,14 @@ impl Context {
                 term,
             } => {
                 let Some(ast_name) = term else {
-                    logger.missing_variable_name(keyword_var_pos, files);
+                    logger.missing_variable_name(keyword_var_pos);
                     return;
                 };
                 match ast_name.term {
                     ast::Term::Identifier(name) => match self.items.entry(name.clone()) {
                         std::collections::hash_map::Entry::Occupied(mut entry) => {
                             if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(ast_name.pos, pos.clone(), files);
+                                logger.duplicate_definition(ast_name.pos, pos.clone());
                             } else {
                                 let item = variables.add(name);
                                 entry.insert((Some(ast_name.pos), item));
@@ -370,7 +355,7 @@ impl Context {
                         }
                     },
                     _ => {
-                        logger.invalid_variable_name(ast_name.pos, files);
+                        logger.invalid_variable_name(ast_name.pos);
                         return;
                     }
                 }
@@ -384,16 +369,16 @@ impl Context {
             } => {
                 let condition = if let Some(ast_condition) = ast_condition {
                     let condition_pos = ast_condition.pos.clone();
-                    self.translate_term(ast_condition, false, function_uses, exports, files, logger)
+                    self.translate_term(ast_condition, false, function_uses, exports, logger)
                         .and_then(|term| match term {
                             Term::Expression(condition) => Ok(condition),
                             _ => {
-                                logger.expected_expression(condition_pos, files);
+                                logger.expected_expression(condition_pos);
                                 Err(())
                             }
                         })
                 } else {
-                    logger.missing_if_condition(keyword_if_pos, files);
+                    logger.missing_if_condition(keyword_if_pos);
                     Err(())
                 };
                 let mut then_builder = BlockBuilder::new();
@@ -404,7 +389,7 @@ impl Context {
                 } in ast_then_block
                 {
                     if let Some(extra_tokens_pos) = extra_tokens_pos {
-                        logger.extra_tokens(extra_tokens_pos, files);
+                        logger.extra_tokens(extra_tokens_pos);
                     }
                     self.translate_statement(
                         stmt,
@@ -413,7 +398,6 @@ impl Context {
                         variables,
                         num_outer_variables,
                         exports,
-                        files,
                         logger,
                     );
                 }
@@ -438,7 +422,6 @@ impl Context {
                             variables,
                             num_outer_variables,
                             exports,
-                            files,
                             logger,
                         );
                     }
@@ -460,16 +443,16 @@ impl Context {
             } => {
                 let condition = if let Some(ast_condition) = ast_condition {
                     let condition_pos = ast_condition.pos.clone();
-                    self.translate_term(ast_condition, false, function_uses, exports, files, logger)
+                    self.translate_term(ast_condition, false, function_uses, exports, logger)
                         .and_then(|term| match term {
                             Term::Expression(condition) => Ok(condition),
                             _ => {
-                                logger.expected_expression(condition_pos, files);
+                                logger.expected_expression(condition_pos);
                                 Err(())
                             }
                         })
                 } else {
-                    logger.missing_while_condition(keyword_while_pos, files);
+                    logger.missing_while_condition(keyword_while_pos);
                     Err(())
                 };
                 let mut do_builder = BlockBuilder::new();
@@ -480,7 +463,7 @@ impl Context {
                 } in ast_do_block
                 {
                     if let Some(extra_tokens_pos) = extra_tokens_pos {
-                        logger.extra_tokens(extra_tokens_pos, files);
+                        logger.extra_tokens(extra_tokens_pos);
                     }
                     self.translate_statement(
                         stmt,
@@ -489,7 +472,6 @@ impl Context {
                         variables,
                         num_variables,
                         exports,
-                        files,
                         logger,
                     );
                 }
@@ -508,14 +490,7 @@ impl Context {
             ast::Statement::Return { value } => {
                 let value = match value {
                     Some(value) => {
-                        match self.translate_term(
-                            value,
-                            false,
-                            function_uses,
-                            exports,
-                            files,
-                            logger,
-                        ) {
+                        match self.translate_term(value, false, function_uses, exports, logger) {
                             Ok(Term::Expression(value)) => value,
                             _ => todo!(),
                         }
@@ -537,7 +512,6 @@ impl Context {
         reference: bool,
         function_uses: &mut Vec<ir::FunctionUse>,
         exports: &[Context],
-        files: &[log::File],
         logger: &mut log::Logger,
     ) -> Result<Term, ()> {
         match ast_term {
@@ -552,14 +526,14 @@ impl Context {
                     match value.parse() {
                         Ok(value) => {
                             if reference {
-                                logger.expected_lvalue(pos, files);
+                                logger.expected_lvalue(pos);
                                 Err(())
                             } else {
                                 Ok(Term::Expression(ir::Expression::Integer(value)))
                             }
                         }
                         Err(err) => {
-                            logger.cannot_parse_integer(pos, err, files);
+                            logger.cannot_parse_integer(pos, err);
                             Err(())
                         }
                     }
@@ -567,14 +541,14 @@ impl Context {
                     match value.parse() {
                         Ok(value) => {
                             if reference {
-                                logger.expected_lvalue(pos, files);
+                                logger.expected_lvalue(pos);
                                 Err(())
                             } else {
                                 Ok(Term::Expression(ir::Expression::Float(value)))
                             }
                         }
                         Err(err) => {
-                            logger.cannot_parse_float(pos, err, files);
+                            logger.cannot_parse_float(pos, err);
                             Err(())
                         }
                     }
@@ -594,7 +568,6 @@ impl Context {
                                     reference,
                                     function_uses,
                                     exports,
-                                    files,
                                     logger,
                                 ) {
                                     let function_use_index = function_uses.len();
@@ -638,7 +611,7 @@ impl Context {
                 )))
             }
             ast::Term::Identifier(name) => {
-                self.get_named_item(&name, reference, pos, function_uses, files, logger)
+                self.get_named_item(&name, reference, pos, function_uses, logger)
             }
             ast::Term::FieldByName {
                 term_left: ast_term_left,
@@ -648,21 +621,15 @@ impl Context {
                 reference,
                 function_uses,
                 exports,
-                files,
                 logger,
             )? {
                 Term::Expression(expr) => todo!(),
                 Term::Ty(_) => {
                     todo!();
                 }
-                Term::Import(file_index) => exports[file_index].get_named_item(
-                    &name,
-                    reference,
-                    pos,
-                    function_uses,
-                    files,
-                    logger,
-                ),
+                Term::Import(file_index) => {
+                    exports[file_index].get_named_item(&name, reference, pos, function_uses, logger)
+                }
             },
             ast::Term::FunctionCall {
                 function: ast_function,
@@ -670,19 +637,19 @@ impl Context {
             } => {
                 let function_pos = ast_function.pos.clone();
                 let function_use_index = self
-                    .translate_term(*ast_function, false, function_uses, exports, files, logger)
+                    .translate_term(*ast_function, false, function_uses, exports, logger)
                     .and_then(|term| match term {
                         Term::Expression(function) => match function {
                             ir::Expression::FunctionUse(function_use_index) => {
                                 Ok(function_use_index)
                             }
                             _ => {
-                                logger.expected_function(function_pos, files);
+                                logger.expected_function(function_pos);
                                 Err(())
                             }
                         },
                         _ => {
-                            logger.expected_expression(function_pos, files);
+                            logger.expected_expression(function_pos);
                             Err(())
                         }
                     });
@@ -690,20 +657,15 @@ impl Context {
                 for ast_argument in ast_arguments {
                     let ast_argument = match ast_argument {
                         ast::ListElement::Empty { comma_pos } => {
-                            logger.empty_argument(comma_pos, files);
+                            logger.empty_argument(comma_pos);
                             continue;
                         }
                         ast::ListElement::NonEmpty(ast_argument) => ast_argument,
                     };
                     let argument_pos = ast_argument.pos.clone();
-                    let Ok(argument) = self.translate_term(
-                        ast_argument,
-                        false,
-                        function_uses,
-                        exports,
-                        files,
-                        logger,
-                    ) else {
+                    let Ok(argument) =
+                        self.translate_term(ast_argument, false, function_uses, exports, logger)
+                    else {
                         continue;
                     };
                     match argument {
@@ -711,7 +673,7 @@ impl Context {
                             arguments.push(argument);
                         }
                         _ => {
-                            logger.expected_expression(argument_pos, files);
+                            logger.expected_expression(argument_pos);
                         }
                     }
                 }
@@ -737,19 +699,18 @@ impl Context {
                             true,
                             function_uses,
                             exports,
-                            files,
                             logger,
                         )
                         .and_then(|term| match term {
                             Term::Expression(expr) => Ok(expr),
                             _ => {
-                                logger.expected_expression(left_hand_side_pos, files);
+                                logger.expected_expression(left_hand_side_pos);
                                 Err(())
                             }
                         })
                     }
                     None => {
-                        logger.empty_left_operand(operator_pos.clone(), files);
+                        logger.empty_left_operand(operator_pos.clone());
                         Err(())
                     }
                 };
@@ -761,19 +722,18 @@ impl Context {
                             false,
                             function_uses,
                             exports,
-                            files,
                             logger,
                         )
                         .and_then(|term| match term {
                             Term::Expression(expr) => Ok(expr),
                             _ => {
-                                logger.expected_expression(right_hand_side_pos, files);
+                                logger.expected_expression(right_hand_side_pos);
                                 Err(())
                             }
                         })
                     }
                     None => {
-                        logger.empty_right_operand(operator_pos, files);
+                        logger.empty_right_operand(operator_pos);
                         Err(())
                     }
                 };
@@ -799,11 +759,11 @@ impl Context {
             } => {
                 let term_left_pos = ast_term_left.pos.clone();
                 let term_left = self
-                    .translate_term(*ast_term_left, false, function_uses, exports, files, logger)
+                    .translate_term(*ast_term_left, false, function_uses, exports, logger)
                     .and_then(|term_left| match term_left {
                         Term::Ty(ty) => Ok(ty),
                         _ => {
-                            logger.expected_ty(term_left_pos, files);
+                            logger.expected_ty(term_left_pos);
                             Err(())
                         }
                     });
@@ -811,18 +771,18 @@ impl Context {
                 for ast_parameter in ast_parameters {
                     let ast_parameter = match ast_parameter {
                         ast::ListElement::Empty { comma_pos } => {
-                            logger.empty_ty_parameter(comma_pos, files);
+                            logger.empty_ty_parameter(comma_pos);
                             continue;
                         }
                         ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
                     };
                     let parameter_pos = ast_parameter.pos.clone();
                     let parameter = self
-                        .translate_term(ast_parameter, false, function_uses, exports, files, logger)
+                        .translate_term(ast_parameter, false, function_uses, exports, logger)
                         .and_then(|term_left| match term_left {
                             Term::Ty(ty) => Ok(ty),
                             _ => {
-                                logger.expected_ty(parameter_pos, files);
+                                logger.expected_ty(parameter_pos);
                                 Err(())
                             }
                         });
@@ -849,13 +809,12 @@ impl Context {
         reference: bool,
         pos: log::Pos,
         function_uses: &mut Vec<ir::FunctionUse>,
-        files: &[log::File],
         logger: &mut log::Logger,
     ) -> Result<Term, ()> {
         match self.items.get(name) {
             Some(&(_, Item::Function(ref candidates))) => {
                 if reference {
-                    logger.expected_lvalue(pos, files);
+                    logger.expected_lvalue(pos);
                     Err(())
                 } else {
                     let function_use_index = function_uses.len();
@@ -896,25 +855,19 @@ impl Context {
             pos,
         }: ast::TermWithPos,
         exports: &[Context],
-        files: &[log::File],
         logger: &mut log::Logger,
     ) -> Result<ir::Ty, ()> {
         match ast_term {
-            ast::Term::Identifier(name) => self.get_ty(&name, files, logger),
+            ast::Term::Identifier(name) => self.get_ty(&name, logger),
             ast::Term::FieldByName { term_left, name } => {
-                let index = self.translate_import(*term_left, exports, files, logger)?;
-                exports[index].get_ty(&name, files, logger)
+                let index = self.translate_import(*term_left, exports, logger)?;
+                exports[index].get_ty(&name, logger)
             }
             _ => todo!(),
         }
     }
 
-    fn get_ty(
-        &self,
-        name: &str,
-        files: &[log::File],
-        logger: &mut log::Logger,
-    ) -> Result<ir::Ty, ()> {
+    fn get_ty(&self, name: &str, logger: &mut log::Logger) -> Result<ir::Ty, ()> {
         match self.items.get(name) {
             Some((_, Item::Ty(ty))) => Ok(ty.clone()),
             _ => Err(()),
@@ -928,25 +881,19 @@ impl Context {
             pos,
         }: ast::TermWithPos,
         exports: &[Context],
-        files: &[log::File],
         logger: &mut log::Logger,
     ) -> Result<usize, ()> {
         match ast_term {
-            ast::Term::Identifier(name) => self.get_import(&name, files, logger),
+            ast::Term::Identifier(name) => self.get_import(&name, logger),
             ast::Term::FieldByName { term_left, name } => {
-                let index = self.translate_import(*term_left, exports, files, logger)?;
-                exports[index].get_import(&name, files, logger)
+                let index = self.translate_import(*term_left, exports, logger)?;
+                exports[index].get_import(&name, logger)
             }
             _ => todo!(),
         }
     }
 
-    fn get_import(
-        &self,
-        name: &str,
-        files: &[log::File],
-        logger: &mut log::Logger,
-    ) -> Result<usize, ()> {
+    fn get_import(&self, name: &str, logger: &mut log::Logger) -> Result<usize, ()> {
         match self.items.get(name) {
             Some(&(_, Item::Import(index))) => Ok(index),
             _ => Err(()),
