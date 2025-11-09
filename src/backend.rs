@@ -74,11 +74,16 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             .candidates
             .iter()
             .map(|ir_function| {
-                let (function_ty, _) = translate_function(ir_function, &ir_program.function_tys);
-                Some((function_ty, Vec::new()))
+                let (ty, _) = translate_function(ir_function, &ir_program.function_tys);
+                Some(Candidate {
+                    ty,
+                    orders: Vec::new(),
+                    unifications: ty::Unifications::new(),
+                })
             })
             .collect();
         for call in &function_use.calls {
+            let num_arguments = call.arguments.len();
             let argument_tys: Vec<_> = call
                 .arguments
                 .iter()
@@ -112,44 +117,47 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             candidates = candidates
                 .into_iter()
                 .map(|candidate| {
-                    let Some((candidate_ty, mut orders_list)) = candidate else {
+                    let Some(candidate) = candidate else {
                         return None;
                     };
-                    let (return_ty, mut parameter_tys) = match *candidate_ty {
-                        ty::Ty::Application {
-                            ref constructor,
-                            ref arguments,
-                        } => {
-                            if !matches!(
-                                constructor.as_ref(),
-                                ty::Ty::Constructor(ir::TyConstructor::Function)
-                            ) {
-                                return None;
-                            }
-                            match arguments.as_ref() {
-                                ty::Ty::Cons { head, tail } => (head, tail),
-                                _ => panic!(),
-                            }
-                        }
-                        _ => return None,
-                    };
+                    let mut unifications = candidate.unifications.undo();
+                    let return_ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+                    let parameter_tys: Vec<_> = (0..num_arguments)
+                        .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
+                        .collect();
+                    if !unifications.unify(
+                        &candidate.ty,
+                        &Rc::new(ty::Ty::Application {
+                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                            arguments: Rc::new(ty::Ty::Cons {
+                                head: return_ty.clone(),
+                                tail: parameter_tys.iter().rev().fold(
+                                    Rc::new(ty::Ty::Nil),
+                                    |tail, parameter_ty| {
+                                        Rc::new(ty::Ty::Cons {
+                                            head: parameter_ty.clone(),
+                                            tail,
+                                        })
+                                    },
+                                ),
+                            }),
+                        }),
+                    ) {
+                        unifications.undo();
+                        return None;
+                    }
                     let mut ty_vars = argument_ty_vars.clone();
                     let mut inequalities = Vec::new();
                     let mut diff_sum = 0;
-                    for &(argument_index, argument_order) in &argument_orders {
-                        let ty::Ty::Cons { head, tail } = parameter_tys.as_ref() else {
-                            return None;
-                        };
-                        let (var, parameter_order) = head.extract_function_ty();
+                    for (&(argument_index, argument_order), parameter_ty) in
+                        argument_orders.iter().zip(&parameter_tys)
+                    {
+                        let (parameter_var, parameter_order) = parameter_ty.extract_function_ty();
                         let next_index = ty_vars.len();
-                        let parameter_index = *ty_vars.entry(var).or_insert(next_index);
-                        parameter_tys = tail;
+                        let parameter_index = *ty_vars.entry(parameter_var).or_insert(next_index);
                         let diff = argument_order - parameter_order;
-                        diff_sum += diff;
+                        diff_sum += diff.abs();
                         inequalities.push((argument_index, parameter_index, diff));
-                    }
-                    if !matches!(parameter_tys.as_ref(), ty::Ty::Nil) {
-                        return None;
                     }
                     let num_ty_vars = ty_vars.len();
                     let mut min_order = 0;
@@ -167,23 +175,38 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                             }
                         }
                     }
-                    orders_list.push(orders);
+                    let Some(orders) = orders else {
+                        unifications.undo();
+                        return None;
+                    };
                     // TODO: unify types here
-                    Some((return_ty.clone(), orders_list))
+                    let mut candidate = Candidate {
+                        ty: return_ty,
+                        orders: candidate.orders,
+                        unifications: unifications.undo(),
+                    };
+                    candidate.orders.push(orders);
+                    Some(candidate)
                 })
                 .collect();
         }
         let passed_candidates: Vec<_> = candidates.into_iter().flatten().collect();
         if passed_candidates.len() > 1 {
             todo!("Error not implemented: ambiguous function call");
-        } else if let Some((function_ty, orders_list)) = passed_candidates.into_iter().next() {
-            function_use_tys.push(function_ty);
-            function_use_orders.push(orders_list);
+        } else if let Some(candidate) = passed_candidates.into_iter().next() {
+            function_use_tys.push(candidate.ty);
+            function_use_orders.push(candidate.orders);
         } else {
             todo!("Error not implemented: no matching function found");
         }
     }
     todo!();
+}
+
+struct Candidate {
+    ty: Rc<ty::Ty>,
+    orders: Vec<Vec<i32>>,
+    unifications: ty::Unifications,
 }
 
 fn get_orders(

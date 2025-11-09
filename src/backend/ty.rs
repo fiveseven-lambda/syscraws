@@ -244,17 +244,14 @@ impl Ty {
             Ty::Application {
                 constructor,
                 arguments,
-            } => match (constructor.as_ref(), arguments.as_ref()) {
-                (
-                    Ty::Constructor(ir::TyConstructor::Function),
-                    Ty::Cons {
-                        head: return_ty,
-                        tail: _,
-                    },
-                ) => {
-                    let (ty, depth) = return_ty.extract_function_ty();
-                    (ty, depth + 1)
-                }
+            } => match constructor.as_ref() {
+                Ty::Constructor(ir::TyConstructor::Function) => match arguments.as_ref() {
+                    Ty::Cons { head, tail: _ } => {
+                        let (ty, depth) = head.extract_function_ty();
+                        (ty, depth + 1)
+                    }
+                    _ => panic!(),
+                },
                 _ => (None, 0),
             },
             Ty::Var(var) => match *var.borrow() {
