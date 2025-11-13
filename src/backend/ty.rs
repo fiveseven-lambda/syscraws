@@ -16,7 +16,6 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#[cfg(test)]
 use serde::ser::{Serialize, SerializeMap, SerializeStructVariant, Serializer};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -38,7 +37,6 @@ pub enum Ty {
     Var(RefCell<Var>),
 }
 
-#[cfg(test)]
 impl Serialize for Ty {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -75,7 +73,6 @@ pub enum Var {
     Unassigned(u32),
 }
 
-#[cfg(test)]
 impl Serialize for Var {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {

@@ -25,7 +25,6 @@ use crate::ir;
 mod tests;
 mod ty;
 
-#[cfg(test)]
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -69,17 +68,22 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
         .collect();
     let mut function_use_tys: Vec<Rc<ty::Ty>> = Vec::new();
     let mut function_use_orders = Vec::new();
+    let mut function_use_values = Vec::new();
     for function_use in &ir_program.function_uses {
-        let mut candidates: Vec<_> = function_use
+        let num_candidates = function_use.candidates.len();
+        let (candidate_tys, candidate_values): (Vec<_>, Vec<_>) = function_use
             .candidates
             .iter()
-            .map(|ir_function| {
-                let (ty, _) = translate_function(ir_function, &ir_program.function_tys);
-                Some(Candidate {
-                    ty,
-                    orders: Vec::new(),
-                    unifications: ty::Unifications::new(),
-                })
+            .map(|ir_function| translate_function(ir_function, &ir_program.function_tys))
+            .unzip();
+        let mut candidate_orders = vec![Vec::new(); num_candidates];
+        let mut candidates: Vec<_> = candidate_tys
+            .into_iter()
+            .enumerate()
+            .map(|(index, ty)| Candidate {
+                index,
+                ty,
+                unifications: ty::Unifications::new(),
             })
             .collect();
         for call in &function_use.calls {
@@ -116,10 +120,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                 .collect();
             candidates = candidates
                 .into_iter()
-                .map(|candidate| {
-                    let Some(candidate) = candidate else {
-                        return None;
-                    };
+                .flat_map(|candidate| {
                     let mut unifications = candidate.unifications.undo();
                     let return_ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
                     let parameter_tys: Vec<_> = (0..num_arguments)
@@ -180,32 +181,42 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                         return None;
                     };
                     // TODO: unify types here
-                    let mut candidate = Candidate {
+                    candidate_orders[candidate.index].push(orders);
+                    Some(Candidate {
+                        index: candidate.index,
                         ty: return_ty,
-                        orders: candidate.orders,
                         unifications: unifications.undo(),
-                    };
-                    candidate.orders.push(orders);
-                    Some(candidate)
+                    })
                 })
                 .collect();
         }
-        let passed_candidates: Vec<_> = candidates.into_iter().flatten().collect();
-        if passed_candidates.len() > 1 {
+        if candidates.len() > 1 {
             todo!("Error not implemented: ambiguous function call");
-        } else if let Some(candidate) = passed_candidates.into_iter().next() {
+        } else if let Some(candidate) = candidates.into_iter().next() {
             function_use_tys.push(candidate.ty);
-            function_use_orders.push(candidate.orders);
+            function_use_orders.push(candidate_orders.swap_remove(candidate.index));
+            function_use_values.push(candidate_values.into_iter().nth(candidate.index).unwrap());
         } else {
             todo!("Error not implemented: no matching function found");
         }
     }
-    todo!();
+    for body in ir_program.function_definitions {
+        let mut body_rev = Vec::new();
+        translate_block(
+            &body,
+            &mut body_rev,
+            None,
+            &ir_program.function_uses,
+            &function_use_values,
+            &function_use_orders,
+        );
+    }
+    todo!()
 }
 
 struct Candidate {
+    index: usize,
     ty: Rc<ty::Ty>,
-    orders: Vec<Vec<i32>>,
     unifications: ty::Unifications,
 }
 
@@ -226,6 +237,111 @@ fn get_orders(
         }
     }
     None
+}
+
+fn translate_block(
+    block: &ir::Block,
+    blocks: &mut Vec<Block>,
+    mut next: Option<usize>,
+    function_uses: &[ir::FunctionUse],
+    function_use_values: &[Expression],
+    function_use_orders: &[Vec<Vec<i32>>],
+) -> Option<usize> {
+    for statement in block.statements.iter().rev() {
+        match statement {
+            ir::Statement::Expressions(ir_expressions) => {
+                let index = blocks.len();
+                blocks.push(Block {
+                    expressions: ir_expressions
+                        .iter()
+                        .map(|ir_expression| {
+                            translate_expression(
+                                ir_expression,
+                                function_uses,
+                                function_use_values,
+                                function_use_orders,
+                            )
+                        })
+                        .collect(),
+                    next: Next::Jump(next),
+                });
+                next = Some(index);
+            }
+            ir::Statement::If {
+                antecedents: ir_antecedents,
+                condition: ir_condition,
+                then_block,
+                else_block,
+            } => {
+                let else_index = translate_block(
+                    else_block,
+                    blocks,
+                    next,
+                    function_uses,
+                    function_use_values,
+                    function_use_orders,
+                );
+                let then_index = translate_block(
+                    then_block,
+                    blocks,
+                    next,
+                    function_uses,
+                    function_use_values,
+                    function_use_orders,
+                );
+                let condition = translate_expression(
+                    ir_condition,
+                    function_uses,
+                    function_use_values,
+                    function_use_orders,
+                );
+                let condition_index = blocks.len();
+                blocks.push(Block {
+                    expressions: ir_antecedents
+                        .iter()
+                        .map(|ir_expression| {
+                            translate_expression(
+                                ir_expression,
+                                function_uses,
+                                function_use_values,
+                                function_use_orders,
+                            )
+                        })
+                        .collect(),
+                    next: Next::Br(condition, then_index, else_index),
+                });
+                next = Some(condition_index);
+            }
+            ir::Statement::While {
+                condition: ir_condition,
+                do_block,
+            } => {
+                let condition_index = blocks.len() + do_block.size;
+                let do_index = translate_block(
+                    do_block,
+                    blocks,
+                    Some(condition_index),
+                    function_uses,
+                    function_use_values,
+                    function_use_orders,
+                );
+                assert_eq!(blocks.len(), condition_index);
+                let condition = translate_expression(
+                    ir_condition,
+                    function_uses,
+                    function_use_values,
+                    function_use_orders,
+                );
+                blocks.push(Block {
+                    expressions: Vec::new(),
+                    next: Next::Br(condition, do_index, next),
+                });
+                next = Some(condition_index);
+            }
+            _ => todo!(),
+        }
+    }
+    next
 }
 
 fn translate_function(
@@ -377,7 +493,50 @@ fn translate_function(
     }
 }
 
-#[cfg_attr(test, derive(Serialize))]
+fn translate_expression(
+    expression: &ir::Expression,
+    function_uses: &[ir::FunctionUse],
+    function_use_values: &[Expression],
+    function_use_orders: &[Vec<Vec<i32>>],
+) -> Expression {
+    match *expression {
+        ir::Expression::Integer(value) => Expression::Integer(value),
+        ir::Expression::Float(value) => Expression::Float(value),
+        ir::Expression::String(ref value) => Expression::String(value.clone()),
+        ir::Expression::FunctionUse(index) => {
+            for call in &function_uses[index].calls {
+                let arguments: Vec<_> = call
+                    .arguments
+                    .iter()
+                    .map(|argument| {
+                        translate_expression(
+                            argument,
+                            function_uses,
+                            function_use_values,
+                            function_use_orders,
+                        )
+                    })
+                    .collect();
+            }
+            todo!();
+        }
+        ir::Expression::Variable(storage, index) => Expression::Variable(storage, index),
+    }
+}
+
+#[derive(Serialize)]
+struct Block {
+    expressions: Vec<Expression>,
+    next: Next,
+}
+
+#[derive(Serialize)]
+enum Next {
+    Jump(Option<usize>),
+    Br(Expression, Option<usize>, Option<usize>),
+}
+
+#[derive(Serialize)]
 enum Expression {
     Integer(i32),
     Float(f64),
