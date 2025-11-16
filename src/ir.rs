@@ -21,33 +21,32 @@
  * [`frontend`](crate::frontend) and [`backend`](crate::backend).
  */
 
-#[cfg(test)]
 use serde::Serialize;
 
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Serialize)]
 pub struct Program {
     pub structures: Vec<(TyKind, Structure)>,
-    pub functions_ty: Vec<FunctionTy>,
-    pub function_definitions: Vec<FunctionDefinition>,
+    pub function_tys: Vec<FunctionTy>,
+    pub num_local_variables: Vec<usize>,
+    pub function_definitions: Vec<Block>,
+    pub function_uses: Vec<FunctionUse>,
     pub num_global_variables: usize,
 }
 
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Serialize)]
 pub struct Structure {
     pub num_ty_parameters: usize,
-    pub fields_ty: Vec<Ty>,
+    pub field_tys: Vec<Ty>,
 }
 
-#[derive(Clone)]
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Clone, Serialize)]
 pub struct FunctionTy {
     pub num_ty_parameters: usize,
-    pub parameters_ty: Vec<Ty>,
+    pub parameter_tys: Vec<Ty>,
     pub return_ty: Ty,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Function {
     AddInteger,
     IntegerToString,
@@ -68,14 +67,13 @@ pub enum Function {
     },
 }
 
-#[cfg_attr(test, derive(Serialize))]
-pub struct FunctionDefinition {
-    pub num_local_variables: usize,
-    pub body: Block,
+#[derive(Serialize)]
+pub struct FunctionUse {
+    pub candidates: Vec<Function>,
+    pub calls: Vec<Call>,
 }
 
-#[derive(Clone)]
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Clone, Serialize)]
 pub enum Ty {
     Constructor(TyConstructor),
     Parameter(usize),
@@ -85,8 +83,7 @@ pub enum Ty {
     },
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize)]
 pub enum TyConstructor {
     Integer,
     Float,
@@ -97,7 +94,7 @@ pub enum TyConstructor {
     Structure(usize),
 }
 
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Serialize)]
 pub enum TyKind {
     Ty,
     Abstraction {
@@ -106,20 +103,20 @@ pub enum TyKind {
     },
 }
 
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Serialize)]
 pub enum TyListKind {
     Nil,
     Cons(Box<TyKind>, Box<TyListKind>),
     Rest,
 }
 
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Serialize)]
 pub struct Block {
     pub statements: Vec<Statement>,
     pub size: usize,
 }
 
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Serialize)]
 pub enum Statement {
     Expressions(Vec<Expression>),
     If {
@@ -140,26 +137,21 @@ pub enum Statement {
     },
 }
 
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Serialize)]
 pub enum Expression {
     Integer(i32),
     Float(f64),
     String(String),
     Variable(Storage, usize),
-    Function {
-        candidates: Vec<Function>,
-        calls: Vec<Call>,
-    },
+    FunctionUse(usize),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
 pub enum Storage {
     Global,
-    Local,
+    Local(usize),
 }
-
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Serialize)]
 pub struct Call {
     pub arguments: Vec<Expression>,
 }

@@ -16,7 +16,6 @@
  * along with Syscraws. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#[cfg(test)]
 use serde::ser::{Serialize, SerializeMap, SerializeStructVariant, Serializer};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -35,10 +34,9 @@ pub enum Ty {
         head: Rc<Ty>,
         tail: Rc<Ty>,
     },
-    Var(Rc<RefCell<Var>>),
+    Var(RefCell<Var>),
 }
 
-#[cfg(test)]
 impl Serialize for Ty {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -75,7 +73,6 @@ pub enum Var {
     Unassigned(u32),
 }
 
-#[cfg(test)]
 impl Serialize for Var {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -90,7 +87,7 @@ impl Serialize for Var {
 }
 
 struct Unification {
-    var: Rc<RefCell<Var>>,
+    ty: Rc<Ty>,
     old: Var,
 }
 
@@ -143,14 +140,30 @@ impl Unifications {
                 if left_var.as_ptr() != right_var.as_ptr() {
                     match left_rank.cmp(&right_rank) {
                         std::cmp::Ordering::Greater => {
-                            self.bind(right_var, Var::Assigned(left.clone()));
+                            self.0.push(Unification {
+                                ty: right.clone(),
+                                old: right_var.borrow().clone(),
+                            });
+                            *right_var.borrow_mut() = Var::Assigned(left.clone());
                         }
                         std::cmp::Ordering::Less => {
-                            self.bind(left_var, Var::Assigned(right.clone()));
+                            self.0.push(Unification {
+                                ty: left.clone(),
+                                old: left_var.borrow().clone(),
+                            });
+                            *left_var.borrow_mut() = Var::Assigned(right.clone());
                         }
                         std::cmp::Ordering::Equal => {
-                            self.bind(left_var, Var::Unassigned(left_rank + 1));
-                            self.bind(right_var, Var::Assigned(left.clone()));
+                            self.0.push(Unification {
+                                ty: left.clone(),
+                                old: left_var.borrow().clone(),
+                            });
+                            *left_var.borrow_mut() = Var::Unassigned(left_rank + 1);
+                            self.0.push(Unification {
+                                ty: right.clone(),
+                                old: right_var.borrow().clone(),
+                            });
+                            *right_var.borrow_mut() = Var::Assigned(left.clone());
                         }
                     }
                 }
@@ -162,7 +175,11 @@ impl Unifications {
                 } else if right.contains(left_var) {
                     false
                 } else {
-                    self.bind(left_var, Var::Assigned(right.clone()));
+                    self.0.push(Unification {
+                        ty: left.clone(),
+                        old: left_var.borrow().clone(),
+                    });
+                    *left_var.borrow_mut() = Var::Assigned(right.clone());
                     true
                 }
             }
@@ -172,7 +189,11 @@ impl Unifications {
                 } else if left.contains(right_var) {
                     false
                 } else {
-                    self.bind(right_var, Var::Assigned(left.clone()));
+                    self.0.push(Unification {
+                        ty: right.clone(),
+                        old: right_var.borrow().clone(),
+                    });
+                    *right_var.borrow_mut() = Var::Assigned(left.clone());
                     true
                 }
             }
@@ -180,20 +201,20 @@ impl Unifications {
         }
     }
 
-    fn bind(&mut self, left: &Rc<RefCell<Var>>, right: Var) {
-        self.0.push(Unification {
-            var: left.clone(),
-            old: left.borrow().clone(),
-        });
-        *left.borrow_mut() = right;
-    }
-
     pub fn undo(self) -> Unifications {
-        let mut ret = Unifications::new();
-        for Unification { var, old } in self.0.into_iter().rev() {
-            ret.bind(&var, old);
-        }
-        ret
+        Unifications(
+            self.0
+                .into_iter()
+                .rev()
+                .map(|Unification { ty, old }| {
+                    let Ty::Var(ref var) = *ty else {
+                        unreachable!()
+                    };
+                    let old = var.replace(old);
+                    Unification { ty, old }
+                })
+                .collect(),
+        )
     }
 }
 
@@ -215,27 +236,24 @@ impl Ty {
         }
     }
 
-    pub fn extract_function_ty(self: &Rc<Ty>) -> (Option<Rc<RefCell<Var>>>, i32) {
+    pub fn extract_function_ty(self: &Rc<Ty>) -> (Option<*const Var>, i32) {
         match self.as_ref() {
             Ty::Application {
                 constructor,
                 arguments,
-            } => match (constructor.as_ref(), arguments.as_ref()) {
-                (
-                    Ty::Constructor(ir::TyConstructor::Function),
-                    Ty::Cons {
-                        head: return_ty,
-                        tail: _,
-                    },
-                ) => {
-                    let (ty, depth) = return_ty.extract_function_ty();
-                    (ty, depth + 1)
-                }
+            } => match constructor.as_ref() {
+                Ty::Constructor(ir::TyConstructor::Function) => match arguments.as_ref() {
+                    Ty::Cons { head, tail: _ } => {
+                        let (ty, depth) = head.extract_function_ty();
+                        (ty, depth + 1)
+                    }
+                    _ => panic!(),
+                },
                 _ => (None, 0),
             },
             Ty::Var(var) => match *var.borrow() {
                 Var::Assigned(ref ty) => ty.extract_function_ty(),
-                Var::Unassigned(_) => (Some(var.clone()), 0),
+                Var::Unassigned(_) => (Some(var.as_ptr()), 0),
             },
             _ => (None, 0),
         }

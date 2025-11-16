@@ -56,8 +56,10 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         num_functions: 0,
         ir_program: ir::Program {
             structures: Vec::new(),
-            functions_ty: Vec::new(),
+            function_tys: Vec::new(),
+            num_local_variables: Vec::new(),
             function_definitions: Vec::new(),
+            function_uses: Vec::new(),
             num_global_variables: 0,
         },
         global_builder: BlockBuilder::new(),
@@ -74,23 +76,22 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         reader.logger.aborting();
         return Err(());
     }
-    reader.global_variables.free(0, &mut reader.global_builder);
+    reader.global_variables.free(
+        0,
+        &mut reader.global_builder,
+        &mut reader.ir_program.function_uses,
+    );
     let body = reader.global_builder.finish();
-    reader.ir_program.functions_ty.push(ir::FunctionTy {
+    reader.ir_program.function_tys.push(ir::FunctionTy {
         num_ty_parameters: 0,
-        parameters_ty: Vec::new(),
+        parameter_tys: Vec::new(),
         return_ty: ir::Ty::Application {
             constructor: Box::new(ir::Ty::Constructor(ir::TyConstructor::Tuple)),
             arguments: vec![],
         },
     });
-    reader
-        .ir_program
-        .function_definitions
-        .push(ir::FunctionDefinition {
-            num_local_variables: 0,
-            body,
-        });
+    reader.ir_program.num_local_variables.push(0);
+    reader.ir_program.function_definitions.push(body);
     reader.ir_program.num_global_variables = reader.global_variables.num_total();
     Ok(reader.ir_program)
 }
@@ -264,12 +265,20 @@ impl Reader<'_> {
                 }
                 ast::TopLevelStatement::FunctionDefinition(function_definition) => {
                     let num_current_items = context.items.len();
-                    if let Some((ty, definition)) = context.translate_function_definition(
-                        function_definition,
-                        &self.exports,
-                        &mut self.logger,
-                    ) {
-                        self.ir_program.functions_ty.push(ty);
+                    let mut function_index = self.ir_program.function_tys.len();
+                    if let Some((ty, definition, num_local_variables)) = context
+                        .translate_function_definition(
+                            function_index,
+                            function_definition,
+                            &mut self.ir_program.function_uses,
+                            &self.exports,
+                            &mut self.logger,
+                        )
+                    {
+                        self.ir_program.function_tys.push(ty);
+                        self.ir_program
+                            .num_local_variables
+                            .push(num_local_variables);
                         self.ir_program.function_definitions.push(definition);
                     }
                     assert_eq!(context.items.len(), num_current_items);
@@ -278,6 +287,7 @@ impl Reader<'_> {
                     context.translate_statement(
                         statement,
                         &mut self.global_builder,
+                        &mut self.ir_program.function_uses,
                         &mut self.global_variables,
                         0,
                         &self.exports,
