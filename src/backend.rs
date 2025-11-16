@@ -398,6 +398,30 @@ fn translate_block(
                 });
                 next = Some(condition_index);
             }
+            ir::Statement::Return {
+                antecedents: ir_antecedents,
+                value: ir_value,
+            } => {
+                blocks.push(Block {
+                    expressions: ir_antecedents
+                        .iter()
+                        .map(|ir_expression| {
+                            translate_expression(
+                                ir_expression,
+                                function_uses,
+                                function_use_values,
+                                function_use_orders,
+                            )
+                        })
+                        .collect(),
+                    next: Next::Return(translate_expression(
+                        ir_value,
+                        function_uses,
+                        function_use_values,
+                        function_use_orders,
+                    )),
+                });
+            }
             _ => todo!(),
         }
     }
