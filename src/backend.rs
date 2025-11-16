@@ -20,7 +20,7 @@
  * Receives intermediate representation ([`ir`]) and executes it.
  */
 
-use crate::ir;
+use crate::{ffi, ir};
 
 mod tests;
 mod ty;
@@ -28,6 +28,7 @@ mod ty;
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::rc::Rc;
 
 fn translate_ty(ir_ty: &ir::Ty, ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
@@ -228,7 +229,9 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             todo!("Error not implemented: no matching function found");
         }
     }
-    for body in ir_program.function_definitions {
+    unsafe { ffi::initialize_jit() };
+    let num_definitions = ir_program.function_definitions.len();
+    for (function_index, body) in ir_program.function_definitions.into_iter().enumerate() {
         let mut body_rev = Vec::new();
         translate_block(
             &body,
@@ -238,8 +241,23 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             &function_use_values,
             &function_use_orders,
         );
+        let function_name = CString::new(format!("{}", function_index)).unwrap();
+        unsafe {
+            let function_type = ffi::get_function_type(false, ffi::get_integer_type(), 0);
+            ffi::add_function(function_name.as_ptr(), function_type, body_rev.len());
+        }
+        for (block_index, block) in body_rev.into_iter().rev().enumerate() {
+            unsafe {
+                ffi::set_insert_point(block_index);
+                block.codegen();
+            }
+        }
+        if function_index == num_definitions - 1 {
+            let pointer = unsafe { ffi::compile_function(function_name.as_ptr()) };
+            return Ok(pointer);
+        }
     }
-    todo!()
+    Err(())
 }
 
 struct Candidate {
@@ -545,8 +563,9 @@ fn translate_expression(
         ir::Expression::Integer(value) => Expression::Integer(value),
         ir::Expression::Float(value) => Expression::Float(value),
         ir::Expression::String(ref value) => Expression::String(value.clone()),
-        ir::Expression::FunctionUse(index) => {
-            for call in &function_uses[index].calls {
+        ir::Expression::FunctionUse(index) => function_uses[index].calls.iter().fold(
+            function_use_values[index].clone(),
+            |function, call| {
                 let arguments: Vec<_> = call
                     .arguments
                     .iter()
@@ -559,9 +578,12 @@ fn translate_expression(
                         )
                     })
                     .collect();
-            }
-            todo!();
-        }
+                Expression::Call {
+                    function: Box::new(function),
+                    arguments,
+                }
+            },
+        ),
         ir::Expression::Variable(storage, index) => Expression::Variable(storage, index),
     }
 }
@@ -572,13 +594,28 @@ struct Block {
     next: Next,
 }
 
+impl Block {
+    unsafe fn codegen(&self) {
+        for expression in &self.expressions {
+            unsafe { expression.codegen() };
+        }
+        match self.next {
+            Next::Return(ref value) => {
+                unsafe { ffi::create_return(value.codegen()) };
+            }
+            _ => todo!(),
+        }
+    }
+}
+
 #[derive(Serialize)]
 enum Next {
     Jump(Option<usize>),
     Br(Expression, Option<usize>, Option<usize>),
+    Return(Expression),
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 enum Expression {
     Integer(i32),
     Float(f64),
@@ -599,8 +636,24 @@ enum Expression {
         parameters_ty: Vec<Rc<ty::Ty>>,
         return_ty: Rc<ty::Ty>,
     },
-    App {
+    Call {
         function: Box<Expression>,
         arguments: Vec<Expression>,
     },
+}
+
+impl Expression {
+    unsafe fn codegen(&self) -> *mut ffi::Value {
+        match *self {
+            Expression::Integer(value) => unsafe { ffi::create_integer(value) },
+            Expression::Variable(storage, index) => unsafe { ffi::create_integer(0) },
+            Expression::Call {
+                ref function,
+                ref arguments,
+            } => match arguments.len() {
+                _ => todo!(),
+            },
+            _ => todo!(),
+        }
+    }
 }
