@@ -161,26 +161,53 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                         inequalities.push((argument_index, parameter_index, diff));
                     }
                     let num_ty_vars = ty_vars.len();
-                    let mut min_order = 0;
-                    let mut max_order = diff_sum;
-                    let mut orders = None;
-                    while max_order - min_order > 1 {
-                        let mid_order = (min_order + max_order) / 2;
-                        match get_orders(&inequalities, num_ty_vars, mid_order) {
-                            Some(ords) => {
-                                orders = Some(ords);
-                                max_order = mid_order;
-                            }
-                            None => {
-                                min_order = mid_order;
-                            }
-                        }
-                    }
-                    let Some(orders) = orders else {
+                    let Some(mut orders) = get_orders(&inequalities, num_ty_vars, diff_sum) else {
                         unifications.undo();
                         return None;
                     };
-                    // TODO: unify types here
+                    let mut min_order = -1;
+                    let mut max_order = diff_sum;
+                    while max_order - min_order > 1 {
+                        let mid_order = (min_order + max_order) / 2;
+                        match get_orders(&inequalities, num_ty_vars, mid_order) {
+                            Some(new_orders) => {
+                                orders = new_orders;
+                                max_order = mid_order;
+                            }
+                            None => min_order = mid_order,
+                        }
+                    }
+                    let extra_calls: Vec<_> = (0..max_order)
+                        .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
+                        .collect();
+                    for i in 0..num_arguments {
+                        unifications.unify(
+                            &argument_tys[i],
+                            &extra_calls.iter().take(orders[i] as usize).fold(
+                                parameter_tys[i].clone(),
+                                |ty, extra_call| {
+                                    Rc::new(ty::Ty::Application {
+                                        constructor: Rc::new(ty::Ty::Constructor(
+                                            ir::TyConstructor::Function,
+                                        )),
+                                        arguments: Rc::new(ty::Ty::Cons {
+                                            head: ty,
+                                            tail: extra_call.clone(),
+                                        }),
+                                    })
+                                },
+                            ),
+                        );
+                    }
+                    let return_ty = extra_calls.iter().fold(return_ty, |ty, extra_call| {
+                        Rc::new(ty::Ty::Application {
+                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                            arguments: Rc::new(ty::Ty::Cons {
+                                head: ty,
+                                tail: extra_call.clone(),
+                            }),
+                        })
+                    });
                     candidate_orders[candidate.index].push(orders);
                     Some(Candidate {
                         index: candidate.index,
@@ -193,6 +220,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
         if candidates.len() > 1 {
             todo!("Error not implemented: ambiguous function call");
         } else if let Some(candidate) = candidates.into_iter().next() {
+            candidate.unifications.undo();
             function_use_tys.push(candidate.ty);
             function_use_orders.push(candidate_orders.swap_remove(candidate.index));
             function_use_values.push(candidate_values.into_iter().nth(candidate.index).unwrap());
@@ -230,10 +258,24 @@ fn get_orders(
     for _ in 0..num_ty_vars {
         let mut updated = false;
         for &(arg, param, diff) in inequalities {
-            todo!();
+            if let Some(arg_order) = orders[arg] {
+                if orders[param].is_none_or(|param_order| param_order > arg_order + diff) {
+                    orders[param] = Some(arg_order + diff);
+                    updated = true;
+                }
+            }
+            if let Some(param_order) = orders[param] {
+                if orders[arg].is_none_or(|arg_order| arg_order > param_order + max_order - diff) {
+                    orders[arg] = Some(param_order + max_order - diff);
+                    updated = true;
+                }
+            }
         }
         if !updated {
-            return orders.into_iter().collect();
+            return inequalities
+                .iter()
+                .map(|&(arg, param, diff)| Some(orders[arg]? - orders[param]? + diff))
+                .collect();
         }
     }
     None

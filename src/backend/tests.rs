@@ -47,3 +47,45 @@ fn unify() {
         &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
     ));
 }
+
+#[test]
+fn orders() {
+    let inequalities = vec![(0, 0, 1), (0, 0, 2)];
+    assert!(get_orders(&inequalities, 1, 0).is_none());
+    assert!(get_orders(&inequalities, 1, 1).is_none());
+    assert_eq!(get_orders(&inequalities, 1, 2).unwrap(), vec![1, 2]);
+
+    let inequalities = vec![(0, 1, 2)];
+    assert_eq!(get_orders(&inequalities, 2, 0).unwrap(), vec![0]);
+    assert_eq!(get_orders(&inequalities, 2, 1).unwrap(), vec![0]);
+    assert_eq!(get_orders(&inequalities, 2, 2).unwrap(), vec![0]);
+
+    let inequalities = vec![(1, 0, -2)];
+    assert_eq!(get_orders(&inequalities, 2, 0).unwrap(), vec![0]);
+    assert_eq!(get_orders(&inequalities, 2, 1).unwrap(), vec![1]);
+    assert_eq!(get_orders(&inequalities, 2, 2).unwrap(), vec![2]);
+
+    /*
+     * Input:
+     * |                    arg | param |
+     * | ---------------------- | ----- |
+     * |             (..)(..)A1 |    T1 |
+     * | (..)(..)(..)(..)(..)T1 |    T2 |
+     * |                     T2 |    A2 |
+     *
+     * Output:
+     * |                         arg |           param |
+     * | --------------------------- | --------------- |
+     * |                 (..)(..)A1  |         (..)T1' |
+     * | (..)(..)(..)(..)(..)(..)T1' | (..)(..)(..)T2' |
+     * |             (..)(..)(..)T2' |             A2  |
+     */
+    let inequalities = vec![(0, 1, 2), (1, 2, 5), (2, 0, 0)];
+    assert!(get_orders(&inequalities, 3, 0).is_none());
+    assert!(get_orders(&inequalities, 3, 1).is_none());
+    assert!(get_orders(&inequalities, 3, 2).is_none());
+    assert_eq!(get_orders(&inequalities, 3, 3).unwrap(), vec![1, 3, 3]);
+
+    let inequalities = vec![(1, 1, 0)];
+    assert!(get_orders(&inequalities, 2, 0).is_none());
+}
