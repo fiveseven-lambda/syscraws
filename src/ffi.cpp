@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025 Atsushi Komaba
+ * Copyright (c) 2023-2026 Atsushi Komaba
  *
  * This file is part of Syscraws.
  * Syscraws is free software: you can redistribute it and/or
