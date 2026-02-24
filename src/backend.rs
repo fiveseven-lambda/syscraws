@@ -58,36 +58,42 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
     let global_variables_ty: Vec<_> = (0..ir_program.num_global_variables)
         .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
         .collect();
-    let local_variables_ty: Vec<Vec<_>> = ir_program
-        .num_local_variables
-        .iter()
-        .map(|&num_local_variables| {
-            (0..num_local_variables)
-                .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
-                .collect()
-        })
-        .collect();
-    let mut function_use_tys: Vec<Rc<ty::Ty>> = Vec::new();
-    let mut function_use_orders = Vec::new();
-    let mut function_use_values = Vec::new();
-    for function_use in &ir_program.function_uses {
-        let num_candidates = function_use.candidates.len();
-        let (candidate_tys, candidate_values): (Vec<_>, Vec<_>) = function_use
-            .candidates
-            .iter()
-            .map(|ir_function| translate_function(ir_function, &ir_program.function_tys))
-            .unzip();
-        let mut candidate_orders = vec![Vec::new(); num_candidates];
-        let mut candidates: Vec<_> = candidate_tys
-            .into_iter()
-            .enumerate()
-            .map(|(index, ty)| Candidate {
-                index,
-                ty,
-                unifications: ty::Unifications::new(),
-            })
+    for (_, function_definition) in ir_program.function_definitions.iter().enumerate() {
+        let local_variables_ty: Vec<_> = (0..function_definition.num_local_variables)
+            .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
             .collect();
-        for call in &function_use.calls {
+        let (mut candidates, candidate_values): (Vec<Vec<Candidate>>, Vec<Vec<Expression>>) =
+            function_definition
+                .function_uses
+                .iter()
+                .map(|function_use| {
+                    function_use
+                        .candidates
+                        .iter()
+                        .enumerate()
+                        .map(|(index, ir_function)| {
+                            let (ty, value) =
+                                translate_function(ir_function, &ir_program.function_tys);
+                            (
+                                Candidate {
+                                    index,
+                                    ty,
+                                    unifications: ty::Unifications::new(),
+                                },
+                                value,
+                            )
+                        })
+                        .unzip()
+                })
+                .unzip();
+        let mut function_use_indices = Vec::new();
+        for call in &function_definition.calls {
+            let function_use_index = match call.function {
+                ir::Expression::FunctionUse(function_use_index) => function_use_index,
+                ir::Expression::Call(call_index) => function_use_indices[call_index],
+                _ => todo!(),
+            };
+            function_use_indices.push(function_use_index);
             let num_arguments = call.arguments.len();
             let argument_tys: Vec<_> = call
                 .arguments
@@ -99,12 +105,21 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                     ir::Expression::Float(_) => {
                         Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))
                     }
-                    ir::Expression::FunctionUse(index) => function_use_tys[index].clone(),
+                    ir::Expression::Call(call_index) => {
+                        let function_use_index = function_use_indices[call_index];
+                        if candidates[function_use_index].len() > 1 {
+                            todo!();
+                        } else if let Some(Candidate { ty, .. }) =
+                            candidates[function_use_index].first()
+                        {
+                            ty.clone()
+                        } else {
+                            todo!();
+                        }
+                    }
                     ir::Expression::Variable(storage, index) => match storage {
                         ir::Storage::Global => global_variables_ty[index].clone(),
-                        ir::Storage::Local(function_index) => {
-                            local_variables_ty[function_index][index].clone()
-                        }
+                        ir::Storage::Local => local_variables_ty[index].clone(),
                     },
                     _ => todo!(),
                 })
@@ -119,7 +134,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                     (index, order)
                 })
                 .collect();
-            candidates = candidates
+            candidates[function_use_index] = std::mem::take(&mut candidates[function_use_index])
                 .into_iter()
                 .flat_map(|candidate| {
                     let mut unifications = candidate.unifications.undo();
@@ -209,7 +224,6 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                             }),
                         })
                     });
-                    candidate_orders[candidate.index].push(orders);
                     Some(Candidate {
                         index: candidate.index,
                         ty: return_ty,
@@ -217,47 +231,22 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                     })
                 })
                 .collect();
-        }
-        if candidates.len() > 1 {
-            todo!("Error not implemented: ambiguous function call");
-        } else if let Some(candidate) = candidates.into_iter().next() {
-            candidate.unifications.undo();
-            function_use_tys.push(candidate.ty);
-            function_use_orders.push(candidate_orders.swap_remove(candidate.index));
-            function_use_values.push(candidate_values.into_iter().nth(candidate.index).unwrap());
-        } else {
-            todo!("Error not implemented: no matching function found");
-        }
-    }
-    unsafe { ffi::initialize_jit() };
-    let num_definitions = ir_program.function_definitions.len();
-    for (function_index, body) in ir_program.function_definitions.into_iter().enumerate() {
-        let mut body_rev = Vec::new();
-        translate_block(
-            &body,
-            &mut body_rev,
-            None,
-            &ir_program.function_uses,
-            &function_use_values,
-            &function_use_orders,
-        );
-        let function_name = CString::new(format!("{}", function_index)).unwrap();
-        unsafe {
-            let function_type = ffi::get_function_type(false, ffi::get_integer_type(), 0);
-            ffi::add_function(function_name.as_ptr(), function_type, body_rev.len());
-        }
-        for (block_index, block) in body_rev.into_iter().rev().enumerate() {
-            unsafe {
-                ffi::set_insert_point(block_index);
-                block.codegen();
+            if candidates[function_use_index].len() <= 1 {
+                if let Some(candidate) = std::mem::take(&mut candidates[function_use_index])
+                    .into_iter()
+                    .next()
+                {
+                    candidates[function_use_index] = vec![Candidate {
+                        index: candidate.index,
+                        ty: candidate.ty,
+                        unifications: ty::Unifications::new(),
+                    }];
+                    candidate.unifications.undo();
+                }
             }
         }
-        if function_index == num_definitions - 1 {
-            let pointer = unsafe { ffi::compile_function(function_name.as_ptr()) };
-            return Ok(pointer);
-        }
     }
-    Err(())
+    todo!();
 }
 
 struct Candidate {
@@ -297,135 +286,6 @@ fn get_orders(
         }
     }
     None
-}
-
-fn translate_block(
-    block: &ir::Block,
-    blocks: &mut Vec<Block>,
-    mut next: Option<usize>,
-    function_uses: &[ir::FunctionUse],
-    function_use_values: &[Expression],
-    function_use_orders: &[Vec<Vec<i32>>],
-) -> Option<usize> {
-    for statement in block.statements.iter().rev() {
-        match statement {
-            ir::Statement::Expressions(ir_expressions) => {
-                let index = blocks.len();
-                blocks.push(Block {
-                    expressions: ir_expressions
-                        .iter()
-                        .map(|ir_expression| {
-                            translate_expression(
-                                ir_expression,
-                                function_uses,
-                                function_use_values,
-                                function_use_orders,
-                            )
-                        })
-                        .collect(),
-                    next: Next::Jump(next),
-                });
-                next = Some(index);
-            }
-            ir::Statement::If {
-                antecedents: ir_antecedents,
-                condition: ir_condition,
-                then_block,
-                else_block,
-            } => {
-                let else_index = translate_block(
-                    else_block,
-                    blocks,
-                    next,
-                    function_uses,
-                    function_use_values,
-                    function_use_orders,
-                );
-                let then_index = translate_block(
-                    then_block,
-                    blocks,
-                    next,
-                    function_uses,
-                    function_use_values,
-                    function_use_orders,
-                );
-                let condition = translate_expression(
-                    ir_condition,
-                    function_uses,
-                    function_use_values,
-                    function_use_orders,
-                );
-                let condition_index = blocks.len();
-                blocks.push(Block {
-                    expressions: ir_antecedents
-                        .iter()
-                        .map(|ir_expression| {
-                            translate_expression(
-                                ir_expression,
-                                function_uses,
-                                function_use_values,
-                                function_use_orders,
-                            )
-                        })
-                        .collect(),
-                    next: Next::Br(condition, then_index, else_index),
-                });
-                next = Some(condition_index);
-            }
-            ir::Statement::While {
-                condition: ir_condition,
-                do_block,
-            } => {
-                let condition_index = blocks.len() + do_block.size;
-                let do_index = translate_block(
-                    do_block,
-                    blocks,
-                    Some(condition_index),
-                    function_uses,
-                    function_use_values,
-                    function_use_orders,
-                );
-                assert_eq!(blocks.len(), condition_index);
-                let condition = translate_expression(
-                    ir_condition,
-                    function_uses,
-                    function_use_values,
-                    function_use_orders,
-                );
-                blocks.push(Block {
-                    expressions: Vec::new(),
-                    next: Next::Br(condition, do_index, next),
-                });
-                next = Some(condition_index);
-            }
-            ir::Statement::Return {
-                antecedents: ir_antecedents,
-                value: ir_value,
-            } => {
-                blocks.push(Block {
-                    expressions: ir_antecedents
-                        .iter()
-                        .map(|ir_expression| {
-                            translate_expression(
-                                ir_expression,
-                                function_uses,
-                                function_use_values,
-                                function_use_orders,
-                            )
-                        })
-                        .collect(),
-                    next: Next::Return(translate_expression(
-                        ir_value,
-                        function_uses,
-                        function_use_values,
-                        function_use_orders,
-                    )),
-                });
-            }
-            _ => todo!(),
-        }
-    }
-    next
 }
 
 fn translate_function(
@@ -587,28 +447,8 @@ fn translate_expression(
         ir::Expression::Integer(value) => Expression::Integer(value),
         ir::Expression::Float(value) => Expression::Float(value),
         ir::Expression::String(ref value) => Expression::String(value.clone()),
-        ir::Expression::FunctionUse(index) => function_uses[index].calls.iter().fold(
-            function_use_values[index].clone(),
-            |function, call| {
-                let arguments: Vec<_> = call
-                    .arguments
-                    .iter()
-                    .map(|argument| {
-                        translate_expression(
-                            argument,
-                            function_uses,
-                            function_use_values,
-                            function_use_orders,
-                        )
-                    })
-                    .collect();
-                Expression::Call {
-                    function: Box::new(function),
-                    arguments,
-                }
-            },
-        ),
         ir::Expression::Variable(storage, index) => Expression::Variable(storage, index),
+        _ => todo!(),
     }
 }
 

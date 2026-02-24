@@ -27,9 +27,7 @@ use serde::Serialize;
 pub struct Program {
     pub structures: Vec<(TyKind, Structure)>,
     pub function_tys: Vec<FunctionTy>,
-    pub num_local_variables: Vec<usize>,
-    pub function_definitions: Vec<Block>,
-    pub function_uses: Vec<FunctionUse>,
+    pub function_definitions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
 }
 
@@ -70,7 +68,6 @@ pub enum Function {
 #[derive(Serialize)]
 pub struct FunctionUse {
     pub candidates: Vec<Function>,
-    pub calls: Vec<Call>,
 }
 
 #[derive(Clone, Serialize)]
@@ -111,30 +108,24 @@ pub enum TyListKind {
 }
 
 #[derive(Serialize)]
-pub struct Block {
-    pub statements: Vec<Statement>,
-    pub size: usize,
+pub struct FunctionDefinition {
+    pub num_local_variables: usize,
+    pub function_uses: Vec<FunctionUse>,
+    pub calls: Vec<Call>,
+    pub blocks: Vec<Block>,
 }
 
 #[derive(Serialize)]
-pub enum Statement {
-    Expressions(Vec<Expression>),
-    If {
-        antecedents: Vec<Expression>,
-        condition: Expression,
-        then_block: Block,
-        else_block: Block,
-    },
-    While {
-        condition: Expression,
-        do_block: Block,
-    },
-    Break(Vec<Expression>),
-    Continue(Vec<Expression>),
-    Return {
-        antecedents: Vec<Expression>,
-        value: Expression,
-    },
+pub struct Block {
+    pub call_bound: usize,
+    pub next: Next,
+}
+
+#[derive(Serialize)]
+pub enum Next {
+    Jump(usize),
+    Branch(Expression, usize, usize),
+    Return(Expression),
 }
 
 #[derive(Serialize)]
@@ -144,14 +135,17 @@ pub enum Expression {
     String(String),
     Variable(Storage, usize),
     FunctionUse(usize),
+    Call(usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
 pub enum Storage {
     Global,
-    Local(usize),
+    Local,
 }
+
 #[derive(Serialize)]
 pub struct Call {
+    pub function: Expression,
     pub arguments: Vec<Expression>,
 }

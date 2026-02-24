@@ -20,7 +20,7 @@
  * Defines [`Variables`] to manage variables currently alive.
  */
 
-use super::{BlockBuilder, Context, Item};
+use super::{Context, Item};
 use crate::ir;
 
 /**
@@ -101,11 +101,11 @@ impl Variables {
     pub fn free_and_remove(
         &mut self,
         len: usize,
-        builder: &mut BlockBuilder,
         function_uses: &mut Vec<ir::FunctionUse>,
+        calls: &mut Vec<ir::Call>,
         context: &mut Context,
     ) {
-        self.free(len, builder, function_uses);
+        self.free(len, function_uses, calls);
         for (name, index) in self.name_and_indices.split_off(len) {
             match context.items.remove(&name).unwrap() {
                 (_, Item::Variable(s, i)) => {
@@ -126,19 +126,19 @@ impl Variables {
     pub fn free(
         &mut self,
         len: usize,
-        builder: &mut BlockBuilder,
         function_uses: &mut Vec<ir::FunctionUse>,
+        calls: &mut Vec<ir::Call>,
     ) {
         for &(_, index) in self.name_and_indices[len..].iter().rev() {
             let expr = ir::Expression::Variable(self.storage, index);
             let function_use_index = function_uses.len();
             function_uses.push(ir::FunctionUse {
                 candidates: vec![ir::Function::Delete],
-                calls: vec![ir::Call {
-                    arguments: vec![expr],
-                }],
             });
-            builder.add_expression(ir::Expression::FunctionUse(function_use_index));
+            calls.push(ir::Call {
+                function: ir::Expression::FunctionUse(function_use_index),
+                arguments: vec![expr],
+            });
         }
     }
 }
