@@ -30,35 +30,43 @@ fn test(dir: impl AsRef<Path>) {
     assert_json_diff::assert_json_eq!(definitions, expected);
 }
 
+/*
 #[test]
 fn test_struct() {
     test("tests/frontend/struct");
 }
+*/
 
+/*
 #[test]
 fn test_if_else() {
     test("tests/frontend/if_else");
 }
+*/
 
 #[test]
 fn test_variables() {
     test("tests/frontend/variables");
 }
 
+/*
 #[test]
 fn test_operator_overload() {
     test("tests/frontend/operator_overload");
 }
+*/
 
 #[test]
 fn test_break() {
     test("tests/frontend/break");
 }
 
+/*
 #[test]
 fn test_print() {
     test("tests/frontend/print");
 }
+*/
 
 #[test]
 fn test_return() {

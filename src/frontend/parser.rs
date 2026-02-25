@@ -23,6 +23,8 @@
 mod tests;
 mod token;
 
+use std::cell::Cell;
+
 use super::CharsPeekable;
 use super::ast;
 use crate::log::Index;
@@ -382,10 +384,7 @@ impl Parser<'_, '_> {
     /**
      * Parses a block consisting of zero or more statements.
      */
-    fn parse_block(
-        &mut self,
-        starts_pos: &mut Vec<Pos>,
-    ) -> Result<Vec<ast::WithExtraTokens<ast::Statement>>, ParseError> {
+    fn parse_block(&mut self, starts_pos: &mut Vec<Pos>) -> Result<ast::Block, ParseError> {
         let mut body = Vec::new();
         loop {
             match self.parse_statement(starts_pos)? {
@@ -393,7 +392,7 @@ impl Parser<'_, '_> {
                     content: statement,
                     extra_tokens_pos: self.consume_line()?,
                 }),
-                None => return Ok(body),
+                None => return Ok(ast::Block(body)),
             }
         }
     }
@@ -481,8 +480,11 @@ impl Parser<'_, '_> {
             keyword_if_pos,
             extra_tokens_pos,
             condition,
+            then_index: Cell::new(0),
             then_block,
+            else_index: Cell::new(0),
             else_block,
+            end_index: Cell::new(0),
         })
     }
 
@@ -502,10 +504,10 @@ impl Parser<'_, '_> {
                 return Ok(ast::ElseBlock {
                     keyword_else_pos,
                     extra_tokens_pos: None,
-                    block: vec![ast::WithExtraTokens {
+                    block: ast::Block(vec![ast::WithExtraTokens {
                         content: statement,
                         extra_tokens_pos,
-                    }],
+                    }]),
                 });
             }
         }
@@ -559,9 +561,12 @@ impl Parser<'_, '_> {
 
         Ok(ast::Statement::While {
             keyword_while_pos,
+            condition_index: Cell::new(0),
             condition,
             extra_tokens_pos,
+            do_index: Cell::new(0),
             do_block,
+            end_index: Cell::new(0),
         })
     }
 

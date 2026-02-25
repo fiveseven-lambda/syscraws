@@ -20,6 +20,8 @@
  * Defines the Abstract Syntax Tree (AST).
  */
 
+use std::cell::Cell;
+
 use crate::log::Pos;
 
 /**
@@ -174,7 +176,7 @@ pub struct FunctionDefinition {
     /**
      * Body of the function.
      */
-    pub body: Vec<WithExtraTokens<Statement>>,
+    pub body: Block,
 }
 
 /**
@@ -189,6 +191,16 @@ pub struct ReturnTy {
      * The return type.
      */
     pub ty: Option<TermWithPos>,
+}
+
+pub struct Block(pub Vec<WithExtraTokens<Statement>>);
+
+impl Block {
+    pub fn count_basic_blocks(&self, num_basic_blocks: &mut usize) {
+        for statement in &self.0 {
+            statement.content.count_basic_blocks(num_basic_blocks);
+        }
+    }
 }
 
 /**
@@ -220,6 +232,7 @@ pub enum Statement {
          * Position of the keyword `while`.
          */
         keyword_while_pos: Pos,
+        condition_index: Cell<usize>,
         /**
          * The condition.
          */
@@ -229,10 +242,12 @@ pub enum Statement {
          * `while` and optional condition.
          */
         extra_tokens_pos: Option<Pos>,
+        do_index: Cell<usize>,
         /**
          * The body.
          */
-        do_block: Vec<WithExtraTokens<Statement>>,
+        do_block: Block,
+        end_index: Cell<usize>,
     },
     /**
      * `if` statement.
@@ -251,14 +266,66 @@ pub enum Statement {
          * and optional condition.
          */
         extra_tokens_pos: Option<Pos>,
-        then_block: Vec<WithExtraTokens<Statement>>,
+        then_index: Cell<usize>,
+        then_block: Block,
+        else_index: Cell<usize>,
         else_block: Option<ElseBlock>,
+        end_index: Cell<usize>,
     },
     Break,
     Continue,
     Return {
         value: Option<TermWithPos>,
     },
+}
+
+impl Statement {
+    pub fn count_basic_blocks(&self, num_basic_blocks: &mut usize) {
+        match self {
+            Statement::If {
+                then_index,
+                then_block,
+                else_index,
+                else_block,
+                end_index,
+                ..
+            } => {
+                then_index.set(*num_basic_blocks);
+                *num_basic_blocks += 1;
+                then_block.count_basic_blocks(num_basic_blocks);
+                else_index.set(*num_basic_blocks);
+                *num_basic_blocks += 1;
+                if let Some(else_block) = else_block {
+                    else_block.block.count_basic_blocks(num_basic_blocks);
+                }
+                end_index.set(*num_basic_blocks);
+                *num_basic_blocks += 1;
+            }
+            Statement::While {
+                condition_index,
+                condition: _,
+                do_index,
+                do_block,
+                end_index,
+                ..
+            } => {
+                condition_index.set(*num_basic_blocks);
+                *num_basic_blocks += 1;
+                do_index.set(*num_basic_blocks);
+                *num_basic_blocks += 1;
+                do_block.count_basic_blocks(num_basic_blocks);
+                end_index.set(*num_basic_blocks);
+                *num_basic_blocks += 1;
+            }
+            Statement::Return { value: _ } => {
+                *num_basic_blocks += 1;
+            }
+            Statement::Break | Statement::Continue => {
+                *num_basic_blocks += 1;
+            }
+            _ => {}
+        }
+    }
 }
 
 /**
@@ -273,7 +340,7 @@ pub struct ElseBlock {
      * [`Pos`] of extra tokens if any appear on the same line after `else`.
      */
     pub extra_tokens_pos: Option<Pos>,
-    pub block: Vec<WithExtraTokens<Statement>>,
+    pub block: Block,
 }
 
 /**

@@ -21,7 +21,6 @@
  */
 
 mod ast;
-mod block_builder;
 mod chars_peekable;
 mod context;
 mod parser;
@@ -33,7 +32,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::{ir, log};
-use block_builder::BlockBuilder;
 use chars_peekable::CharsPeekable;
 use context::Context;
 use variables::Variables;
@@ -54,15 +52,16 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
     let mut reader = Reader {
         num_structures: 0,
         num_functions: 0,
+        num_global_basic_blocks: 0,
         ir_program: ir::Program {
             structures: Vec::new(),
             function_tys: Vec::new(),
-            num_local_variables: Vec::new(),
             function_definitions: Vec::new(),
-            function_uses: Vec::new(),
             num_global_variables: 0,
         },
-        global_builder: BlockBuilder::new(),
+        global_function_uses: Vec::new(),
+        global_calls: Vec::new(),
+        global_blocks: Vec::new(),
         global_variables: Variables::new(ir::Storage::Global),
         exports: Vec::new(),
         logger,
@@ -78,20 +77,23 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
     }
     reader.global_variables.free(
         0,
-        &mut reader.global_builder,
-        &mut reader.ir_program.function_uses,
+        &mut reader.global_function_uses,
+        &mut reader.global_calls,
     );
-    let body = reader.global_builder.finish();
     reader.ir_program.function_tys.push(ir::FunctionTy {
         num_ty_parameters: 0,
         parameter_tys: Vec::new(),
-        return_ty: ir::Ty::Application {
-            constructor: Box::new(ir::Ty::Constructor(ir::TyConstructor::Tuple)),
-            arguments: vec![],
-        },
+        return_ty: ir::Ty::Constructor(ir::TyConstructor::Integer),
     });
-    reader.ir_program.num_local_variables.push(0);
-    reader.ir_program.function_definitions.push(body);
+    reader
+        .ir_program
+        .function_definitions
+        .push(ir::FunctionDefinition {
+            function_uses: reader.global_function_uses,
+            calls: reader.global_calls,
+            blocks: reader.global_blocks,
+            num_local_variables: 0,
+        });
     reader.ir_program.num_global_variables = reader.global_variables.num_total();
     Ok(reader.ir_program)
 }
@@ -110,14 +112,14 @@ struct Reader<'logger> {
      * [`declare_function`](Reader::declare_function) method.
      */
     num_functions: usize,
+    num_global_basic_blocks: usize,
     /**
      * The target which [`read_file`](Reader::read_file) stores the results in.
      */
     ir_program: ir::Program,
-    /**
-     * Holds the global statements, which are later added as a single entry-point function.
-     */
-    global_builder: BlockBuilder,
+    global_function_uses: Vec<ir::FunctionUse>,
+    global_calls: Vec<ir::Call>,
+    global_blocks: Vec<ir::Block>,
     /**
      * List of global variables alive.
      * Variables in a block (e.g. if) are removed at the end of the block.
@@ -264,32 +266,32 @@ impl Reader<'_> {
                     self.ir_program.structures.push((kind, definition));
                 }
                 ast::TopLevelStatement::FunctionDefinition(function_definition) => {
+                    let mut num_basic_blocks = 0;
+                    function_definition
+                        .body
+                        .count_basic_blocks(&mut num_basic_blocks);
                     let num_current_items = context.items.len();
-                    let mut function_index = self.ir_program.function_tys.len();
-                    if let Some((ty, definition, num_local_variables)) = context
-                        .translate_function_definition(
-                            function_index,
-                            function_definition,
-                            &mut self.ir_program.function_uses,
-                            &self.exports,
-                            &mut self.logger,
-                        )
-                    {
+                    if let Some((ty, definition)) = context.translate_function_definition(
+                        function_definition,
+                        &self.exports,
+                        &mut self.logger,
+                    ) {
                         self.ir_program.function_tys.push(ty);
-                        self.ir_program
-                            .num_local_variables
-                            .push(num_local_variables);
                         self.ir_program.function_definitions.push(definition);
                     }
                     assert_eq!(context.items.len(), num_current_items);
                 }
                 ast::TopLevelStatement::Statement(statement) => {
+                    statement.count_basic_blocks(&mut self.num_global_basic_blocks);
                     context.translate_statement(
                         statement,
-                        &mut self.global_builder,
-                        &mut self.ir_program.function_uses,
+                        &mut self.global_function_uses,
+                        &mut self.global_calls,
+                        &mut self.global_blocks,
                         &mut self.global_variables,
                         0,
+                        None,
+                        None,
                         &self.exports,
                         &mut self.logger,
                     );

@@ -1,9 +1,9 @@
 {
   "structures": [],
-  "functions_ty": [
+  "function_tys": [
     {
       "num_ty_parameters": 0,
-      "parameters_ty": [],
+      "parameter_tys": [],
       "return_ty": {
         "Application": {
           "constructor": {
@@ -15,237 +15,234 @@
     },
     {
       "num_ty_parameters": 0,
-      "parameters_ty": [],
+      "parameter_tys": [],
       "return_ty": {
-        "Application": {
-          "constructor": {
-            "Constructor": "Tuple"
-          },
-          "arguments": []
-        }
+        "Constructor": "Integer"
       }
     }
   ],
   "function_definitions": [
     {
       "num_local_variables": 2,
-      "body": {
-        "statements": [
-          {
-            "While": {
-              "condition": {
+      "function_uses": [
+        {
+          "candidates": [
+            "Assign"
+          ]
+        },
+        {
+          "candidates": [
+            "Assign"
+          ]
+        },
+        {
+          "candidates": [
+            "Assign"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "function": {
+            "FunctionUse": 0
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                1
+              ]
+            },
+            {
+              "Integer": 1
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 1
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Local",
+                0
+              ]
+            },
+            {
+              "Integer": 2
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 2
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Local",
+                1
+              ]
+            },
+            {
+              "Integer": 3
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 3
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Local",
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 4
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Local",
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "blocks": [
+        {
+          "call_bound": 0,
+          "next": {
+            "Jump": 0
+          }
+        },
+        {
+          "call_bound": 0,
+          "next": {
+            "Branch": [
+              {
                 "Integer": 1
               },
-              "do_block": {
-                "statements": [
-                  {
-                    "Expressions": [
-                      {
-                        "Function": {
-                          "candidates": [
-                            "Assign"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Global",
-                                    1
-                                  ]
-                                },
-                                {
-                                  "Integer": 1
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "Function": {
-                          "candidates": [
-                            "Assign"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Local",
-                                    0
-                                  ]
-                                },
-                                {
-                                  "Integer": 2
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "Function": {
-                          "candidates": [
-                            "Assign"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Local",
-                                    1
-                                  ]
-                                },
-                                {
-                                  "Integer": 3
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "Function": {
-                          "candidates": [
-                            "Delete"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Local",
-                                    1
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                ],
-                "size": 1
-              }
-            }
-          },
-          {
-            "Expressions": [
-              {
-                "Function": {
-                  "candidates": [
-                    "Delete"
-                  ],
-                  "calls": [
-                    {
-                      "arguments": [
-                        {
-                          "Variable": [
-                            "Local",
-                            0
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
+              1,
+              2
             ]
           }
-        ],
-        "size": 3
-      }
+        },
+        {
+          "call_bound": 4,
+          "next": {
+            "Jump": 0
+          }
+        }
+      ]
     },
     {
       "num_local_variables": 0,
-      "body": {
-        "statements": [
-          {
-            "While": {
-              "condition": {
+      "function_uses": [
+        {
+          "candidates": [
+            "Assign"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "function": {
+            "FunctionUse": 0
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                0
+              ]
+            },
+            {
+              "Integer": 1
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 1
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 2
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "blocks": [
+        {
+          "call_bound": 0,
+          "next": {
+            "Jump": 0
+          }
+        },
+        {
+          "call_bound": 0,
+          "next": {
+            "Branch": [
+              {
                 "Integer": 1
               },
-              "do_block": {
-                "statements": [
-                  {
-                    "Expressions": [
-                      {
-                        "Function": {
-                          "candidates": [
-                            "Assign"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Global",
-                                    0
-                                  ]
-                                },
-                                {
-                                  "Integer": 1
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "Function": {
-                          "candidates": [
-                            "Delete"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Global",
-                                    0
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                ],
-                "size": 1
-              }
-            }
-          },
-          {
-            "Expressions": [
-              {
-                "Function": {
-                  "candidates": [
-                    "Delete"
-                  ],
-                  "calls": [
-                    {
-                      "arguments": [
-                        {
-                          "Variable": [
-                            "Global",
-                            1
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
+              1,
+              2
             ]
           }
-        ],
-        "size": 3
-      }
+        },
+        {
+          "call_bound": 2,
+          "next": {
+            "Jump": 0
+          }
+        }
+      ]
     }
   ],
   "num_global_variables": 2
