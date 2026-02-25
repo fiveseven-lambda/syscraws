@@ -1,251 +1,269 @@
 {
   "structures": [],
-  "functions_ty": [
+  "function_tys": [
     {
       "num_ty_parameters": 0,
-      "parameters_ty": [],
+      "parameter_tys": [],
       "return_ty": {
-        "Application": {
-          "constructor": {
-            "Constructor": "Tuple"
-          },
-          "arguments": []
-        }
+        "Constructor": "Integer"
       }
     }
   ],
   "function_definitions": [
     {
       "num_local_variables": 0,
-      "body": {
-        "statements": [
-          {
-            "While": {
-              "condition": {
-                "Function": {
-                  "candidates": [
-                    "Dereference"
-                  ],
-                  "calls": [
-                    {
-                      "arguments": [
-                        {
-                          "Variable": [
-                            "Global",
-                            0
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              "do_block": {
-                "statements": [
-                  {
-                    "If": {
-                      "antecedents": [],
-                      "condition": {
-                        "Function": {
-                          "candidates": [
-                            "Dereference"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Global",
-                                    1
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      "then_block": {
-                        "statements": [
-                          {
-                            "Break": [
-                              {
-                                "Function": {
-                                  "candidates": [
-                                    "Delete"
-                                  ],
-                                  "calls": [
-                                    {
-                                      "arguments": [
-                                        {
-                                          "Variable": [
-                                            "Global",
-                                            1
-                                          ]
-                                        }
-                                      ]
-                                    }
-                                  ]
-                                }
-                              }
-                            ]
-                          }
-                        ],
-                        "size": 1
-                      },
-                      "else_block": {
-                        "statements": [],
-                        "size": 0
-                      }
-                    }
-                  },
-                  {
-                    "If": {
-                      "antecedents": [],
-                      "condition": {
-                        "Function": {
-                          "candidates": [
-                            "Dereference"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Global",
-                                    2
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      "then_block": {
-                        "statements": [
-                          {
-                            "Break": [
-                              {
-                                "Function": {
-                                  "candidates": [
-                                    "Delete"
-                                  ],
-                                  "calls": [
-                                    {
-                                      "arguments": [
-                                        {
-                                          "Variable": [
-                                            "Global",
-                                            2
-                                          ]
-                                        }
-                                      ]
-                                    }
-                                  ]
-                                }
-                              },
-                              {
-                                "Function": {
-                                  "candidates": [
-                                    "Delete"
-                                  ],
-                                  "calls": [
-                                    {
-                                      "arguments": [
-                                        {
-                                          "Variable": [
-                                            "Global",
-                                            1
-                                          ]
-                                        }
-                                      ]
-                                    }
-                                  ]
-                                }
-                              }
-                            ]
-                          }
-                        ],
-                        "size": 1
-                      },
-                      "else_block": {
-                        "statements": [],
-                        "size": 0
-                      }
-                    }
-                  },
-                  {
-                    "Expressions": [
-                      {
-                        "Function": {
-                          "candidates": [
-                            "Delete"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Global",
-                                    2
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "Function": {
-                          "candidates": [
-                            "Delete"
-                          ],
-                          "calls": [
-                            {
-                              "arguments": [
-                                {
-                                  "Variable": [
-                                    "Global",
-                                    1
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                ],
-                "size": 5
-              }
-            }
+      "function_uses": [
+        {
+          "candidates": [
+            "Dereference"
+          ]
+        },
+        {
+          "candidates": [
+            "Dereference"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        },
+        {
+          "candidates": [
+            "Dereference"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "function": {
+            "FunctionUse": 0
           },
-          {
-            "Expressions": [
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 1
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 2
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 3
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                2
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 4
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                2
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 5
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 6
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                2
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 7
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 8
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "blocks": [
+        {
+          "call_bound": 0,
+          "next": {
+            "Jump": 0
+          }
+        },
+        {
+          "call_bound": 1,
+          "next": {
+            "Branch": [
               {
-                "Function": {
-                  "candidates": [
-                    "Delete"
-                  ],
-                  "calls": [
-                    {
-                      "arguments": [
-                        {
-                          "Variable": [
-                            "Global",
-                            0
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
+                "Call": 0
+              },
+              1,
+              10
             ]
           }
-        ],
-        "size": 7
-      }
+        },
+        {
+          "call_bound": 2,
+          "next": {
+            "Branch": [
+              {
+                "Call": 1
+              },
+              2,
+              4
+            ]
+          }
+        },
+        {
+          "call_bound": 3,
+          "next": {
+            "Jump": 10
+          }
+        },
+        {
+          "call_bound": 3,
+          "next": {
+            "Jump": 5
+          }
+        },
+        {
+          "call_bound": 3,
+          "next": {
+            "Jump": 5
+          }
+        },
+        {
+          "call_bound": 4,
+          "next": {
+            "Branch": [
+              {
+                "Call": 3
+              },
+              6,
+              8
+            ]
+          }
+        },
+        {
+          "call_bound": 6,
+          "next": {
+            "Jump": 10
+          }
+        },
+        {
+          "call_bound": 6,
+          "next": {
+            "Jump": 9
+          }
+        },
+        {
+          "call_bound": 6,
+          "next": {
+            "Jump": 9
+          }
+        },
+        {
+          "call_bound": 8,
+          "next": {
+            "Jump": 0
+          }
+        }
+      ]
     }
   ],
   "num_global_variables": 3

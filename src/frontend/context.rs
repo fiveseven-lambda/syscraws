@@ -521,7 +521,7 @@ impl Context {
                         calls,
                         blocks,
                         variables,
-                        num_outer_variables,
+                        num_variables,
                         Some(end_index.get()),
                         Some(condition_index.get()),
                         exports,

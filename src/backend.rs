@@ -25,7 +25,6 @@ use crate::{ffi, ir};
 mod tests;
 mod ty;
 
-use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CString;

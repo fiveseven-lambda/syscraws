@@ -1,95 +1,86 @@
 {
-  "function_definitions": [
-    {
-      "body": {
-        "size": 2,
-        "statements": [
-          {
-            "Return": {
-              "antecedents": [
-                {
-                  "Function": {
-                    "candidates": [
-                      "Delete"
-                    ],
-                    "calls": [
-                      {
-                        "arguments": [
-                          {
-                            "Variable": [
-                              "Global",
-                              0
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                }
-              ],
-              "value": {
-                "Function": {
-                  "candidates": [
-                    "Dereference"
-                  ],
-                  "calls": [
-                    {
-                      "arguments": [
-                        {
-                          "Variable": [
-                            "Global",
-                            0
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          {
-            "Expressions": [
-              {
-                "Function": {
-                  "candidates": [
-                    "Delete"
-                  ],
-                  "calls": [
-                    {
-                      "arguments": [
-                        {
-                          "Variable": [
-                            "Global",
-                            0
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "num_local_variables": 0
-    }
-  ],
-  "functions_ty": [
+  "structures": [],
+  "function_tys": [
     {
       "num_ty_parameters": 0,
-      "parameters_ty": [],
+      "parameter_tys": [],
       "return_ty": {
-        "Application": {
-          "arguments": [],
-          "constructor": {
-            "Constructor": "Tuple"
-          }
-        }
+        "Constructor": "Integer"
       }
     }
   ],
-  "num_global_variables": 1,
-  "structures": []
+  "function_definitions": [
+    {
+      "num_local_variables": 0,
+      "function_uses": [
+        {
+          "candidates": [
+            "Dereference"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        },
+        {
+          "candidates": [
+            "Delete"
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "function": {
+            "FunctionUse": 0
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 1
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "function": {
+            "FunctionUse": 2
+          },
+          "arguments": [
+            {
+              "Variable": [
+                "Global",
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "blocks": [
+        {
+          "call_bound": 2,
+          "next": {
+            "Return": {
+              "Call": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "num_global_variables": 1
 }
