@@ -155,121 +155,111 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             let resolved = old_candidates.len() <= 1;
             let new_candidates: Vec<_> = std::mem::take(old_candidates)
                 .into_iter()
-                .flat_map(
-                    |Candidate {
-                         index,
-                         unifications,
-                     }| {
-                        let mut unifications = if resolved {
-                            unifications
-                        } else {
-                            unifications.undo()
-                        };
-                        let callee_ty = callee_tys[index].as_ref().unwrap();
-                        let return_ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
-                        let parameter_tys: Vec<_> = (0..num_arguments)
-                            .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
-                            .collect();
-                        if !unifications.unify(
-                            &callee_ty,
-                            &Rc::new(ty::Ty::Application {
+                .flat_map(|candidate| {
+                    let mut unifications = if resolved {
+                        candidate.unifications
+                    } else {
+                        candidate.unifications.undo()
+                    };
+                    let callee_ty = callee_tys[candidate.index].as_ref().unwrap();
+                    let return_ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+                    let parameter_tys: Vec<_> = (0..num_arguments)
+                        .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
+                        .collect();
+                    if !unifications.unify(
+                        &callee_ty,
+                        &Rc::new(ty::Ty::Application {
+                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                            arguments: Rc::new(ty::Ty::Cons {
+                                head: return_ty.clone(),
+                                tail: parameter_tys.iter().rev().fold(
+                                    Rc::new(ty::Ty::Nil),
+                                    |tail, parameter_ty| {
+                                        Rc::new(ty::Ty::Cons {
+                                            head: parameter_ty.clone(),
+                                            tail,
+                                        })
+                                    },
+                                ),
+                            }),
+                        }),
+                    ) {
+                        unifications.undo();
+                        return None;
+                    }
+                    let mut ty_vars = argument_ty_vars.clone();
+                    let mut inequalities = Vec::new();
+                    let mut diff_sum = 0;
+                    for (&(argument_index, argument_order), parameter_ty) in
+                        argument_orders.iter().zip(&parameter_tys)
+                    {
+                        let (parameter_var, parameter_order) = parameter_ty.extract_function_ty();
+                        let next_index = ty_vars.len();
+                        let parameter_index = *ty_vars.entry(parameter_var).or_insert(next_index);
+                        let diff = argument_order - parameter_order;
+                        diff_sum += diff.abs();
+                        inequalities.push((argument_index, parameter_index, diff));
+                    }
+                    let num_ty_vars = ty_vars.len();
+                    let Some(mut orders) = get_orders(&inequalities, num_ty_vars, diff_sum) else {
+                        unifications.undo();
+                        return None;
+                    };
+                    let mut min_order = -1;
+                    let mut max_order = diff_sum;
+                    while max_order - min_order > 1 {
+                        let mid_order = (min_order + max_order) / 2;
+                        match get_orders(&inequalities, num_ty_vars, mid_order) {
+                            Some(new_orders) => {
+                                orders = new_orders;
+                                max_order = mid_order;
+                            }
+                            None => min_order = mid_order,
+                        }
+                    }
+                    let extra_calls: Vec<_> = (0..max_order)
+                        .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
+                        .collect();
+                    for i in 0..num_arguments {
+                        unifications.unify(
+                            &argument_tys[i],
+                            &extra_calls.iter().take(orders[i] as usize).fold(
+                                parameter_tys[i].clone(),
+                                |ty, extra_call| {
+                                    Rc::new(ty::Ty::Application {
+                                        constructor: Rc::new(ty::Ty::Constructor(
+                                            ir::TyConstructor::Function,
+                                        )),
+                                        arguments: Rc::new(ty::Ty::Cons {
+                                            head: ty,
+                                            tail: extra_call.clone(),
+                                        }),
+                                    })
+                                },
+                            ),
+                        );
+                    }
+                    return_tys[candidate.index] =
+                        Some(extra_calls.iter().fold(return_ty, |ty, extra_call| {
+                            Rc::new(ty::Ty::Application {
                                 constructor: Rc::new(ty::Ty::Constructor(
                                     ir::TyConstructor::Function,
                                 )),
                                 arguments: Rc::new(ty::Ty::Cons {
-                                    head: return_ty.clone(),
-                                    tail: parameter_tys.iter().rev().fold(
-                                        Rc::new(ty::Ty::Nil),
-                                        |tail, parameter_ty| {
-                                            Rc::new(ty::Ty::Cons {
-                                                head: parameter_ty.clone(),
-                                                tail,
-                                            })
-                                        },
-                                    ),
+                                    head: ty,
+                                    tail: extra_call.clone(),
                                 }),
-                            }),
-                        ) {
-                            unifications.undo();
-                            return None;
-                        }
-                        let mut ty_vars = argument_ty_vars.clone();
-                        let mut inequalities = Vec::new();
-                        let mut diff_sum = 0;
-                        for (&(argument_index, argument_order), parameter_ty) in
-                            argument_orders.iter().zip(&parameter_tys)
-                        {
-                            let (parameter_var, parameter_order) =
-                                parameter_ty.extract_function_ty();
-                            let next_index = ty_vars.len();
-                            let parameter_index =
-                                *ty_vars.entry(parameter_var).or_insert(next_index);
-                            let diff = argument_order - parameter_order;
-                            diff_sum += diff.abs();
-                            inequalities.push((argument_index, parameter_index, diff));
-                        }
-                        let num_ty_vars = ty_vars.len();
-                        let Some(mut orders) = get_orders(&inequalities, num_ty_vars, diff_sum)
-                        else {
-                            unifications.undo();
-                            return None;
-                        };
-                        let mut min_order = -1;
-                        let mut max_order = diff_sum;
-                        while max_order - min_order > 1 {
-                            let mid_order = (min_order + max_order) / 2;
-                            match get_orders(&inequalities, num_ty_vars, mid_order) {
-                                Some(new_orders) => {
-                                    orders = new_orders;
-                                    max_order = mid_order;
-                                }
-                                None => min_order = mid_order,
-                            }
-                        }
-                        let extra_calls: Vec<_> = (0..max_order)
-                            .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
-                            .collect();
-                        for i in 0..num_arguments {
-                            unifications.unify(
-                                &argument_tys[i],
-                                &extra_calls.iter().take(orders[i] as usize).fold(
-                                    parameter_tys[i].clone(),
-                                    |ty, extra_call| {
-                                        Rc::new(ty::Ty::Application {
-                                            constructor: Rc::new(ty::Ty::Constructor(
-                                                ir::TyConstructor::Function,
-                                            )),
-                                            arguments: Rc::new(ty::Ty::Cons {
-                                                head: ty,
-                                                tail: extra_call.clone(),
-                                            }),
-                                        })
-                                    },
-                                ),
-                            );
-                        }
-                        return_tys[index] =
-                            Some(extra_calls.iter().fold(return_ty, |ty, extra_call| {
-                                Rc::new(ty::Ty::Application {
-                                    constructor: Rc::new(ty::Ty::Constructor(
-                                        ir::TyConstructor::Function,
-                                    )),
-                                    arguments: Rc::new(ty::Ty::Cons {
-                                        head: ty,
-                                        tail: extra_call.clone(),
-                                    }),
-                                })
-                            }));
-                        Some(Candidate {
-                            index,
-                            unifications: if resolved {
-                                unifications
-                            } else {
-                                unifications.undo()
-                            },
-                        })
-                    },
-                )
+                            })
+                        }));
+                    Some(Candidate {
+                        index: candidate.index,
+                        unifications: if resolved {
+                            unifications
+                        } else {
+                            unifications.undo()
+                        },
+                    })
+                })
                 .collect();
             if !resolved && new_candidates.len() <= 1 {
                 if let Some(Candidate {
