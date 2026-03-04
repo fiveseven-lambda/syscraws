@@ -137,7 +137,7 @@ impl Unifications {
                     Var::Assigned(ref right) => return self.unify(left, right),
                     Var::Unassigned(right_rank) => right_rank,
                 };
-                if left_var.as_ptr() != right_var.as_ptr() {
+                if std::ptr::eq(left_var, right_var) {
                     match left_rank.cmp(&right_rank) {
                         std::cmp::Ordering::Greater => {
                             self.0.push(Unification {
@@ -231,7 +231,7 @@ impl Ty {
             Ty::Cons { head, tail } => head.contains(var) || tail.contains(var),
             Ty::Var(self_var) => match *self_var.borrow() {
                 Var::Assigned(ref ty) => ty.contains(var),
-                Var::Unassigned(_) => self_var.as_ptr() == var.as_ptr(),
+                Var::Unassigned(_) => std::ptr::eq(self_var, var),
             },
         }
     }
