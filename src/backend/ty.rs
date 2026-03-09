@@ -18,6 +18,7 @@
 
 use serde::ser::{Serialize, SerializeMap, SerializeStructVariant, Serializer};
 use std::cell::RefCell;
+use std::ptr;
 use std::rc::Rc;
 
 use crate::ir;
@@ -137,34 +138,35 @@ impl Unifications {
                     Var::Assigned(ref right) => return self.unify(left, right),
                     Var::Unassigned(right_rank) => right_rank,
                 };
-                if std::ptr::eq(left_var, right_var) {
-                    match left_rank.cmp(&right_rank) {
-                        std::cmp::Ordering::Greater => {
-                            self.0.push(Unification {
-                                ty: right.clone(),
-                                old: right_var.borrow().clone(),
-                            });
-                            *right_var.borrow_mut() = Var::Assigned(left.clone());
-                        }
-                        std::cmp::Ordering::Less => {
-                            self.0.push(Unification {
-                                ty: left.clone(),
-                                old: left_var.borrow().clone(),
-                            });
-                            *left_var.borrow_mut() = Var::Assigned(right.clone());
-                        }
-                        std::cmp::Ordering::Equal => {
-                            self.0.push(Unification {
-                                ty: left.clone(),
-                                old: left_var.borrow().clone(),
-                            });
-                            *left_var.borrow_mut() = Var::Unassigned(left_rank + 1);
-                            self.0.push(Unification {
-                                ty: right.clone(),
-                                old: right_var.borrow().clone(),
-                            });
-                            *right_var.borrow_mut() = Var::Assigned(left.clone());
-                        }
+                if ptr::eq(left_var, right_var) {
+                    return true;
+                }
+                match left_rank.cmp(&right_rank) {
+                    std::cmp::Ordering::Greater => {
+                        self.0.push(Unification {
+                            ty: right.clone(),
+                            old: right_var.borrow().clone(),
+                        });
+                        *right_var.borrow_mut() = Var::Assigned(left.clone());
+                    }
+                    std::cmp::Ordering::Less => {
+                        self.0.push(Unification {
+                            ty: left.clone(),
+                            old: left_var.borrow().clone(),
+                        });
+                        *left_var.borrow_mut() = Var::Assigned(right.clone());
+                    }
+                    std::cmp::Ordering::Equal => {
+                        self.0.push(Unification {
+                            ty: left.clone(),
+                            old: left_var.borrow().clone(),
+                        });
+                        *left_var.borrow_mut() = Var::Unassigned(left_rank + 1);
+                        self.0.push(Unification {
+                            ty: right.clone(),
+                            old: right_var.borrow().clone(),
+                        });
+                        *right_var.borrow_mut() = Var::Assigned(left.clone());
                     }
                 }
                 true
@@ -231,7 +233,7 @@ impl Ty {
             Ty::Cons { head, tail } => head.contains(var) || tail.contains(var),
             Ty::Var(self_var) => match *self_var.borrow() {
                 Var::Assigned(ref ty) => ty.contains(var),
-                Var::Unassigned(_) => std::ptr::eq(self_var, var),
+                Var::Unassigned(_) => ptr::eq(self_var, var),
             },
         }
     }

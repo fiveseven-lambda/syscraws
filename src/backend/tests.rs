@@ -21,31 +21,110 @@
 use super::*;
 
 #[test]
-fn unify() {
+fn unify_tuples() {
+    let mut unifications = ty::Unifications::new();
+    let t1 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    let u1 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    {
+        assert!(unifications.unify(
+            &t1,
+            &Rc::new(ty::Ty::Application {
+                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
+                arguments: Rc::new(ty::Ty::Cons {
+                    head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
+                    tail: Rc::new(ty::Ty::Cons {
+                        head: u1.clone(),
+                        tail: Rc::new(ty::Ty::Nil),
+                    }),
+                }),
+            }),
+        ));
+        assert!(!unifications.unify(&t1, &u1));
+    };
+    let t2 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    let u2 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    {
+        assert!(unifications.unify(
+            &t2,
+            &Rc::new(ty::Ty::Application {
+                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
+                arguments: Rc::new(ty::Ty::Cons {
+                    head: u2.clone(),
+                    tail: Rc::new(ty::Ty::Cons {
+                        head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float)),
+                        tail: Rc::new(ty::Ty::Nil),
+                    }),
+                }),
+            }),
+        ));
+        assert!(!unifications.unify(&u2, &t2));
+    };
+    assert!(unifications.unify(&t1, &t2));
+    assert!(!unifications.unify(
+        &u1,
+        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
+    ));
+    assert!(unifications.unify(&u1, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
+    assert!(!unifications.unify(&Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float)), &u2));
+    assert!(unifications.unify(
+        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
+        &u2,
+    ));
+}
+
+#[test]
+fn unify_vars() {
+    let mut unifications = ty::Unifications::new();
+
+    let x1 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    assert!(unifications.unify(&x1, &x1));
+    let x2 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    assert!(unifications.unify(&x1, &x2));
+    let x3 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    assert!(unifications.unify(&x3, &x1));
+    let x4 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    assert!(unifications.unify(&x2, &x4));
+
+    let y = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    assert!(unifications.unify(
+        &y,
+        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
+    ));
+    assert!(unifications.unify(&x3, &y));
+    assert!(!unifications.unify(&x4, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
+    assert!(unifications.unify(
+        &x4,
+        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
+    ));
+}
+
+#[test]
+fn unify_undo() {
+    let mut unifications = ty::Unifications::new();
     let x = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
-    let mut u1 = ty::Unifications::new();
-    assert!(u1.unify(
+    let assert_x_rank = |expected: u32| {
+        if let ty::Ty::Var(ref var) = *x {
+            if let ty::Var::Unassigned(rank) = *var.borrow() {
+                assert_eq!(rank, expected);
+                return;
+            }
+        }
+        panic!();
+    };
+    assert_x_rank(0);
+    assert!(unifications.unify(
         &x,
-        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
+        &Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))),
     ));
-    assert!(!u1.unify(&x, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
-    let u1 = u1.undo();
-    let mut u2 = ty::Unifications::new();
-    assert!(u2.unify(&x, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
-    assert!(!u2.unify(
-        &x,
-        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
+    let y = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    assert!(unifications.unify(
+        &y,
+        &Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))),
     ));
-    u2.undo();
-    eprintln!("{}", serde_json::to_string(&x).unwrap());
-    u1.undo();
-    eprintln!("{}", serde_json::to_string(&x).unwrap());
-    let mut u3 = ty::Unifications::new();
-    assert!(!u3.unify(&x, &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))));
-    assert!(u3.unify(
-        &x,
-        &Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
-    ));
+    assert!(unifications.unify(&x, &y));
+    assert_x_rank(2);
+    unifications.undo();
+    assert_x_rank(0);
 }
 
 #[test]
