@@ -132,12 +132,16 @@ impl Variables {
         for &(_, index) in self.name_and_indices[len..].iter().rev() {
             let expr = ir::Expression::Variable(self.storage, index);
             let function_use_index = function_uses.len();
+            let call_index = calls.len();
             function_uses.push(ir::FunctionUse {
                 candidates: vec![ir::Function::Delete],
+                relevant_call: Some(call_index),
             });
             calls.push(ir::Call {
                 function: ir::Expression::FunctionUse(function_use_index),
                 arguments: vec![expr],
+                relevant_calls: Vec::new(),
+                relevant_function_uses: vec![function_use_index],
             });
         }
     }

@@ -630,16 +630,19 @@ impl Context {
                                         logger,
                                     )
                                 {
-                                    let function = ir::Expression::FunctionUse(function_uses.len());
+                                    let function_use_index = function_uses.len();
+                                    let call_index = calls.len();
                                     function_uses.push(ir::FunctionUse {
                                         candidates: vec![ir::Function::IntegerToString],
+                                        relevant_call: Some(call_index),
                                     });
-                                    let expression = ir::Expression::Call(calls.len());
                                     calls.push(ir::Call {
-                                        function,
+                                        function: ir::Expression::FunctionUse(function_use_index),
                                         arguments: vec![value],
+                                        relevant_calls: Vec::new(),
+                                        relevant_function_uses: vec![function_use_index],
                                     });
-                                    components.push(expression);
+                                    components.push(ir::Expression::Call(call_index));
                                 }
                             }
                         }
@@ -649,16 +652,19 @@ impl Context {
                     components
                         .into_iter()
                         .reduce(|left, right| {
-                            let function = ir::Expression::FunctionUse(function_uses.len());
+                            let function_use_index = function_uses.len();
+                            let call_index = calls.len();
                             function_uses.push(ir::FunctionUse {
                                 candidates: vec![ir::Function::ConcatenateString],
+                                relevant_call: Some(call_index),
                             });
-                            let expression = ir::Expression::Call(calls.len());
                             calls.push(ir::Call {
-                                function,
+                                function: ir::Expression::FunctionUse(function_use_index),
                                 arguments: vec![left, right],
+                                relevant_calls: Vec::new(),
+                                relevant_function_uses: vec![function_use_index],
                             });
-                            expression
+                            ir::Expression::Call(call_index)
                         })
                         .unwrap_or(ir::Expression::String(String::new())),
                 ))
@@ -667,6 +673,7 @@ impl Context {
                 let function = ir::Expression::FunctionUse(function_uses.len());
                 function_uses.push(ir::FunctionUse {
                     candidates: vec![ir::Function::Identity],
+                    relevant_call: None,
                 });
                 Ok(ExpressionOrImport::Expression(function))
             }
@@ -707,6 +714,15 @@ impl Context {
                     logger,
                 );
                 let mut arguments = Vec::new();
+                let mut relevant_calls = Vec::new();
+                let mut relevant_function_uses = Vec::new();
+                if let Ok(ExpressionOrImport::Expression(ref function)) = function {
+                    if let &ir::Expression::FunctionUse(index) = function {
+                        relevant_function_uses.push(index);
+                    } else if let &ir::Expression::Call(index) = function {
+                        relevant_calls.push(index);
+                    }
+                }
                 for ast_argument in ast_arguments {
                     let ast_argument = match ast_argument {
                         ast::ListElement::Empty { comma_pos } => {
@@ -728,6 +744,11 @@ impl Context {
                     };
                     match argument {
                         ExpressionOrImport::Expression(argument) => {
+                            if let ir::Expression::FunctionUse(index) = argument {
+                                relevant_function_uses.push(index);
+                            } else if let ir::Expression::Call(index) = argument {
+                                relevant_calls.push(index);
+                            }
                             arguments.push(argument);
                         }
                         _ => {
@@ -737,12 +758,22 @@ impl Context {
                 }
                 match function {
                     Ok(ExpressionOrImport::Expression(function)) => {
-                        let expression = ir::Expression::Call(calls.len());
+                        let call_index = calls.len();
+                        for &index in &relevant_calls {
+                            calls[index].relevant_calls.push(call_index);
+                        }
+                        for &index in &relevant_function_uses {
+                            function_uses[index].relevant_call = Some(index);
+                        }
                         calls.push(ir::Call {
                             function,
                             arguments,
+                            relevant_calls,
+                            relevant_function_uses,
                         });
-                        Ok(ExpressionOrImport::Expression(expression))
+                        Ok(ExpressionOrImport::Expression(ir::Expression::Call(
+                            call_index,
+                        )))
                     }
                     _ => todo!(),
                 }
@@ -806,14 +837,21 @@ impl Context {
                     .get(operator_name)
                     .cloned()
                     .unwrap_or_else(Vec::new);
-                let function = ir::Expression::FunctionUse(function_uses.len());
-                function_uses.push(ir::FunctionUse { candidates });
-                let expression = ir::Expression::Call(calls.len());
-                calls.push(ir::Call {
-                    function,
-                    arguments: vec![left_hand_side?, right_hand_side?],
+                let function_use_index = function_uses.len();
+                let call_index = calls.len();
+                function_uses.push(ir::FunctionUse {
+                    candidates,
+                    relevant_call: Some(call_index),
                 });
-                Ok(ExpressionOrImport::Expression(expression))
+                calls.push(ir::Call {
+                    function: ir::Expression::FunctionUse(function_use_index),
+                    arguments: vec![left_hand_side?, right_hand_side?],
+                    relevant_function_uses: vec![function_use_index],
+                    relevant_calls: Vec::new(),
+                });
+                Ok(ExpressionOrImport::Expression(ir::Expression::Call(
+                    call_index,
+                )))
             }
             _ => todo!(),
         }
@@ -835,6 +873,7 @@ impl Context {
                 let function = ir::Expression::FunctionUse(function_uses.len());
                 function_uses.push(ir::FunctionUse {
                     candidates: candidates.clone(),
+                    relevant_call: None,
                 });
                 Ok(ExpressionOrImport::Expression(function))
             }
@@ -843,16 +882,21 @@ impl Context {
                 if reference {
                     Ok(ExpressionOrImport::Expression(variable))
                 } else {
-                    let function = ir::Expression::FunctionUse(function_uses.len());
+                    let function_use_index = function_uses.len();
+                    let call_index = calls.len();
                     function_uses.push(ir::FunctionUse {
                         candidates: vec![ir::Function::Dereference],
+                        relevant_call: Some(call_index),
                     });
-                    let expression = ir::Expression::Call(calls.len());
                     calls.push(ir::Call {
-                        function,
+                        function: ir::Expression::FunctionUse(function_use_index),
                         arguments: vec![variable],
+                        relevant_calls: Vec::new(),
+                        relevant_function_uses: vec![function_use_index],
                     });
-                    Ok(ExpressionOrImport::Expression(expression))
+                    Ok(ExpressionOrImport::Expression(ir::Expression::Call(
+                        call_index,
+                    )))
                 }
             }
             _ => todo!(),
