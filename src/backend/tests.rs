@@ -123,7 +123,12 @@ fn unify_undo() {
     ));
     assert!(unifications.unify(&x, &y));
     assert_x_rank(2);
-    unifications.undo();
+    for ty::Unification { ty, old_rank } in unifications.0.into_iter().rev() {
+        let ty::Ty::Var(ref var) = *ty else {
+            unreachable!();
+        };
+        *var.borrow_mut() = ty::Var::Unassigned(old_rank);
+    }
     assert_x_rank(0);
 }
 

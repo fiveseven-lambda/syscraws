@@ -87,12 +87,12 @@ impl Serialize for Var {
     }
 }
 
-struct Unification {
-    ty: Rc<Ty>,
-    old: Var,
+pub struct Unification {
+    pub ty: Rc<Ty>,
+    pub old_rank: u32,
 }
 
-pub struct Unifications(Vec<Unification>);
+pub struct Unifications(pub Vec<Unification>);
 
 impl Unifications {
     pub fn new() -> Unifications {
@@ -145,26 +145,26 @@ impl Unifications {
                     std::cmp::Ordering::Greater => {
                         self.0.push(Unification {
                             ty: right.clone(),
-                            old: right_var.borrow().clone(),
+                            old_rank: right_rank,
                         });
                         *right_var.borrow_mut() = Var::Assigned(left.clone());
                     }
                     std::cmp::Ordering::Less => {
                         self.0.push(Unification {
                             ty: left.clone(),
-                            old: left_var.borrow().clone(),
+                            old_rank: left_rank,
                         });
                         *left_var.borrow_mut() = Var::Assigned(right.clone());
                     }
                     std::cmp::Ordering::Equal => {
                         self.0.push(Unification {
                             ty: left.clone(),
-                            old: left_var.borrow().clone(),
+                            old_rank: left_rank,
                         });
                         *left_var.borrow_mut() = Var::Unassigned(left_rank + 1);
                         self.0.push(Unification {
                             ty: right.clone(),
-                            old: right_var.borrow().clone(),
+                            old_rank: right_rank,
                         });
                         *right_var.borrow_mut() = Var::Assigned(left.clone());
                     }
@@ -172,51 +172,37 @@ impl Unifications {
                 true
             }
             (Ty::Var(left_var), _) => {
-                if let Var::Assigned(ref left) = *left_var.borrow() {
-                    self.unify(left, right)
-                } else if right.contains(left_var) {
-                    false
-                } else {
-                    self.0.push(Unification {
-                        ty: left.clone(),
-                        old: left_var.borrow().clone(),
-                    });
-                    *left_var.borrow_mut() = Var::Assigned(right.clone());
-                    true
+                let left_rank = match *left_var.borrow() {
+                    Var::Assigned(ref left) => return self.unify(left, right),
+                    Var::Unassigned(left_rank) => left_rank,
+                };
+                if right.contains(left_var) {
+                    return false;
                 }
+                self.0.push(Unification {
+                    ty: left.clone(),
+                    old_rank: left_rank,
+                });
+                *left_var.borrow_mut() = Var::Assigned(right.clone());
+                true
             }
             (_, Ty::Var(right_var)) => {
-                if let Var::Assigned(ref right) = *right_var.borrow() {
-                    self.unify(left, right)
-                } else if left.contains(right_var) {
-                    false
-                } else {
-                    self.0.push(Unification {
-                        ty: right.clone(),
-                        old: right_var.borrow().clone(),
-                    });
-                    *right_var.borrow_mut() = Var::Assigned(left.clone());
-                    true
+                let right_rank = match *right_var.borrow() {
+                    Var::Assigned(ref right) => return self.unify(left, right),
+                    Var::Unassigned(right_rank) => right_rank,
+                };
+                if left.contains(right_var) {
+                    return false;
                 }
+                self.0.push(Unification {
+                    ty: right.clone(),
+                    old_rank: right_rank,
+                });
+                *right_var.borrow_mut() = Var::Assigned(left.clone());
+                true
             }
             _ => false,
         }
-    }
-
-    pub fn undo(self) -> Unifications {
-        Unifications(
-            self.0
-                .into_iter()
-                .rev()
-                .map(|Unification { ty, old }| {
-                    let Ty::Var(ref var) = *ty else {
-                        unreachable!()
-                    };
-                    let old = var.replace(old);
-                    Unification { ty, old }
-                })
-                .collect(),
-        )
     }
 }
 
