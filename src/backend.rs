@@ -26,7 +26,7 @@ mod tests;
 mod ty;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::CString;
 use std::rc::Rc;
 
@@ -68,71 +68,81 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             .map(|function_use| FunctionUse::Unresolved(function_use.candidates.clone()))
             .collect();
         let mut calls: Vec<Option<Call>> = function_definition.calls.iter().map(|_| None).collect();
-        let mut function_use_indices: VecDeque<usize> =
+        let mut function_use_indices: BTreeSet<usize> =
             (0..function_definition.function_uses.len()).collect();
-        while let Some(function_use_index) = function_use_indices.pop_front() {
-            let candidates = match function_uses[function_use_index] {
-                FunctionUse::Unresolved(ref mut candidates) => std::mem::take(candidates),
-                FunctionUse::Resolved(_) => continue,
-            };
-            let mut new_candidates = Vec::new();
-            let mut updated_calls = Vec::new();
-            let mut rollback = Vec::new();
-            for candidate in candidates {
-                function_uses[function_use_index] = FunctionUse::Resolved(candidate.clone());
-                let mut unifications = ty::Unifications::new();
-                let mut updated_call_indices = Vec::new();
-                if translate_calls(
-                    function_definition.function_uses[function_use_index].used_by,
-                    &mut unifications,
-                    &mut updated_call_indices,
-                    &function_definition.calls,
-                    &function_uses,
-                    &mut calls,
-                    &local_variables_ty,
-                    &global_variables_ty,
-                    &ir_program.function_tys,
-                ) {
-                    for ty::Unification { ty, old_rank } in unifications.0.into_iter().rev() {
+        loop {
+            let mut new_function_use_indices = BTreeSet::new();
+            let mut updated = false;
+            for &function_use_index in &function_use_indices {
+                let candidates = match function_uses[function_use_index] {
+                    FunctionUse::Unresolved(ref mut candidates) => std::mem::take(candidates),
+                    FunctionUse::Resolved(_) => continue,
+                };
+                let mut new_candidates = Vec::new();
+                let mut updated_calls = Vec::new();
+                let mut rollback = Vec::new();
+                for candidate in candidates {
+                    function_uses[function_use_index] = FunctionUse::Resolved(candidate.clone());
+                    let mut unifications = ty::Unifications::new();
+                    let mut updated_call_indices = Vec::new();
+                    if translate_calls(
+                        function_definition.function_uses[function_use_index].used_by,
+                        &mut unifications,
+                        &mut updated_call_indices,
+                        &function_definition.calls,
+                        &function_uses,
+                        &mut calls,
+                        &local_variables_ty,
+                        &global_variables_ty,
+                        &ir_program.function_tys,
+                    ) {
+                        for ty::Unification { ty, old_rank } in unifications.0.into_iter().rev() {
+                            let ty::Ty::Var(ref var) = *ty else {
+                                unreachable!();
+                            };
+                            let new_var = var.replace(ty::Var::Unassigned(old_rank));
+                            rollback.push((ty, new_var));
+                        }
+                        for call_index in updated_call_indices.into_iter().rev() {
+                            let call = std::mem::take(&mut calls[call_index]);
+                            updated_calls.push((call_index, call));
+                        }
+                        new_candidates.push(candidate);
+                    } else {
+                        for ty::Unification { ty, old_rank } in unifications.0.into_iter().rev() {
+                            let ty::Ty::Var(ref var) = *ty else {
+                                unreachable!();
+                            };
+                            *var.borrow_mut() = ty::Var::Unassigned(old_rank);
+                        }
+                        for call_index in updated_call_indices.into_iter().rev() {
+                            calls[call_index] = None;
+                        }
+                    }
+                }
+                if new_candidates.len() > 2 {
+                    function_uses[function_use_index] = FunctionUse::Unresolved(new_candidates);
+                    new_function_use_indices.insert(function_use_index);
+                } else if let Some(ty) = new_candidates.into_iter().next() {
+                    for (ty, new_var) in rollback.into_iter().rev() {
                         let ty::Ty::Var(ref var) = *ty else {
                             unreachable!();
                         };
-                        let new_var = var.replace(ty::Var::Unassigned(old_rank));
-                        rollback.push((ty, new_var));
+                        *var.borrow_mut() = new_var;
                     }
-                    for call_index in updated_call_indices.into_iter().rev() {
-                        let call = std::mem::take(&mut calls[call_index]);
-                        updated_calls.push((call_index, call));
+                    for (call_index, call) in updated_calls.into_iter().rev() {
+                        calls[call_index] = call;
                     }
-                    new_candidates.push(candidate);
+                    function_uses[function_use_index] = FunctionUse::Resolved(ty);
+                    updated = true;
                 } else {
-                    for ty::Unification { ty, old_rank } in unifications.0.into_iter().rev() {
-                        let ty::Ty::Var(ref var) = *ty else {
-                            unreachable!();
-                        };
-                        *var.borrow_mut() = ty::Var::Unassigned(old_rank);
-                    }
-                    for call_index in updated_call_indices.into_iter().rev() {
-                        calls[call_index] = None;
-                    }
+                    panic!();
                 }
             }
-            if new_candidates.len() > 2 {
-                function_uses[function_use_index] = FunctionUse::Unresolved(new_candidates);
-            } else if let Some(ty) = new_candidates.into_iter().next() {
-                for (ty, new_var) in rollback.into_iter().rev() {
-                    let ty::Ty::Var(ref var) = *ty else {
-                        unreachable!();
-                    };
-                    *var.borrow_mut() = new_var;
-                }
-                for (call_index, call) in updated_calls.into_iter().rev() {
-                    calls[call_index] = call;
-                }
-                function_uses[function_use_index] = FunctionUse::Resolved(ty);
-            } else {
-                panic!();
+            if !updated {
+                break;
             }
+            function_use_indices = new_function_use_indices;
         }
         function_definitions.push((function_uses, calls));
     }
