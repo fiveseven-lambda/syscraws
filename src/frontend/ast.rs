@@ -22,7 +22,7 @@
 
 use std::cell::Cell;
 
-use crate::log::Pos;
+use crate::{ir, log::Pos};
 
 /**
  * The Abstract Syntax Tree (AST) for the entire file.
@@ -416,7 +416,8 @@ pub enum Term {
      */
     BinaryOperation {
         left_operand: Option<Box<TermWithPos>>,
-        operator_name: &'static str,
+        operator_class: ir::Class,
+        operator_index: usize,
         operator_pos: Pos,
         right_operand: Option<Box<TermWithPos>>,
     },

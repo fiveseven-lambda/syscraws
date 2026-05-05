@@ -46,8 +46,7 @@ pub struct FunctionTy {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Function {
-    AddInteger,
-    IntegerToString,
+    Method(Class, usize),
     Dereference,
     Identity,
     Assign,
@@ -63,6 +62,24 @@ pub enum Function {
         structure_index: usize,
         field_index: usize,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash)]
+pub enum Class {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    RightShift,
+    LeftShift,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    Eq,
+    Cmp,
+    ToString,
+    UserDefined(usize),
 }
 
 #[derive(Serialize)]
@@ -90,6 +107,8 @@ pub enum TyConstructor {
     Tuple,
     Function,
     Structure(usize),
+    AddInteger,
+    AddFloat,
 }
 
 #[derive(Serialize)]

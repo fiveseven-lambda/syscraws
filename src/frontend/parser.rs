@@ -27,6 +27,7 @@ use std::cell::Cell;
 
 use super::CharsPeekable;
 use super::ast;
+use crate::ir;
 use crate::log::Index;
 use crate::log::ParseError;
 use crate::log::Pos;
@@ -684,7 +685,7 @@ impl Parser<'_, '_> {
             let Some(ref token) = self.current.token else {
                 break;
             };
-            if let Some(operator_name) = infix_operator(token, precedence) {
+            if let Some((operator_class, operator_index)) = infix_operator(token, precedence) {
                 let operator_pos = self.current_pos();
                 self.consume_token()?;
                 let right_operand =
@@ -692,7 +693,8 @@ impl Parser<'_, '_> {
                 left_operand = Some(ast::TermWithPos {
                     term: ast::Term::BinaryOperation {
                         left_operand: left_operand.map(Box::new),
-                        operator_name,
+                        operator_class,
+                        operator_index,
                         operator_pos,
                         right_operand: right_operand.map(Box::new),
                     },
@@ -1007,24 +1009,24 @@ enum Precedence {
     TimeShift,
 }
 
-fn infix_operator(token: &Token, precedence: Precedence) -> Option<&'static str> {
+fn infix_operator(token: &Token, precedence: Precedence) -> Option<(ir::Class, usize)> {
     match (token, precedence) {
-        (Token::Asterisk, Precedence::MulDivRem) => Some("mul"),
-        (Token::Slash, Precedence::MulDivRem) => Some("div"),
-        (Token::Percent, Precedence::MulDivRem) => Some("rem"),
-        (Token::Plus, Precedence::AddSub) => Some("add"),
-        (Token::Hyphen, Precedence::AddSub) => Some("sub"),
-        (Token::DoubleGreater, Precedence::BitShift) => Some("right_shift"),
-        (Token::DoubleLess, Precedence::BitShift) => Some("left_shift"),
-        (Token::Ampersand, Precedence::BitAnd) => Some("bitwise_and"),
-        (Token::Circumflex, Precedence::BitXor) => Some("bitwise_xor"),
-        (Token::Bar, Precedence::BitOr) => Some("bitwise_or"),
-        (Token::Greater, Precedence::Inequality) => Some("greater"),
-        (Token::GreaterEqual, Precedence::Inequality) => Some("greater_or_equal"),
-        (Token::Less, Precedence::Inequality) => Some("less"),
-        (Token::LessEqual, Precedence::Inequality) => Some("less_or_equal"),
-        (Token::DoubleEqual, Precedence::Equality) => Some("equal"),
-        (Token::ExclamationEqual, Precedence::Equality) => Some("not_equal"),
+        (Token::Asterisk, Precedence::MulDivRem) => Some((ir::Class::Mul, 0)),
+        (Token::Slash, Precedence::MulDivRem) => Some((ir::Class::Div, 0)),
+        (Token::Percent, Precedence::MulDivRem) => Some((ir::Class::Rem, 0)),
+        (Token::Plus, Precedence::AddSub) => Some((ir::Class::Add, 0)),
+        (Token::Hyphen, Precedence::AddSub) => Some((ir::Class::Sub, 0)),
+        (Token::DoubleGreater, Precedence::BitShift) => Some((ir::Class::RightShift, 0)),
+        (Token::DoubleLess, Precedence::BitShift) => Some((ir::Class::LeftShift, 0)),
+        (Token::Ampersand, Precedence::BitAnd) => Some((ir::Class::BitwiseAnd, 0)),
+        (Token::Circumflex, Precedence::BitXor) => Some((ir::Class::BitwiseXor, 0)),
+        (Token::Bar, Precedence::BitOr) => Some((ir::Class::BitwiseOr, 0)),
+        (Token::Greater, Precedence::Inequality) => Some((ir::Class::Cmp, 0)),
+        (Token::GreaterEqual, Precedence::Inequality) => Some((ir::Class::Cmp, 1)),
+        (Token::Less, Precedence::Inequality) => Some((ir::Class::Cmp, 2)),
+        (Token::LessEqual, Precedence::Inequality) => Some((ir::Class::Cmp, 3)),
+        (Token::DoubleEqual, Precedence::Equality) => Some((ir::Class::Eq, 0)),
+        (Token::ExclamationEqual, Precedence::Equality) => Some((ir::Class::Eq, 1)),
         _ => None,
     }
 }
