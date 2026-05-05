@@ -46,8 +46,7 @@ pub struct FunctionTy {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Function {
-    AddInteger,
-    IntegerToString,
+    Method(Class, usize),
     Dereference,
     Identity,
     Assign,
@@ -65,9 +64,28 @@ pub enum Function {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash)]
+pub enum Class {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    RightShift,
+    LeftShift,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    Eq,
+    Cmp,
+    ToString,
+    UserDefined(usize),
+}
+
 #[derive(Serialize)]
 pub struct FunctionUse {
     pub candidates: Vec<Function>,
+    pub used_by: Option<usize>,
 }
 
 #[derive(Clone, Serialize)]
@@ -89,6 +107,8 @@ pub enum TyConstructor {
     Tuple,
     Function,
     Structure(usize),
+    AddInteger,
+    AddFloat,
 }
 
 #[derive(Serialize)]
@@ -148,4 +168,5 @@ pub enum Storage {
 pub struct Call {
     pub function: Expression,
     pub arguments: Vec<Expression>,
+    pub used_by: Option<usize>,
 }
