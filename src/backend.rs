@@ -24,6 +24,7 @@ use crate::{ffi, ir};
 
 mod tests;
 mod ty;
+mod unify;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -96,7 +97,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                 };
                 let mut new_candidates = Vec::new();
                 let mut updated_calls = Vec::new();
-                let mut rollback = Vec::new();
+                let mut substitutions = Vec::new();
                 for candidate in candidates {
                     let candidate_ty = get_function_ty(&candidate, &ir_program.function_tys);
                     function_uses[function_use_index] =
@@ -108,11 +109,11 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                         let relations = vec![(instance, class.clone(), ty_arguments)];
                         search_instance(&relations);
                     } else {
-                        let mut unifications = ty::Unifications::new();
+                        let mut unifier = unify::Unifier::new();
                         let mut updated_call_indices = Vec::new();
                         if translate_calls(
                             function_definition.function_uses[function_use_index].used_by,
-                            &mut unifications,
+                            &mut unifier,
                             &mut updated_call_indices,
                             &function_definition.calls,
                             &function_uses,
@@ -121,27 +122,14 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                             &global_variables_ty,
                             &ir_program.function_tys,
                         ) {
-                            for ty::Unification { ty, old_rank } in unifications.0.into_iter().rev()
-                            {
-                                let ty::Ty::Var(ref var) = *ty else {
-                                    unreachable!();
-                                };
-                                let new_var = var.replace(ty::Var::Unassigned(old_rank));
-                                rollback.push((ty, new_var));
-                            }
+                            substitutions.extend(unifier.rollback());
                             for call_index in updated_call_indices.into_iter().rev() {
                                 let call = std::mem::take(&mut calls[call_index]);
                                 updated_calls.push((call_index, call));
                             }
                             new_candidates.push((candidate, candidate_ty));
                         } else {
-                            for ty::Unification { ty, old_rank } in unifications.0.into_iter().rev()
-                            {
-                                let ty::Ty::Var(ref var) = *ty else {
-                                    unreachable!();
-                                };
-                                *var.borrow_mut() = ty::Var::Unassigned(old_rank);
-                            }
+                            for _ in unifier.rollback() {}
                             for call_index in updated_call_indices.into_iter().rev() {
                                 calls[call_index] = None;
                             }
@@ -156,11 +144,8 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                             .collect(),
                     );
                 } else if let Some((candidate, ty)) = new_candidates.into_iter().next() {
-                    for (ty, new_var) in rollback.into_iter().rev() {
-                        let ty::Ty::Var(ref var) = *ty else {
-                            unreachable!();
-                        };
-                        *var.borrow_mut() = new_var;
+                    for substitution in substitutions.into_iter().rev() {
+                        substitution.commit();
                     }
                     for (call_index, call) in updated_calls.into_iter().rev() {
                         calls[call_index] = call;
@@ -299,7 +284,7 @@ fn get_orders(
 
 fn translate_calls(
     call_index: Option<usize>,
-    unifications: &mut ty::Unifications,
+    unifications: &mut unify::Unifier,
     updated_call_indices: &mut Vec<usize>,
     ir_calls: &[ir::Call],
     function_uses: &[FunctionUse],
