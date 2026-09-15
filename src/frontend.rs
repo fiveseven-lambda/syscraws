@@ -64,6 +64,7 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         global_blocks: Vec::new(),
         global_variables: Variables::new(ir::Storage::Global),
         exports: Vec::new(),
+        submodules: Vec::new(),
         logger,
         file_indices: HashMap::new(),
         import_chain: HashSet::from([root_file_path.clone()]),
@@ -126,6 +127,7 @@ struct Reader<'logger> {
      * After all files are read, any remaining global variables are freed.
      */
     global_variables: Variables,
+    submodules: Vec<Vec<usize>>,
     /**
      * Items exported from each file, in postorder.
      */
@@ -206,6 +208,7 @@ impl Reader<'_> {
             )]),
             methods: HashMap::from([(String::from("assign"), vec![ir::Function::Assign])]),
         };
+        let mut submodules = Vec::new();
         for ast::WithExtraTokens {
             content: ast_import,
             extra_tokens_pos,
@@ -217,6 +220,7 @@ impl Reader<'_> {
             if let Ok((name, pos, Some(index))) =
                 self.import_file(ast_import, path.parent().unwrap())
             {
+                submodules.push(index);
                 match context.items.entry(name) {
                     std::collections::hash_map::Entry::Occupied(mut entry) => {
                         if let (Some(prev_pos), _) = entry.get() {
@@ -242,6 +246,9 @@ impl Reader<'_> {
                 candidates.dedup();
             }
         }
+        submodules.sort();
+        submodules.dedup();
+        self.submodules.push(submodules);
         for name in ast_file.structure_names {
             self.declare_structure(name, &mut context);
         }
