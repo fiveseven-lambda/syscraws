@@ -61,6 +61,7 @@ pub enum Token {
     KeywordVar,
     KeywordInt,
     KeywordFloat,
+    KeywordType,
     Underscore,
     Identifier(String),
     Plus,
@@ -125,11 +126,7 @@ pub enum Token {
  * - [`ParseError::InvalidBlockComment`]: `is_on_new_line` is `false` when a
  *   block comment starts.
  */
-pub fn read(
-    iter: &mut CharsPeekable,
-    mut is_on_new_line: bool,
-    file_index: usize,
-) -> Result<TokenInfo, ParseError> {
+pub fn read(iter: &mut CharsPeekable, mut is_on_new_line: bool) -> Result<TokenInfo, ParseError> {
     let (start_index, first_ch) = loop {
         let Some(ch) = iter.peek() else {
             return Ok(TokenInfo {
@@ -172,7 +169,6 @@ pub fn read(
             loop {
                 let Some(ch1) = iter.peek() else {
                     return Err(ParseError::UnterminatedStringLiteral(Pos {
-                        file: file_index,
                         start: start_index,
                         end: iter.index(),
                     }));
@@ -193,7 +189,6 @@ pub fn read(
                         loop {
                             let Some(ch2) = iter.peek() else {
                                 return Err(ParseError::UnterminatedStringLiteral(Pos {
-                                    file: file_index,
                                     start: start_index,
                                     end: iter.index(),
                                 }));
@@ -207,12 +202,11 @@ pub fn read(
                         }
                         let mut parser = {
                             let start = iter.index();
-                            let first_token = read(iter, false, file_index)?;
+                            let first_token = read(iter, false)?;
                             super::Parser {
                                 iter,
                                 current: first_token,
                                 prev_end: start,
-                                file_index,
                             }
                         };
                         let value = parser.parse_disjunction(true)?;
@@ -227,7 +221,6 @@ pub fn read(
                                 return Err(ParseError::UnexpectedTokenInStringLiteral {
                                     unexpected_token_pos: parser.current_pos(),
                                     dollar_pos: Pos {
-                                        file: file_index,
                                         start: index1,
                                         end: iter.index(),
                                     },
@@ -235,7 +228,6 @@ pub fn read(
                             }
                             None => {
                                 return Err(ParseError::UnterminatedStringLiteral(Pos {
-                                    file: file_index,
                                     start: start_index,
                                     end: iter.index(),
                                 }));
@@ -245,7 +237,6 @@ pub fn read(
                     '\\' => {
                         let Some(ch) = iter.peek() else {
                             return Err(ParseError::UnterminatedStringLiteral(Pos {
-                                file: file_index,
                                 start: start_index,
                                 end: iter.index(),
                             }));
@@ -261,7 +252,6 @@ pub fn read(
                             '\'' => '\'',
                             _ => {
                                 return Err(ParseError::InvalidEscapeSequence(Pos {
-                                    file: file_index,
                                     start: index1,
                                     end: iter.index(),
                                 }));
@@ -303,6 +293,7 @@ pub fn read(
                 "continue" => Token::KeywordContinue,
                 "return" => Token::KeywordReturn,
                 "end" => Token::KeywordEnd,
+                "Type" => Token::KeywordType,
                 "var" => Token::KeywordVar,
                 "int" => Token::KeywordInt,
                 "float" => Token::KeywordFloat,
@@ -320,7 +311,7 @@ pub fn read(
         '-' => {
             if iter.consume_if('-') {
                 skip_line_comment(iter);
-                return read(iter, true, file_index);
+                return read(iter, true);
             } else if iter.consume_if('=') {
                 Token::HyphenEqual
             } else if iter.consume_if('>') {
@@ -348,7 +339,6 @@ pub fn read(
                     match iter.peek() {
                         None => {
                             return Err(ParseError::UnterminatedComment(Pos {
-                                file: file_index,
                                 start: start_index,
                                 end: iter.index(),
                             }));
@@ -360,12 +350,11 @@ pub fn read(
                     iter.consume();
                 }
                 iter.consume();
-                return read(iter, is_on_new_line, file_index);
+                return read(iter, is_on_new_line);
             } else if iter.consume_if('/') {
                 if !is_on_new_line {
                     return Err(ParseError::InvalidBlockComment {
                         start_pos: Pos {
-                            file: file_index,
                             start: start_index,
                             end: iter.index(),
                         },
@@ -379,7 +368,6 @@ pub fn read(
                 loop {
                     let Some(ch) = iter.peek() else {
                         return Err(ParseError::UnterminatedComment(Pos {
-                            file: file_index,
                             start: start_index,
                             end: iter.index(),
                         }));
@@ -394,7 +382,7 @@ pub fn read(
                             backslash_count += 1;
                             if backslash_count == num_slashes {
                                 skip_line_comment(iter);
-                                return read(iter, true, file_index);
+                                return read(iter, true);
                             }
                             iter.consume();
                         }
@@ -495,7 +483,6 @@ pub fn read(
         '$' => Token::Dollar,
         _ => {
             return Err(ParseError::UnexpectedCharacter(Pos {
-                file: file_index,
                 start: start_index,
                 end: iter.index(),
             }));

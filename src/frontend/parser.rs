@@ -20,14 +20,12 @@
  * Defines the parser functions.
  */
 
-mod tests;
 mod token;
 
 use std::cell::Cell;
 
 use super::CharsPeekable;
 use super::ast;
-use crate::ir;
 use crate::log::Index;
 use crate::log::ParseError;
 use crate::log::Pos;
@@ -37,11 +35,8 @@ use token::{Token, TokenInfo};
 /**
  * Parses an entire file.
  */
-pub fn parse_file(
-    chars_peekable: &mut CharsPeekable,
-    file_index: usize,
-) -> Result<ast::File, ParseError> {
-    let mut parser = Parser::new(chars_peekable, file_index)?;
+pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<ast::File, ParseError> {
+    let mut parser = Parser::new(chars_peekable)?;
     let mut file = ast::File {
         imports: Vec::new(),
         structure_names: Vec::new(),
@@ -97,10 +92,6 @@ struct Parser<'str, 'iter> {
      * End index of the previous token.
      */
     prev_end: Index,
-    /**
-     * The pre-order file index.
-     */
-    file_index: usize,
 }
 
 impl<'str, 'iter> Parser<'str, 'iter> {
@@ -110,24 +101,17 @@ impl<'str, 'iter> Parser<'str, 'iter> {
      * It calls [`read_token`] once and sets [`Self::current`] to point to
      * the first token.
      */
-    fn new(
-        iter: &'iter mut CharsPeekable<'str>,
-        file_index: usize,
-    ) -> Result<Parser<'str, 'iter>, ParseError> {
-        let first_token = token::read(iter, true, file_index)?;
+    fn new(iter: &'iter mut CharsPeekable<'str>) -> Result<Self, ParseError> {
+        let first_token = token::read(iter, true)?;
         Ok(Parser {
             iter,
             current: first_token,
             prev_end: Index { line: 0, column: 0 },
-            file_index,
         })
     }
 }
 
 impl Parser<'_, '_> {
-    /**
-     * Parses an import statement.
-     */
     fn parse_import(&mut self) -> Result<ast::Import, ParseError> {
         let keyword_import_pos = self.current_pos();
         self.consume_token()?;
@@ -163,7 +147,6 @@ impl Parser<'_, '_> {
                 Token::Identifier(name) => {
                     let name = std::mem::take(name);
                     let pos = self.current_pos();
-                    self.consume_token()?;
                     Some((name, pos))
                 }
                 _ => {
@@ -176,33 +159,7 @@ impl Parser<'_, '_> {
         } else {
             None
         };
-
-        let ty_parameters = if self.current.is_on_new_line {
-            None
-        } else if let Some(Token::OpeningBracket) = self.current.token {
-            let opening_bracket_pos = self.current_pos();
-            self.consume_token()?;
-
-            let (ty_parameters, _) = self.parse_list_elements_and_trailing_comma()?;
-            match self.current.token {
-                Some(Token::ClosingBracket) => self.consume_token()?,
-                Some(_) => {
-                    return Err(ParseError::UnexpectedTokenInBrackets {
-                        unexpected_token_pos: self.current_pos(),
-                        opening_bracket_pos,
-                    });
-                }
-                None => {
-                    return Err(ParseError::UnclosedBracket {
-                        opening_bracket_pos,
-                    });
-                }
-            }
-            Some(ty_parameters)
-        } else {
-            None
-        };
-
+        let signature = self.parse_factor(false)?;
         let extra_tokens_pos = self.consume_line()?;
 
         let mut fields = Vec::new();
@@ -229,7 +186,7 @@ impl Parser<'_, '_> {
                 keyword_struct_pos,
             },
             ast::StructureDefinition {
-                ty_parameters,
+                signature,
                 fields,
                 extra_tokens_pos,
             },
@@ -685,6 +642,7 @@ impl Parser<'_, '_> {
             let Some(ref token) = self.current.token else {
                 break;
             };
+            /*
             if let Some((operator_class, operator_index)) = infix_operator(token, precedence) {
                 let operator_pos = self.current_pos();
                 self.consume_token()?;
@@ -703,6 +661,7 @@ impl Parser<'_, '_> {
             } else {
                 break;
             }
+            */
         }
         Ok(left_operand)
     }
@@ -848,6 +807,9 @@ impl Parser<'_, '_> {
             let name = std::mem::take(name);
             self.consume_token()?;
             ast::Term::Identifier(name)
+        } else if let Token::KeywordType = first_token {
+            self.consume_token()?;
+            ast::Term::Ty
         } else if let Token::StringLiteral(components) = first_token {
             let components = std::mem::take(components);
             self.consume_token()?;
@@ -1009,6 +971,7 @@ enum Precedence {
     TimeShift,
 }
 
+/*
 fn infix_operator(token: &Token, precedence: Precedence) -> Option<(ir::Class, usize)> {
     match (token, precedence) {
         (Token::Asterisk, Precedence::MulDivRem) => Some((ir::Class::Mul, 0)),
@@ -1030,6 +993,7 @@ fn infix_operator(token: &Token, precedence: Precedence) -> Option<(ir::Class, u
         _ => None,
     }
 }
+*/
 
 fn assignment_operator(token: &Token) -> Option<&'static str> {
     match token {
@@ -1054,7 +1018,6 @@ impl Parser<'_, '_> {
      */
     fn current_pos(&self) -> Pos {
         Pos {
-            file: self.file_index,
             start: self.current.start,
             end: self.iter.index(),
         }
@@ -1065,7 +1028,6 @@ impl Parser<'_, '_> {
      */
     fn range_from(&self, start: Index) -> Pos {
         Pos {
-            file: self.file_index,
             start,
             end: self.prev_end,
         }
@@ -1076,7 +1038,7 @@ impl Parser<'_, '_> {
      */
     fn consume_token(&mut self) -> Result<(), ParseError> {
         self.prev_end = self.iter.index();
-        self.current = token::read(&mut self.iter, false, self.file_index)?;
+        self.current = token::read(&mut self.iter, false)?;
         Ok(())
     }
 }

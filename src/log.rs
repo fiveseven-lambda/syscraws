@@ -35,20 +35,16 @@ impl Logger {
             files: Vec::new(),
         }
     }
+}
 
-    /**
-     * Called by [`frontend::read_input`](crate::frontend::read_input).
-     */
-    pub fn root_file_not_found(&mut self, path: &Path, err: std::io::Error) {
-        writeln!(
-            self.writer,
-            "ERROR: File `{}` not found. {}",
-            path.display(),
-            err
-        )
-        .unwrap();
-    }
+/**
+ * Called by [`frontend::read_input`](crate::frontend::read_input).
+ */
+pub fn root_file_not_found(path: &Path, err: std::io::Error) {
+    eprintln!("ERROR: File `{}` not found. {}", path.display(), err);
+}
 
+impl Logger {
     /**
      * Called by [`frontend::read_input`](crate::frontend::read_input).
      */
@@ -87,6 +83,7 @@ pub struct File {
     pub lines: Vec<Range<usize>>,
 }
 
+/*
 impl Logger {
     pub fn quote(
         &mut self,
@@ -177,6 +174,7 @@ impl Logger {
         writeln!(self.writer).unwrap();
     }
 }
+*/
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -232,6 +230,7 @@ pub enum ParseError {
     },
 }
 
+/*
 impl Logger {
     pub fn parse_error(&mut self, err: ParseError) {
         match err {
@@ -655,10 +654,10 @@ impl Logger {
         self.num_errors += 1;
     }
 }
+*/
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Pos {
-    pub file: usize,
     pub start: Index,
     pub end: Index,
 }

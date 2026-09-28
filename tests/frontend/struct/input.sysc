@@ -1,9 +1,0 @@
-struct Foo
-  x: int
-  y: Bar[int]
-end
-
-struct Bar[T]
-  x: float
-  y: Foo
-end

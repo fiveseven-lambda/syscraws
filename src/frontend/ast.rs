@@ -22,7 +22,7 @@
 
 use std::cell::Cell;
 
-use crate::{ir, log::Pos};
+use crate::log::Pos;
 
 /**
  * The Abstract Syntax Tree (AST) for the entire file.
@@ -132,10 +132,7 @@ pub enum TopLevelStatement {
  * included here.
  */
 pub struct StructureDefinition {
-    /**
-     * List of type parameters.
-     */
-    pub ty_parameters: Option<Vec<ListElement>>,
+    pub signature: Option<TermWithPos>,
     /**
      * [`Pos`] of extra tokens if any appear on the same line after the
      * keyword `struct`, optional struct name, and optional type parameter
@@ -381,6 +378,7 @@ pub enum Term {
      * An identifier.
      */
     Identifier(String),
+    Ty,
     /**
      * A term followed by `.` and field name.
      */
@@ -416,7 +414,7 @@ pub enum Term {
      */
     BinaryOperation {
         left_operand: Option<Box<TermWithPos>>,
-        operator_class: ir::Class,
+        // operator_class: ir::Class,
         operator_index: usize,
         operator_pos: Pos,
         right_operand: Option<Box<TermWithPos>>,

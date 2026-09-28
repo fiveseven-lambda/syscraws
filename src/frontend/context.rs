@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use super::{Item, Variables, ast};
+use super::{Item, ast};
 use crate::{ir, log};
 
 /**
@@ -35,896 +35,144 @@ pub struct Context {
      * Items defined in the same file can be referenced by their names directly.
      * Referencing items defined in another file requires dot notation ([`ast::Term::FieldByName`]).
      */
-    pub items: HashMap<String, (Option<log::Pos>, Item)>,
-    /**
-     * A mapping from method names to the list of functions associated with them.
-     * Methods can be accessed by their name alone,
-     * even from files that import the defining file.
-     */
-    pub methods: HashMap<String, Vec<ir::Function>>,
+    pub items: HashMap<String, Item>,
 }
 
 impl Context {
     pub fn translate_structure_definition(
         &mut self,
-        ast::StructureDefinition {
-            ty_parameters: ast_ty_parameters,
-            fields: ast_fields,
-            extra_tokens_pos,
-        }: ast::StructureDefinition,
+        structure_definition: ast::StructureDefinition,
         exports: &[Context],
         logger: &mut log::Logger,
-    ) -> (ir::TyKind, ir::Structure) {
-        let mut ty_parameters_name = Vec::new();
-        let kind = if let Some(ast_ty_parameters) = ast_ty_parameters {
-            for ast_ty_parameter in ast_ty_parameters {
-                let ast_ty_parameter = match ast_ty_parameter {
-                    ast::ListElement::Empty { comma_pos } => {
-                        logger.empty_ty_parameter(comma_pos);
-                        continue;
-                    }
-                    ast::ListElement::NonEmpty(ast_ty_parameter) => ast_ty_parameter,
-                };
-                match ast_ty_parameter.term {
-                    ast::Term::Identifier(name) => match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                            if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(ast_ty_parameter.pos, pos.clone());
-                            } else {
-                                entry.insert((
-                                    Some(ast_ty_parameter.pos),
-                                    Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
-                                ));
-                                ty_parameters_name.push(name);
-                            }
-                        }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert((
-                                Some(ast_ty_parameter.pos),
-                                Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
-                            ));
-                            ty_parameters_name.push(name);
-                        }
-                    },
-                    _ => {
-                        logger.invalid_ty_parameter(ast_ty_parameter.pos);
-                    }
-                }
-            }
-            ir::TyKind::Abstraction {
-                parameters: (0..ty_parameters_name.len()).fold(ir::TyListKind::Nil, |tail, _| {
-                    ir::TyListKind::Cons(Box::new(ir::TyKind::Ty), Box::new(tail))
-                }),
-                ret: Box::new(ir::TyKind::Ty),
-            }
-        } else {
-            ir::TyKind::Ty
-        };
-        if let Some(extra_tokens_pos) = extra_tokens_pos {
-            logger.extra_tokens(extra_tokens_pos);
-        }
-        let mut field_tys = Vec::new();
-        for ast::WithExtraTokens {
-            content: ast_field,
-            extra_tokens_pos,
-        } in ast_fields
-        {
-            match ast_field.term {
-                ast::Term::TypeAnnotation {
-                    term_left: _,
-                    colon_pos: _,
-                    term_right: Some(ast_field_ty),
-                } => {
-                    let field_ty_pos = ast_field_ty.pos.clone();
-                    match self.translate_ty(*ast_field_ty, &exports, logger) {
-                        Ok(field_ty) => field_tys.push(field_ty),
-                        Err(()) => {}
-                    }
-                }
-                _ => {
-                    logger.invalid_structure_field(ast_field.pos);
-                }
-            }
-            if let Some(extra_tokens_pos) = extra_tokens_pos {
-                logger.extra_tokens(extra_tokens_pos);
-            }
-        }
-        for ty_parameter_name in &ty_parameters_name {
-            self.items.remove(ty_parameter_name);
-        }
-        (
-            kind,
-            ir::Structure {
-                num_ty_parameters: ty_parameters_name.len(),
-                field_tys,
-            },
-        )
-    }
-
-    pub fn translate_function_definition(
-        &mut self,
-        ast::FunctionDefinition {
-            ty_parameters: ast_ty_parameters,
-            parameters: ast_parameters,
-            return_ty: ast_return_ty,
-            body: ast_body,
-            extra_tokens_pos,
-        }: ast::FunctionDefinition,
-        exports: &[Context],
-        logger: &mut log::Logger,
-    ) -> Option<(ir::FunctionTy, ir::FunctionDefinition)> {
-        let mut ty_parameters_name = Vec::new();
-        if let Some(ast_ty_parameters) = ast_ty_parameters {
-            for ast_ty_parameter in ast_ty_parameters {
-                let ast_ty_parameter = match ast_ty_parameter {
-                    ast::ListElement::Empty { comma_pos } => {
-                        logger.empty_ty_parameter(comma_pos);
-                        continue;
-                    }
-                    ast::ListElement::NonEmpty(ast_ty_parameter) => ast_ty_parameter,
-                };
-                if let ast::Term::Identifier(name) = ast_ty_parameter.term {
-                    match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                            if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(ast_ty_parameter.pos, pos.clone());
-                            } else {
-                                entry.insert((
-                                    Some(ast_ty_parameter.pos),
-                                    Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
-                                ));
-                                ty_parameters_name.push(name);
-                            }
-                        }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert((
-                                Some(ast_ty_parameter.pos),
-                                Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
-                            ));
-                            ty_parameters_name.push(name);
-                        }
-                    }
-                } else {
-                    logger.invalid_ty_parameter(ast_ty_parameter.pos);
-                }
-            }
-        }
-        let mut local_variables = Variables::new(ir::Storage::Local);
-        let mut parameter_tys = Vec::new();
-        match ast_parameters {
-            Ok(ast_parameters) => {
-                for ast_parameter in ast_parameters {
-                    let ast_parameter = match ast_parameter {
-                        ast::ListElement::Empty { comma_pos } => {
-                            logger.empty_parameter(comma_pos);
-                            continue;
-                        }
-                        ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
-                    };
-                    match ast_parameter.term {
-                        ast::Term::TypeAnnotation {
-                            term_left: ast_parameter_name,
-                            colon_pos,
-                            term_right: ast_parameter_ty,
-                        } => {
-                            match ast_parameter_name.term {
-                                ast::Term::Identifier(name) => {
-                                    match self.items.entry(name.clone()) {
-                                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                                            if let (Some(pos), _) = entry.get() {
-                                                logger.duplicate_definition(
-                                                    ast_parameter.pos,
-                                                    pos.clone(),
-                                                );
-                                            } else {
-                                                let item = local_variables.add(name);
-                                                entry.insert((Some(ast_parameter_name.pos), item));
-                                            }
-                                        }
-                                        std::collections::hash_map::Entry::Vacant(entry) => {
-                                            let item = local_variables.add(name);
-                                            entry.insert((Some(ast_parameter_name.pos), item));
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    logger.invalid_parameter(ast_parameter.pos);
-                                }
-                            }
-                            if let Some(ast_parameter_ty) = ast_parameter_ty {
-                                let parameter_pos = ast_parameter_ty.pos.clone();
-                                match self.translate_ty(*ast_parameter_ty, &exports, logger) {
-                                    Ok(parameter_ty) => parameter_tys.push(parameter_ty),
-                                    Ok(_) => logger.expected_ty(parameter_pos),
-                                    Err(()) => {}
-                                }
-                            } else {
-                                logger.missing_ty(colon_pos);
-                            }
-                        }
-                        _ => {
-                            logger.invalid_parameter(ast_parameter.pos);
-                        }
-                    }
-                }
-            }
-            Err(signature_pos) => {
-                logger.missing_parameter_list(signature_pos);
-            }
-        }
-        let return_ty = if let Some(ast_return_ty) = ast_return_ty {
-            if let Some(ast_return_ty) = ast_return_ty.ty {
-                let return_ty_pos = ast_return_ty.pos.clone();
-                match self.translate_ty(ast_return_ty, &exports, logger) {
-                    Ok(return_ty) => return_ty,
-                    Err(()) => return None,
-                }
-            } else {
-                logger.missing_ty(ast_return_ty.colon_pos);
-                return None;
-            }
-        } else {
-            ir::Ty::Application {
-                constructor: Box::new(ir::Ty::Constructor(ir::TyConstructor::Tuple)),
-                arguments: vec![],
-            }
-        };
-        if let Some(extra_tokens_pos) = extra_tokens_pos {
-            logger.extra_tokens(extra_tokens_pos);
-        }
-        let mut function_uses = Vec::new();
-        let mut calls = Vec::new();
-        let mut blocks = Vec::new();
-        for ast::WithExtraTokens {
-            content: ast_statement,
-            extra_tokens_pos,
-        } in ast_body.0
-        {
-            if let Some(extra_tokens_pos) = extra_tokens_pos {
-                logger.extra_tokens(extra_tokens_pos);
-            }
-            self.translate_statement(
-                ast_statement,
-                &mut function_uses,
-                &mut calls,
-                &mut blocks,
-                &mut local_variables,
+    ) -> Result<(ir::Constant, ir::StructureDefinition), ()> {
+        let mut parameters_list = Vec::new();
+        assert!(
+            self.translate_constant_declaration(
+                structure_definition.signature.unwrap(),
+                &mut parameters_list,
                 0,
-                None,
-                None,
                 exports,
                 logger,
+            )
+            .is_empty()
+        );
+        let mut ty = ir::Constant::Ty;
+        while let Some(parameters) = parameters_list.pop() {
+            ty = ir::Constant::Product(
+                parameters
+                    .into_iter()
+                    .map(|(name, ty)| {
+                        self.items.remove(&name);
+                        ty
+                    })
+                    .collect(),
+                Box::new(ty),
             );
         }
-        local_variables.free_and_remove(0, &mut function_uses, &mut calls, self);
-        for ty_parameter_name in &ty_parameters_name {
-            self.items.remove(ty_parameter_name);
-        }
-        Some((
-            ir::FunctionTy {
-                num_ty_parameters: ty_parameters_name.len(),
-                parameter_tys,
-                return_ty,
-            },
-            ir::FunctionDefinition {
-                num_local_variables: local_variables.num_total(),
-                function_uses,
-                calls,
-                blocks,
-            },
-        ))
+        Ok((ty, ir::StructureDefinition {}))
     }
 
-    pub fn translate_statement(
+    pub fn translate_constant_declaration(
         &mut self,
-        statement: ast::Statement,
-        function_uses: &mut Vec<ir::FunctionUse>,
-        calls: &mut Vec<ir::Call>,
-        blocks: &mut Vec<ir::Block>,
-        variables: &mut Variables,
-        num_outer_variables: usize,
-        break_index: Option<usize>,
-        continue_index: Option<usize>,
+        ast::TermWithPos {
+            term: ast_term,
+            pos,
+        }: ast::TermWithPos,
+        constants: &mut Vec<Vec<(String, ir::Constant)>>,
+        depth: usize,
         exports: &[Context],
         logger: &mut log::Logger,
-    ) {
-        match statement {
-            ast::Statement::Term(term) => {
-                self.translate_expression_or_import(
-                    term,
-                    false,
-                    function_uses,
-                    calls,
+    ) -> String {
+        match ast_term {
+            ast::Term::Identifier(name) => name,
+            ast::Term::TypeParameters {
+                term_left: ast_function,
+                parameters: ast_arguments,
+            } => {
+                let ret = self.translate_constant_declaration(
+                    *ast_function,
+                    constants,
+                    depth + 1,
                     exports,
                     logger,
                 );
-            }
-            ast::Statement::VariableDeclaration {
-                keyword_var_pos,
-                term,
-            } => {
-                let Some(ast_name) = term else {
-                    logger.missing_variable_name(keyword_var_pos);
-                    return;
-                };
-                match ast_name.term {
-                    ast::Term::Identifier(name) => match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                            if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(ast_name.pos, pos.clone());
-                            } else {
-                                let item = variables.add(name);
-                                entry.insert((Some(ast_name.pos), item));
-                            }
-                        }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            let item = variables.add(name);
-                            entry.insert((Some(ast_name.pos), item));
-                        }
-                    },
-                    _ => {
-                        logger.invalid_variable_name(ast_name.pos);
-                        return;
-                    }
-                }
-            }
-            ast::Statement::If {
-                keyword_if_pos,
-                extra_tokens_pos,
-                condition: ast_condition,
-                then_index,
-                then_block: ast_then_block,
-                else_index,
-                else_block: ast_else_block,
-                end_index,
-            } => {
-                let condition = if let Some(ast_condition) = ast_condition {
-                    let condition_pos = ast_condition.pos.clone();
-                    self.translate_expression_or_import(
-                        ast_condition,
-                        false,
-                        function_uses,
-                        calls,
-                        exports,
-                        logger,
-                    )
-                    .and_then(
-                        |expression_or_import| match expression_or_import {
-                            ExpressionOrImport::Expression(condition) => Ok(condition),
-                            _ => {
-                                logger.expected_expression(condition_pos);
-                                Err(())
-                            }
-                        },
-                    )
-                } else {
-                    logger.missing_if_condition(keyword_if_pos);
-                    Err(())
-                };
-                assert_eq!(blocks.len(), then_index.get());
-                blocks.push(ir::Block {
-                    call_bound: calls.len(),
-                    next: ir::Next::Branch(condition.unwrap(), then_index.get(), else_index.get()),
-                });
-                let num_variables = variables.num_alive();
-                for ast::WithExtraTokens {
-                    content: ast_statement,
-                    extra_tokens_pos,
-                } in ast_then_block.0
-                {
-                    if let Some(extra_tokens_pos) = extra_tokens_pos {
-                        logger.extra_tokens(extra_tokens_pos);
-                    }
-                    self.translate_statement(
-                        ast_statement,
-                        function_uses,
-                        calls,
-                        blocks,
-                        variables,
-                        num_outer_variables,
-                        break_index,
-                        continue_index,
+                let mut parameters = Vec::new();
+                for (argument_index, ast_argument) in ast_arguments.into_iter().enumerate() {
+                    let ast::ListElement::NonEmpty(ast_argument) = ast_argument else {
+                        todo!();
+                    };
+                    let ast::Term::TypeAnnotation {
+                        term_left: ast_name_and_parameters,
+                        colon_pos,
+                        term_right: Some(ast_ret),
+                    } = ast_argument.term
+                    else {
+                        todo!();
+                    };
+                    let mut parameters_list = Vec::new();
+                    let parameter_name = self.translate_constant_declaration(
+                        *ast_name_and_parameters,
+                        &mut parameters_list,
+                        depth,
                         exports,
                         logger,
                     );
-                }
-                variables.free_and_remove(num_variables, function_uses, calls, self);
-                assert_eq!(blocks.len(), else_index.get());
-                blocks.push(ir::Block {
-                    call_bound: calls.len(),
-                    next: ir::Next::Jump(end_index.get()),
-                });
-                if let Some(ast::ElseBlock {
-                    keyword_else_pos,
-                    extra_tokens_pos,
-                    block: ast_block,
-                }) = ast_else_block
-                {
-                    for ast::WithExtraTokens {
-                        content: ast_statement,
-                        extra_tokens_pos,
-                    } in ast_block.0
-                    {
-                        self.translate_statement(
-                            ast_statement,
-                            function_uses,
-                            calls,
-                            blocks,
-                            variables,
-                            num_outer_variables,
-                            break_index,
-                            continue_index,
-                            exports,
-                            logger,
+                    let mut parameter_ty = self
+                        .translate_constant(*ast_ret, depth, exports, logger)
+                        .unwrap();
+                    while let Some(parameters) = parameters_list.pop() {
+                        parameter_ty = ir::Constant::Product(
+                            parameters
+                                .into_iter()
+                                .map(|(name, ty)| {
+                                    self.items.remove(&name);
+                                    ty
+                                })
+                                .collect(),
+                            Box::new(parameter_ty),
                         );
                     }
-                    variables.free_and_remove(num_variables, function_uses, calls, self);
+                    parameters.push((parameter_name.clone(), parameter_ty));
+                    self.items
+                        .insert(parameter_name, Item::Parameter(depth, argument_index));
                 }
-                assert_eq!(blocks.len(), end_index.get());
-                blocks.push(ir::Block {
-                    call_bound: calls.len(),
-                    next: ir::Next::Jump(end_index.get()),
-                });
-            }
-            ast::Statement::While {
-                keyword_while_pos,
-                condition_index,
-                condition: ast_condition,
-                extra_tokens_pos,
-                do_index,
-                do_block: ast_do_block,
-                end_index,
-            } => {
-                assert_eq!(blocks.len(), condition_index.get());
-                blocks.push(ir::Block {
-                    call_bound: calls.len(),
-                    next: ir::Next::Jump(condition_index.get()),
-                });
-                let condition = if let Some(ast_condition) = ast_condition {
-                    let condition_pos = ast_condition.pos.clone();
-                    self.translate_expression_or_import(
-                        ast_condition,
-                        false,
-                        function_uses,
-                        calls,
-                        exports,
-                        logger,
-                    )
-                    .and_then(|condition| match condition {
-                        ExpressionOrImport::Expression(condition) => Ok(condition),
-                        _ => {
-                            logger.expected_expression(condition_pos);
-                            Err(())
-                        }
-                    })
-                } else {
-                    logger.missing_while_condition(keyword_while_pos);
-                    Err(())
-                };
-                assert_eq!(blocks.len(), do_index.get());
-                blocks.push(ir::Block {
-                    call_bound: calls.len(),
-                    next: ir::Next::Branch(condition.unwrap(), do_index.get(), end_index.get()),
-                });
-                let num_variables = variables.num_alive();
-                for ast::WithExtraTokens {
-                    content: stmt,
-                    extra_tokens_pos,
-                } in ast_do_block.0
-                {
-                    if let Some(extra_tokens_pos) = extra_tokens_pos {
-                        logger.extra_tokens(extra_tokens_pos);
-                    }
-                    self.translate_statement(
-                        stmt,
-                        function_uses,
-                        calls,
-                        blocks,
-                        variables,
-                        num_variables,
-                        Some(end_index.get()),
-                        Some(condition_index.get()),
-                        exports,
-                        logger,
-                    );
-                }
-                variables.free_and_remove(num_variables, function_uses, calls, self);
-                assert_eq!(blocks.len(), end_index.get());
-                blocks.push(ir::Block {
-                    call_bound: calls.len(),
-                    next: ir::Next::Jump(condition_index.get()),
-                });
-            }
-            ast::Statement::Break => {
-                variables.free(num_outer_variables, function_uses, calls);
-                blocks.push(ir::Block {
-                    call_bound: calls.len(),
-                    next: ir::Next::Jump(break_index.unwrap()),
-                });
-            }
-            ast::Statement::Continue => {
-                variables.free(num_outer_variables, function_uses, calls);
-                blocks.push(ir::Block {
-                    call_bound: calls.len(),
-                    next: ir::Next::Jump(continue_index.unwrap()),
-                });
-            }
-            ast::Statement::Return { value } => {
-                let value = match value {
-                    Some(value) => {
-                        match self.translate_expression_or_import(
-                            value,
-                            false,
-                            function_uses,
-                            calls,
-                            exports,
-                            logger,
-                        ) {
-                            Ok(ExpressionOrImport::Expression(value)) => value,
-                            _ => todo!(),
-                        }
-                    }
-                    None => todo!(),
-                };
-                variables.free(0, function_uses, calls);
-                blocks.push(ir::Block {
-                    call_bound: calls.len(),
-                    next: ir::Next::Return(value),
-                });
-            }
-        }
-    }
-
-    fn translate_expression_or_import(
-        &self,
-        ast::TermWithPos {
-            term: ast_term,
-            pos,
-        }: ast::TermWithPos,
-        reference: bool,
-        function_uses: &mut Vec<ir::FunctionUse>,
-        calls: &mut Vec<ir::Call>,
-        exports: &[Context],
-        logger: &mut log::Logger,
-    ) -> Result<ExpressionOrImport, ()> {
-        match ast_term {
-            ast::Term::NumericLiteral(value) => {
-                if value.chars().all(|ch| matches!(ch, '0'..='9')) {
-                    match value.parse() {
-                        Ok(value) => Ok(ExpressionOrImport::Expression(ir::Expression::Integer(
-                            value,
-                        ))),
-                        Err(err) => {
-                            logger.cannot_parse_integer(pos, err);
-                            Err(())
-                        }
-                    }
-                } else {
-                    match value.parse() {
-                        Ok(value) => {
-                            Ok(ExpressionOrImport::Expression(ir::Expression::Float(value)))
-                        }
-                        Err(err) => {
-                            logger.cannot_parse_float(pos, err);
-                            Err(())
-                        }
-                    }
-                }
-            }
-            ast::Term::StringLiteral(ast_components) => {
-                let mut components = Vec::new();
-                for ast_component in ast_components {
-                    match ast_component {
-                        ast::StringLiteralComponent::String(value) => {
-                            components.push(ir::Expression::String(value));
-                        }
-                        ast::StringLiteralComponent::PlaceHolder { format, value } => {
-                            if let Some(value) = value {
-                                if let Ok(ExpressionOrImport::Expression(value)) = self
-                                    .translate_expression_or_import(
-                                        value,
-                                        false,
-                                        function_uses,
-                                        calls,
-                                        exports,
-                                        logger,
-                                    )
-                                {
-                                    let function_use_index = function_uses.len();
-                                    let call_index = calls.len();
-                                    function_uses.push(ir::FunctionUse {
-                                        candidates: vec![ir::Function::Method(
-                                            ir::Class::ToString,
-                                            0,
-                                        )],
-                                        used_by: Some(call_index),
-                                    });
-                                    calls.push(ir::Call {
-                                        function: ir::Expression::FunctionUse(function_use_index),
-                                        arguments: vec![value],
-                                        used_by: None,
-                                    });
-                                    components.push(ir::Expression::Call(call_index));
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(ExpressionOrImport::Expression(
-                    components
-                        .into_iter()
-                        .reduce(|left, right| {
-                            let function_use_index = function_uses.len();
-                            let call_index = calls.len();
-                            function_uses.push(ir::FunctionUse {
-                                candidates: vec![ir::Function::ConcatenateString],
-                                used_by: Some(call_index),
-                            });
-                            calls.push(ir::Call {
-                                function: ir::Expression::FunctionUse(function_use_index),
-                                arguments: vec![left, right],
-                                used_by: None,
-                            });
-                            ir::Expression::Call(call_index)
-                        })
-                        .unwrap_or(ir::Expression::String(String::new())),
-                ))
-            }
-            ast::Term::Identity => {
-                let function = ir::Expression::FunctionUse(function_uses.len());
-                function_uses.push(ir::FunctionUse {
-                    candidates: vec![ir::Function::Identity],
-                    used_by: None,
-                });
-                Ok(ExpressionOrImport::Expression(function))
-            }
-            ast::Term::Identifier(name) => {
-                self.get_expression_or_import(&name, reference, function_uses, calls, logger)
-            }
-            ast::Term::FieldByName { term_left, name } => {
-                match self.translate_expression_or_import(
-                    *term_left,
-                    reference,
-                    function_uses,
-                    calls,
-                    exports,
-                    logger,
-                )? {
-                    ExpressionOrImport::Expression(expression) => {
-                        todo!();
-                    }
-                    ExpressionOrImport::Import(index) => exports[index].get_expression_or_import(
-                        &name,
-                        reference,
-                        function_uses,
-                        calls,
-                        logger,
-                    ),
-                }
-            }
-            ast::Term::FunctionCall {
-                function: ast_function,
-                arguments: ast_arguments,
-            } => {
-                let function = self.translate_expression_or_import(
-                    *ast_function,
-                    false,
-                    function_uses,
-                    calls,
-                    exports,
-                    logger,
-                );
-                let mut arguments = Vec::new();
-                let mut call_indices = Vec::new();
-                let mut function_use_indices = Vec::new();
-                if let Ok(ExpressionOrImport::Expression(ref function)) = function {
-                    if let &ir::Expression::FunctionUse(index) = function {
-                        function_use_indices.push(index);
-                    } else if let &ir::Expression::Call(index) = function {
-                        call_indices.push(index);
-                    }
-                }
-                for ast_argument in ast_arguments {
-                    let ast_argument = match ast_argument {
-                        ast::ListElement::Empty { comma_pos } => {
-                            logger.empty_argument(comma_pos);
-                            continue;
-                        }
-                        ast::ListElement::NonEmpty(ast_argument) => ast_argument,
-                    };
-                    let argument_pos = ast_argument.pos.clone();
-                    let Ok(argument) = self.translate_expression_or_import(
-                        ast_argument,
-                        false,
-                        function_uses,
-                        calls,
-                        exports,
-                        logger,
-                    ) else {
-                        continue;
-                    };
-                    match argument {
-                        ExpressionOrImport::Expression(argument) => {
-                            if let ir::Expression::FunctionUse(index) = argument {
-                                function_use_indices.push(index);
-                            } else if let ir::Expression::Call(index) = argument {
-                                call_indices.push(index);
-                            }
-                            arguments.push(argument);
-                        }
-                        _ => {
-                            logger.expected_expression(argument_pos);
-                        }
-                    }
-                }
-                match function {
-                    Ok(ExpressionOrImport::Expression(function)) => {
-                        let call_index = calls.len();
-                        for &index in &call_indices {
-                            calls[index].used_by = Some(call_index);
-                        }
-                        for &index in &function_use_indices {
-                            function_uses[index].used_by = Some(call_index);
-                        }
-                        calls.push(ir::Call {
-                            function,
-                            arguments,
-                            used_by: None,
-                        });
-                        Ok(ExpressionOrImport::Expression(ir::Expression::Call(
-                            call_index,
-                        )))
-                    }
-                    _ => todo!(),
-                }
-            }
-            ast::Term::Assignment {
-                left_hand_side: ast_left_hand_side,
-                operator_name,
-                operator_pos,
-                right_hand_side: ast_right_hand_side,
-            } => {
-                let left_hand_side = match ast_left_hand_side {
-                    Some(ast_left_hand_side) => {
-                        let left_hand_side_pos = ast_left_hand_side.pos.clone();
-                        self.translate_expression_or_import(
-                            *ast_left_hand_side,
-                            true,
-                            function_uses,
-                            calls,
-                            exports,
-                            logger,
-                        )
-                        .and_then(|term| match term {
-                            ExpressionOrImport::Expression(expr) => Ok(expr),
-                            _ => {
-                                logger.expected_expression(left_hand_side_pos);
-                                Err(())
-                            }
-                        })
-                    }
-                    None => {
-                        logger.empty_left_operand(operator_pos.clone());
-                        Err(())
-                    }
-                };
-                let right_hand_side = match ast_right_hand_side {
-                    Some(ast_right_hand_side) => {
-                        let right_hand_side_pos = ast_right_hand_side.pos.clone();
-                        self.translate_expression_or_import(
-                            *ast_right_hand_side,
-                            false,
-                            function_uses,
-                            calls,
-                            exports,
-                            logger,
-                        )
-                        .and_then(|term| match term {
-                            ExpressionOrImport::Expression(expr) => Ok(expr),
-                            _ => {
-                                logger.expected_expression(right_hand_side_pos);
-                                Err(())
-                            }
-                        })
-                    }
-                    None => {
-                        logger.empty_right_operand(operator_pos);
-                        Err(())
-                    }
-                };
-                let candidates = self
-                    .methods
-                    .get(operator_name)
-                    .cloned()
-                    .unwrap_or_else(Vec::new);
-                let function_use_index = function_uses.len();
-                let call_index = calls.len();
-                function_uses.push(ir::FunctionUse {
-                    candidates,
-                    used_by: Some(call_index),
-                });
-                calls.push(ir::Call {
-                    function: ir::Expression::FunctionUse(function_use_index),
-                    arguments: vec![left_hand_side?, right_hand_side?],
-                    used_by: None,
-                });
-                Ok(ExpressionOrImport::Expression(ir::Expression::Call(
-                    call_index,
-                )))
+                constants.push(parameters);
+                ret
             }
             _ => todo!(),
         }
     }
 
-    fn get_expression_or_import(
-        &self,
-        name: &str,
-        reference: bool,
-        function_uses: &mut Vec<ir::FunctionUse>,
-        calls: &mut Vec<ir::Call>,
-        logger: &mut log::Logger,
-    ) -> Result<ExpressionOrImport, ()> {
-        match self.items.get(name) {
-            Some((_, Item::Function(candidates))) => {
-                if reference {
-                    todo!();
-                }
-                let function = ir::Expression::FunctionUse(function_uses.len());
-                function_uses.push(ir::FunctionUse {
-                    candidates: candidates.clone(),
-                    used_by: None,
-                });
-                Ok(ExpressionOrImport::Expression(function))
-            }
-            Some(&(_, Item::Variable(storage, index))) => {
-                let variable = ir::Expression::Variable(storage, index);
-                if reference {
-                    Ok(ExpressionOrImport::Expression(variable))
-                } else {
-                    let function_use_index = function_uses.len();
-                    let call_index = calls.len();
-                    function_uses.push(ir::FunctionUse {
-                        candidates: vec![ir::Function::Dereference],
-                        used_by: Some(call_index),
-                    });
-                    calls.push(ir::Call {
-                        function: ir::Expression::FunctionUse(function_use_index),
-                        arguments: vec![variable],
-                        used_by: None,
-                    });
-                    Ok(ExpressionOrImport::Expression(ir::Expression::Call(
-                        call_index,
-                    )))
-                }
-            }
-            _ => todo!(),
-        }
-    }
-
-    fn translate_ty(
-        &self,
+    pub fn translate_constant(
+        &mut self,
         ast::TermWithPos {
             term: ast_term,
             pos,
         }: ast::TermWithPos,
+        depth: usize,
         exports: &[Context],
         logger: &mut log::Logger,
-    ) -> Result<ir::Ty, ()> {
+    ) -> Result<ir::Constant, ()> {
         match ast_term {
-            ast::Term::IntegerTy => return Ok(ir::Ty::Constructor(ir::TyConstructor::Integer)),
-            ast::Term::FloatTy => return Ok(ir::Ty::Constructor(ir::TyConstructor::Float)),
-            ast::Term::Identifier(name) => self.get_ty(&name, logger),
+            ast::Term::Ty => Ok(ir::Constant::Ty),
+            ast::Term::Identifier(name) => self.get_constant(&name, depth, logger),
             ast::Term::FieldByName { term_left, name } => {
                 let index = self.translate_import(*term_left, exports, logger)?;
-                exports[index].get_ty(&name, logger)
+                exports[index].get_constant(&name, depth, logger)
             }
             _ => todo!(),
         }
     }
 
-    fn get_ty(&self, name: &str, logger: &mut log::Logger) -> Result<ir::Ty, ()> {
+    fn get_constant(
+        &self,
+        name: &str,
+        depth: usize,
+        logger: &mut log::Logger,
+    ) -> Result<ir::Constant, ()> {
         match self.items.get(name) {
-            Some((_, Item::Ty(ty))) => Ok(ty.clone()),
+            Some(Item::Constant(constant)) => Ok(constant.clone()),
+            Some(Item::Parameter(d, i)) => Ok(ir::Constant::Parameter(d - depth, *i)),
             _ => Err(()),
         }
     }
@@ -950,13 +198,8 @@ impl Context {
 
     fn get_import(&self, name: &str, logger: &mut log::Logger) -> Result<usize, ()> {
         match self.items.get(name) {
-            Some(&(_, Item::Import(index))) => Ok(index),
+            Some(&Item::Import(index)) => Ok(index),
             _ => Err(()),
         }
     }
-}
-
-enum ExpressionOrImport {
-    Expression(ir::Expression),
-    Import(usize),
 }
