@@ -29,12 +29,13 @@ pub struct Program {
     pub structure_definitions: Vec<StructureDefinition>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(PartialEq, Eq, Clone, Serialize)]
 pub enum Constant {
     Ty,
     Structure(usize),
     Parameter(usize, usize),
     Product(Vec<Constant>, Box<Constant>),
+    Application(Box<Constant>, Vec<Constant>),
 }
 
 #[derive(Serialize)]

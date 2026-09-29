@@ -158,6 +158,27 @@ impl Context {
         match ast_term {
             ast::Term::Ty => Ok(ir::Constant::Ty),
             ast::Term::Identifier(name) => self.get_constant(&name, depth, logger),
+            ast::Term::TypeParameters {
+                term_left: ast_constructor,
+                parameters: ast_parameters,
+            } => {
+                let constructor = self.translate_constant(*ast_constructor, depth, exports, logger);
+                let mut parameters = Vec::new();
+                for ast_parameter in ast_parameters {
+                    let ast_parameter = match ast_parameter {
+                        ast::ListElement::Empty { comma_pos } => todo!(),
+                        ast::ListElement::NonEmpty(parameter) => parameter,
+                    };
+                    match self.translate_constant(ast_parameter, depth, exports, logger) {
+                        Ok(parameter) => parameters.push(parameter),
+                        Err(_) => todo!(),
+                    }
+                }
+                Ok(ir::Constant::Application(
+                    Box::new(constructor?),
+                    parameters,
+                ))
+            }
             ast::Term::FieldByName { term_left, name } => {
                 let index = self.translate_import(*term_left, exports, logger)?;
                 exports[index].get_constant(&name, depth, logger)
