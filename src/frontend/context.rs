@@ -50,7 +50,7 @@ impl Context {
             self.translate_constant_declaration(
                 structure_definition.signature.unwrap(),
                 &mut parameters_list,
-                0,
+                &mut 0,
                 exports,
                 logger,
             )
@@ -79,7 +79,7 @@ impl Context {
             pos,
         }: ast::TermWithPos,
         constants: &mut Vec<Vec<(String, ir::Constant)>>,
-        depth: usize,
+        depth: &mut usize,
         exports: &[Context],
         logger: &mut log::Logger,
     ) -> String {
@@ -92,7 +92,7 @@ impl Context {
                 let ret = self.translate_constant_declaration(
                     *ast_function,
                     constants,
-                    depth + 1,
+                    depth,
                     exports,
                     logger,
                 );
@@ -109,16 +109,17 @@ impl Context {
                     else {
                         todo!();
                     };
+                    let mut new_depth = *depth;
                     let mut parameters_list = Vec::new();
                     let parameter_name = self.translate_constant_declaration(
                         *ast_name_and_parameters,
                         &mut parameters_list,
-                        depth,
+                        &mut new_depth,
                         exports,
                         logger,
                     );
                     let mut parameter_ty = self
-                        .translate_constant(*ast_ret, depth, exports, logger)
+                        .translate_constant(*ast_ret, new_depth, exports, logger)
                         .unwrap();
                     while let Some(parameters) = parameters_list.pop() {
                         parameter_ty = ir::Constant::Product(
@@ -134,9 +135,10 @@ impl Context {
                     }
                     parameters.push((parameter_name.clone(), parameter_ty));
                     self.items
-                        .insert(parameter_name, Item::Parameter(depth, argument_index));
+                        .insert(parameter_name, Item::Parameter(new_depth, argument_index));
                 }
                 constants.push(parameters);
+                *depth += 1;
                 ret
             }
             _ => todo!(),
@@ -172,7 +174,7 @@ impl Context {
     ) -> Result<ir::Constant, ()> {
         match self.items.get(name) {
             Some(Item::Constant(constant)) => Ok(constant.clone()),
-            Some(Item::Parameter(d, i)) => Ok(ir::Constant::Parameter(d - depth, *i)),
+            Some(Item::Parameter(d, i)) => Ok(ir::Constant::Parameter(depth - d, *i)),
             _ => Err(()),
         }
     }

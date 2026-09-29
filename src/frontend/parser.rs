@@ -638,11 +638,8 @@ impl Parser<'_, '_> {
         let start = self.current.start;
         let mut left_operand =
             self.parse_binary_operation_rec(allow_line_break, precedence.next())?;
+        /*
         while allow_line_break || !self.current.is_on_new_line {
-            let Some(ref token) = self.current.token else {
-                break;
-            };
-            /*
             if let Some((operator_class, operator_index)) = infix_operator(token, precedence) {
                 let operator_pos = self.current_pos();
                 self.consume_token()?;
@@ -661,8 +658,8 @@ impl Parser<'_, '_> {
             } else {
                 break;
             }
-            */
         }
+        */
         Ok(left_operand)
     }
 
