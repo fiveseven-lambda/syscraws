@@ -40,6 +40,8 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<ast::File, Parse
     let mut file = ast::File {
         imports: Vec::new(),
         structure_names: Vec::new(),
+        class_names: Vec::new(),
+        instance_names: Vec::new(),
         function_names: Vec::new(),
         top_level_statements: Vec::new(),
     };
@@ -55,6 +57,20 @@ pub fn parse_file(chars_peekable: &mut CharsPeekable) -> Result<ast::File, Parse
             file.structure_names.push(name);
             file.top_level_statements.push(ast::WithExtraTokens {
                 content: ast::TopLevelStatement::StructureDefinition(definition),
+                extra_tokens_pos: parser.consume_line()?,
+            });
+        } else if let Token::KeywordClass = item_start_token {
+            let (name, definition) = parser.parse_class_definition()?;
+            file.class_names.push(name);
+            file.top_level_statements.push(ast::WithExtraTokens {
+                content: ast::TopLevelStatement::ClassDefinition(definition),
+                extra_tokens_pos: parser.consume_line()?,
+            });
+        } else if let Token::KeywordInstance = item_start_token {
+            let (name, definition) = parser.parse_instance_definition()?;
+            file.instance_names.push(name);
+            file.top_level_statements.push(ast::WithExtraTokens {
+                content: ast::TopLevelStatement::InstanceDefinition(definition),
                 extra_tokens_pos: parser.consume_line()?,
             });
         } else if let Token::KeywordFunc | Token::KeywordMethod = item_start_token {
@@ -188,6 +204,118 @@ impl Parser<'_, '_> {
             ast::StructureDefinition {
                 signature,
                 fields,
+                extra_tokens_pos,
+            },
+        ))
+    }
+
+    fn parse_class_definition(
+        &mut self,
+    ) -> Result<(ast::ClassName, ast::ClassDefinition), ParseError> {
+        let keyword_class_pos = self.current_pos();
+        self.consume_token()?;
+
+        let name_and_pos = if self.current.is_on_new_line {
+            None
+        } else if let Some(name) = &mut self.current.token {
+            match name {
+                Token::Identifier(name) => {
+                    let name = std::mem::take(name);
+                    let pos = self.current_pos();
+                    Some((name, pos))
+                }
+                _ => todo!(),
+            }
+        } else {
+            None
+        };
+        let signature = self.parse_factor(false)?;
+        let extra_tokens_pos = self.consume_line()?;
+
+        let mut fields = Vec::new();
+        loop {
+            if let Some(Token::KeywordEnd) = self.current.token {
+                self.consume_token()?;
+                break;
+            } else if let Some(field) = self.parse_factor(false)? {
+                fields.push(ast::WithExtraTokens {
+                    content: field,
+                    extra_tokens_pos: self.consume_line()?,
+                });
+            } else {
+                return Err(ParseError::UnclosedBlock {
+                    pos: self.current_pos(),
+                    starts_pos: vec![keyword_class_pos.clone()],
+                });
+            }
+        }
+
+        Ok((
+            ast::ClassName {
+                name_and_pos,
+                keyword_class_pos,
+            },
+            ast::ClassDefinition {
+                signature,
+                fields,
+                extra_tokens_pos,
+            },
+        ))
+    }
+
+    fn parse_instance_definition(
+        &mut self,
+    ) -> Result<(ast::InstanceName, ast::InstanceDefinition), ParseError> {
+        let keyword_instance_pos = self.current_pos();
+        self.consume_token()?;
+
+        let name_and_pos = if self.current.is_on_new_line {
+            None
+        } else if let Some(name) = &mut self.current.token {
+            match name {
+                Token::Identifier(name) => {
+                    let name = std::mem::take(name);
+                    let pos = self.current_pos();
+                    Some((name, pos))
+                }
+                _ => todo!(),
+            }
+        } else {
+            None
+        };
+        let signature = self.parse_factor(false)?;
+        let extra_tokens_pos = self.consume_line()?;
+
+        let mut function_names = Vec::new();
+        let mut function_definitions = Vec::new();
+        loop {
+            if let Some(Token::KeywordEnd) = self.current.token {
+                self.consume_token()?;
+                break;
+            } else if let Some(Token::KeywordFunc) = self.current.token {
+                let (name, definition) = self.parse_function_definition()?;
+                function_names.push(name);
+                function_definitions.push(ast::WithExtraTokens {
+                    content: definition,
+                    extra_tokens_pos: self.consume_line()?,
+                });
+            } else {
+                return Err(ParseError::UnclosedBlock {
+                    pos: self.current_pos(),
+                    starts_pos: vec![keyword_instance_pos.clone()],
+                });
+            }
+        }
+
+        Ok((
+            ast::InstanceName {
+                name_and_pos,
+                keyword_instance_pos,
+            },
+            ast::InstanceDefinition {
+                signature,
+                function_names,
+                function_definitions,
                 extra_tokens_pos,
             },
         ))
@@ -364,6 +492,8 @@ impl Parser<'_, '_> {
     ) -> Result<Option<ast::Statement>, ParseError> {
         if let Some(Token::KeywordVar) = self.current.token {
             self.parse_variable_declaration().map(Option::Some)
+        } else if let Some(Token::KeywordConst) = self.current.token {
+            self.parse_constant_declaration().map(Option::Some)
         } else if let Some(Token::KeywordIf) = self.current.token {
             self.parse_if_statement(starts_pos).map(Option::Some)
         } else if let Some(Token::KeywordWhile) = self.current.token {
@@ -394,6 +524,16 @@ impl Parser<'_, '_> {
         let term = self.parse_assign(false)?;
         Ok(ast::Statement::VariableDeclaration {
             keyword_var_pos,
+            term,
+        })
+    }
+
+    fn parse_constant_declaration(&mut self) -> Result<ast::Statement, ParseError> {
+        let keyword_const_pos = self.current_pos();
+        self.consume_token()?;
+        let term = self.parse_assign(false)?;
+        Ok(ast::Statement::ConstantDeclaration {
+            keyword_const_pos,
             term,
         })
     }

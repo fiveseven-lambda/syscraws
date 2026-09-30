@@ -36,6 +36,8 @@ pub struct File {
      * List of structure names defined in the file.
      */
     pub structure_names: Vec<StructureName>,
+    pub class_names: Vec<ClassName>,
+    pub instance_names: Vec<InstanceName>,
     /**
      * List of function names defined in the file.
      */
@@ -89,6 +91,16 @@ pub struct StructureName {
     pub name_and_pos: Option<(String, Pos)>,
 }
 
+pub struct ClassName {
+    pub keyword_class_pos: Pos,
+    pub name_and_pos: Option<(String, Pos)>,
+}
+
+pub struct InstanceName {
+    pub keyword_instance_pos: Pos,
+    pub name_and_pos: Option<(String, Pos)>,
+}
+
 /**
  * A function name in the AST.
  */
@@ -115,6 +127,8 @@ pub enum TopLevelStatement {
      * A structure definition.
      */
     StructureDefinition(StructureDefinition),
+    ClassDefinition(ClassDefinition),
+    InstanceDefinition(InstanceDefinition),
     /**
      * A function definition.
      */
@@ -143,6 +157,19 @@ pub struct StructureDefinition {
      * List of fields of the structure.
      */
     pub fields: Vec<WithExtraTokens<TermWithPos>>,
+}
+
+pub struct ClassDefinition {
+    pub signature: Option<TermWithPos>,
+    pub extra_tokens_pos: Option<Pos>,
+    pub fields: Vec<WithExtraTokens<TermWithPos>>,
+}
+
+pub struct InstanceDefinition {
+    pub signature: Option<TermWithPos>,
+    pub function_names: Vec<FunctionName>,
+    pub function_definitions: Vec<WithExtraTokens<FunctionDefinition>>,
+    pub extra_tokens_pos: Option<Pos>,
 }
 
 /**
@@ -212,6 +239,13 @@ pub enum Statement {
          * Position of the keyword `var`.
          */
         keyword_var_pos: Pos,
+        /**
+         * The variable name, type (optional) and initial value (optional).
+         */
+        term: Option<TermWithPos>,
+    },
+    ConstantDeclaration {
+        keyword_const_pos: Pos,
         /**
          * The variable name, type (optional) and initial value (optional).
          */

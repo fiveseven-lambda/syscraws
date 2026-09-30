@@ -46,16 +46,56 @@ impl Context {
         logger: &mut log::Logger,
     ) -> Result<(ir::Constant, ir::StructureDefinition), ()> {
         let mut parameters_list = Vec::new();
+        let mut depth = 0;
         assert!(
             self.translate_constant_declaration(
                 structure_definition.signature.unwrap(),
                 &mut parameters_list,
-                &mut 0,
+                &mut depth,
                 exports,
                 logger,
             )
             .is_empty()
         );
+        let mut field_tys = Vec::new();
+        for ast::WithExtraTokens {
+            content: ast_field,
+            extra_tokens_pos,
+        } in structure_definition.fields
+        {
+            let mut new_depth = depth;
+            let ast::Term::TypeAnnotation {
+                term_left: ast_name_and_parameters,
+                colon_pos,
+                term_right: Some(ast_ret),
+            } = ast_field.term
+            else {
+                todo!();
+            };
+            let mut tmp = Vec::new();
+            self.translate_constant_declaration(
+                *ast_name_and_parameters,
+                &mut tmp,
+                &mut new_depth,
+                exports,
+                logger,
+            );
+            let mut ty = self
+                .translate_constant(*ast_ret, new_depth, exports, logger)
+                .unwrap();
+            while let Some(parameters) = parameters_list.pop() {
+                ty = ir::Constant::Product(
+                    parameters
+                        .into_iter()
+                        .map(|(name, ty)| {
+                            self.items.remove(&name);
+                            ty
+                        })
+                        .collect(),
+                    Box::new(ty),
+                );
+            }
+        }
         let mut ty = ir::Constant::Ty;
         while let Some(parameters) = parameters_list.pop() {
             ty = ir::Constant::Product(
@@ -69,7 +109,7 @@ impl Context {
                 Box::new(ty),
             );
         }
-        Ok((ty, ir::StructureDefinition {}))
+        Ok((ty, ir::StructureDefinition { field_tys }))
     }
 
     pub fn translate_constant_declaration(
@@ -225,4 +265,5 @@ impl Context {
             _ => Err(()),
         }
     }
+
 }

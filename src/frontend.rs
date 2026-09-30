@@ -175,6 +175,8 @@ impl Reader {
                     self.ir_program.structure_tys.push(ty);
                     self.ir_program.structure_definitions.push(definition);
                 }
+                ast::TopLevelStatement::ClassDefinition(class_definition) => todo!(),
+                ast::TopLevelStatement::InstanceDefinition(instance_definition) => todo!(),
                 ast::TopLevelStatement::FunctionDefinition(function_definition) => todo!(),
                 ast::TopLevelStatement::Statement(statement) => todo!(),
             }

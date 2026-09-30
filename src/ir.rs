@@ -39,4 +39,6 @@ pub enum Constant {
 }
 
 #[derive(Serialize)]
-pub struct StructureDefinition {}
+pub struct StructureDefinition {
+    pub field_tys: Vec<Constant>,
+}
