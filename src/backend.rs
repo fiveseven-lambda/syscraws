@@ -24,6 +24,7 @@ use crate::{ffi, ir};
 
 mod tests;
 mod ty;
+mod unify;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -57,233 +58,117 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
     let global_variables_ty: Vec<_> = (0..ir_program.num_global_variables)
         .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
         .collect();
-    for (_, function_definition) in ir_program.function_definitions.iter().enumerate() {
+    let mut function_definitions = Vec::new();
+    let instances = HashMap::from([(
+        ir::Class::Add,
+        [
+            (
+                ir::Ty::Constructor(ir::TyConstructor::AddInteger),
+                vec![
+                    ir::Ty::Constructor(ir::TyConstructor::Integer),
+                    ir::Ty::Constructor(ir::TyConstructor::Integer),
+                ],
+            ),
+            (
+                ir::Ty::Constructor(ir::TyConstructor::AddFloat),
+                vec![
+                    ir::Ty::Constructor(ir::TyConstructor::Float),
+                    ir::Ty::Constructor(ir::TyConstructor::Float),
+                ],
+            ),
+        ],
+    )]);
+    for function_definition in &ir_program.function_definitions {
         let local_variables_ty: Vec<_> = (0..function_definition.num_local_variables)
             .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
             .collect();
-        let (candidate_tys, mut candidates): (Vec<Tys>, Vec<Vec<_>>) = function_definition
+        let mut function_uses: Vec<FunctionUse> = function_definition
             .function_uses
             .iter()
-            .enumerate()
-            .map(|(function_use_index, function_use)| {
-                let (tys, candidates) = function_use
-                    .candidates
-                    .iter()
-                    .enumerate()
-                    .map(|(index, candidate)| {
-                        let ty = get_function_ty(candidate, &ir_program.function_tys);
-                        (
-                            Some(ty),
-                            Candidate {
-                                index,
-                                unifications: ty::Unifications::new(),
-                            },
-                        )
-                    })
-                    .unzip();
-                (
-                    Tys {
-                        function_use_index,
-                        tys,
-                    },
-                    candidates,
-                )
-            })
-            .unzip();
-        let mut call_tys: Vec<Tys> = Vec::new();
-        for call in &function_definition.calls {
-            let &Tys {
-                function_use_index,
-                tys: ref callee_tys,
-            } = match call.function {
-                ir::Expression::Call(index) => &call_tys[index],
-                ir::Expression::FunctionUse(index) => &candidate_tys[index],
-                _ => todo!(),
-            };
-            let num_arguments = call.arguments.len();
-            let argument_tys: Vec<_> = call
-                .arguments
-                .iter()
-                .map(|arg| match *arg {
-                    ir::Expression::Integer(_) => {
-                        Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))
-                    }
-                    ir::Expression::Float(_) => {
-                        Rc::new(ty::Ty::Constructor(ir::TyConstructor::Float))
-                    }
-                    ir::Expression::String(_) => {
-                        Rc::new(ty::Ty::Constructor(ir::TyConstructor::String))
-                    }
-                    ir::Expression::Call(call_index) => {
-                        let argument_ty = &call_tys[call_index];
-                        let argument_candidates = &candidates[argument_ty.function_use_index];
-                        if argument_candidates.len() > 1 {
-                            todo!();
-                        } else if let Some(candidate) = argument_candidates.first() {
-                            argument_ty.tys[candidate.index].clone().unwrap()
-                        } else {
-                            todo!();
-                        }
-                    }
-                    ir::Expression::FunctionUse(argument_function_use_index) => {
-                        todo!();
-                    }
-                    ir::Expression::Variable(storage, index) => match storage {
-                        ir::Storage::Global => global_variables_ty[index].clone(),
-                        ir::Storage::Local => local_variables_ty[index].clone(),
-                    },
-                })
-                .collect();
-            let mut argument_ty_vars = HashMap::from([(None, 0)]);
-            let argument_orders: Vec<_> = argument_tys
-                .iter()
-                .map(|argument_ty| {
-                    let (var, order) = argument_ty.extract_function_ty();
-                    let next_index = argument_ty_vars.len();
-                    let index = *argument_ty_vars.entry(var).or_insert(next_index);
-                    (index, order)
-                })
-                .collect();
-            let mut return_tys: Vec<Option<Rc<ty::Ty>>> = function_definition.function_uses
-                [function_use_index]
-                .candidates
-                .iter()
-                .map(|_| None)
-                .collect();
-            let old_candidates = &mut candidates[function_use_index];
-            let resolved = old_candidates.len() <= 1;
-            let new_candidates: Vec<_> = std::mem::take(old_candidates)
-                .into_iter()
-                .flat_map(|candidate| {
-                    let mut unifications = if resolved {
-                        candidate.unifications
+            .map(|function_use| FunctionUse::Unresolved(function_use.candidates.clone()))
+            .collect();
+        let mut calls: Vec<Option<Call>> = function_definition.calls.iter().map(|_| None).collect();
+        loop {
+            let mut updated = false;
+            for function_use_index in 0..function_definition.function_uses.len() {
+                let candidates = match function_uses[function_use_index] {
+                    FunctionUse::Unresolved(ref mut candidates) => std::mem::take(candidates),
+                    FunctionUse::Resolved(_, _) => continue,
+                };
+                let mut new_candidates = Vec::new();
+                let mut updated_calls = Vec::new();
+                let mut substitutions = Vec::new();
+                for candidate in candidates {
+                    let candidate_ty = get_function_ty(&candidate, &ir_program.function_tys);
+                    function_uses[function_use_index] =
+                        FunctionUse::Resolved(candidate.clone(), candidate_ty.clone());
+                    if let ir::Function::Method(class, method_index) = &candidate {
+                        let instance = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+                        let ty_arguments =
+                            vec![Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))))];
+                        let relations = vec![(instance, class.clone(), ty_arguments)];
+                        search_instance(&relations);
                     } else {
-                        candidate.unifications.undo()
-                    };
-                    let callee_ty = callee_tys[candidate.index].as_ref().unwrap();
-                    let return_ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
-                    let parameter_tys: Vec<_> = (0..num_arguments)
-                        .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
-                        .collect();
-                    if !unifications.unify(
-                        &callee_ty,
-                        &Rc::new(ty::Ty::Application {
-                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-                            arguments: Rc::new(ty::Ty::Cons {
-                                head: return_ty.clone(),
-                                tail: parameter_tys.iter().rev().fold(
-                                    Rc::new(ty::Ty::Nil),
-                                    |tail, parameter_ty| {
-                                        Rc::new(ty::Ty::Cons {
-                                            head: parameter_ty.clone(),
-                                            tail,
-                                        })
-                                    },
-                                ),
-                            }),
-                        }),
-                    ) {
-                        unifications.undo();
-                        return None;
-                    }
-                    let mut ty_vars = argument_ty_vars.clone();
-                    let mut inequalities = Vec::new();
-                    let mut diff_sum = 0;
-                    for (&(argument_index, argument_order), parameter_ty) in
-                        argument_orders.iter().zip(&parameter_tys)
-                    {
-                        let (parameter_var, parameter_order) = parameter_ty.extract_function_ty();
-                        let next_index = ty_vars.len();
-                        let parameter_index = *ty_vars.entry(parameter_var).or_insert(next_index);
-                        let diff = argument_order - parameter_order;
-                        diff_sum += diff.abs();
-                        inequalities.push((argument_index, parameter_index, diff));
-                    }
-                    let num_ty_vars = ty_vars.len();
-                    let Some(mut orders) = get_orders(&inequalities, num_ty_vars, diff_sum) else {
-                        unifications.undo();
-                        return None;
-                    };
-                    let mut min_order = -1;
-                    let mut max_order = diff_sum;
-                    while max_order - min_order > 1 {
-                        let mid_order = (min_order + max_order) / 2;
-                        match get_orders(&inequalities, num_ty_vars, mid_order) {
-                            Some(new_orders) => {
-                                orders = new_orders;
-                                max_order = mid_order;
+                        let mut unifier = unify::Unifier::new();
+                        let mut updated_call_indices = Vec::new();
+                        if translate_calls(
+                            function_definition.function_uses[function_use_index].used_by,
+                            &mut unifier,
+                            &mut updated_call_indices,
+                            &function_definition.calls,
+                            &function_uses,
+                            &mut calls,
+                            &local_variables_ty,
+                            &global_variables_ty,
+                            &ir_program.function_tys,
+                        ) {
+                            substitutions.extend(unifier.rollback());
+                            for call_index in updated_call_indices.into_iter().rev() {
+                                let call = std::mem::take(&mut calls[call_index]);
+                                updated_calls.push((call_index, call));
                             }
-                            None => min_order = mid_order,
+                            new_candidates.push((candidate, candidate_ty));
+                        } else {
+                            for _ in unifier.rollback() {}
+                            for call_index in updated_call_indices.into_iter().rev() {
+                                calls[call_index] = None;
+                            }
                         }
                     }
-                    let extra_calls: Vec<_> = (0..max_order)
-                        .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
-                        .collect();
-                    for i in 0..num_arguments {
-                        unifications.unify(
-                            &argument_tys[i],
-                            &extra_calls.iter().take(orders[i] as usize).fold(
-                                parameter_tys[i].clone(),
-                                |ty, extra_call| {
-                                    Rc::new(ty::Ty::Application {
-                                        constructor: Rc::new(ty::Ty::Constructor(
-                                            ir::TyConstructor::Function,
-                                        )),
-                                        arguments: Rc::new(ty::Ty::Cons {
-                                            head: ty,
-                                            tail: extra_call.clone(),
-                                        }),
-                                    })
-                                },
-                            ),
-                        );
-                    }
-                    return_tys[candidate.index] =
-                        Some(extra_calls.iter().fold(return_ty, |ty, extra_call| {
-                            Rc::new(ty::Ty::Application {
-                                constructor: Rc::new(ty::Ty::Constructor(
-                                    ir::TyConstructor::Function,
-                                )),
-                                arguments: Rc::new(ty::Ty::Cons {
-                                    head: ty,
-                                    tail: extra_call.clone(),
-                                }),
-                            })
-                        }));
-                    Some(Candidate {
-                        index: candidate.index,
-                        unifications: if resolved {
-                            unifications
-                        } else {
-                            unifications.undo()
-                        },
-                    })
-                })
-                .collect();
-            if !resolved && new_candidates.len() <= 1 {
-                if let Some(Candidate {
-                    index,
-                    unifications,
-                }) = new_candidates.into_iter().next()
-                {
-                    *old_candidates = vec![Candidate {
-                        index,
-                        unifications: unifications.undo(),
-                    }];
                 }
-            } else {
-                *old_candidates = new_candidates;
+                if new_candidates.len() > 2 {
+                    function_uses[function_use_index] = FunctionUse::Unresolved(
+                        new_candidates
+                            .into_iter()
+                            .map(|(candidate, _)| candidate)
+                            .collect(),
+                    );
+                } else if let Some((candidate, ty)) = new_candidates.into_iter().next() {
+                    for substitution in substitutions.into_iter().rev() {
+                        substitution.commit();
+                    }
+                    for (call_index, call) in updated_calls.into_iter().rev() {
+                        calls[call_index] = call;
+                    }
+                    function_uses[function_use_index] = FunctionUse::Resolved(candidate, ty);
+                    updated = true;
+                } else {
+                    panic!();
+                }
             }
-            call_tys.push(Tys {
-                function_use_index,
-                tys: return_tys,
-            });
+            if !updated {
+                break;
+            }
         }
+        function_definitions.push((function_uses, calls));
     }
     unsafe { ffi::initialize_jit() };
     let num_definitions = ir_program.function_definitions.len();
-    for (function_index, function_definition) in
-        ir_program.function_definitions.into_iter().enumerate()
+    for (function_index, (ir_function_definition, function_definition)) in ir_program
+        .function_definitions
+        .into_iter()
+        .zip(function_definitions)
+        .enumerate()
     {
         let function_name = CString::new(format!("{}", function_index)).unwrap();
         unsafe {
@@ -291,10 +176,10 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             ffi::add_function(
                 function_name.as_ptr(),
                 function_type,
-                function_definition.blocks.len(),
+                ir_function_definition.blocks.len(),
             );
         }
-        for (block_index, block) in function_definition.blocks.into_iter().enumerate() {
+        for (block_index, block) in ir_function_definition.blocks.into_iter().enumerate() {
             unsafe {
                 ffi::set_insert_point(block_index);
             }
@@ -319,14 +204,49 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
     Err(())
 }
 
-struct Tys {
-    function_use_index: usize,
-    tys: Vec<Option<Rc<ty::Ty>>>,
+fn search_instance(relations: &[(Rc<ty::Ty>, ir::Class, Vec<Rc<ty::Ty>>)]) {}
+
+fn get_expression_ty(
+    expression: &ir::Expression,
+    function_uses: &[FunctionUse],
+    calls: &[Option<Call>],
+    local_variables_ty: &[Rc<ty::Ty>],
+    global_variables_ty: &[Rc<ty::Ty>],
+    ir_function_tys: &[ir::FunctionTy],
+) -> Option<Rc<ty::Ty>> {
+    match *expression {
+        ir::Expression::Integer(_) => {
+            Some(Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)))
+        }
+        ir::Expression::Float(_) => Some(Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))),
+        ir::Expression::String(_) => Some(Rc::new(ty::Ty::Constructor(ir::TyConstructor::String))),
+        ir::Expression::FunctionUse(argument_function_use_index) => {
+            match &function_uses[argument_function_use_index] {
+                FunctionUse::Resolved(_, ty) => Some(ty.clone()),
+                FunctionUse::Unresolved(_) => None,
+            }
+        }
+        ir::Expression::Call(argument_call_index) => match &calls[argument_call_index] {
+            Some(Call { ty, .. }) => Some(ty.clone()),
+            None => None,
+        },
+        ir::Expression::Variable(storage, index) => match storage {
+            ir::Storage::Global => Some(global_variables_ty[index].clone()),
+            ir::Storage::Local => Some(local_variables_ty[index].clone()),
+        },
+    }
 }
 
-struct Candidate {
-    index: usize,
-    unifications: ty::Unifications,
+#[derive(serde::Serialize)]
+enum FunctionUse {
+    Resolved(ir::Function, Rc<ty::Ty>),
+    Unresolved(Vec<ir::Function>),
+}
+
+#[derive(serde::Serialize)]
+struct Call {
+    ty: Rc<ty::Ty>,
+    extra_calls: Vec<Rc<ty::Ty>>,
 }
 
 fn get_orders(
@@ -362,10 +282,162 @@ fn get_orders(
     None
 }
 
-fn get_function_ty(ir_function: &ir::Function, ir_functions_ty: &[ir::FunctionTy]) -> Rc<ty::Ty> {
-    match *ir_function {
-        ir::Function::UserDefined(index) => {
-            let ir_function_ty = &ir_functions_ty[index];
+fn translate_calls(
+    call_index: Option<usize>,
+    unifications: &mut unify::Unifier,
+    updated_call_indices: &mut Vec<usize>,
+    ir_calls: &[ir::Call],
+    function_uses: &[FunctionUse],
+    calls: &mut [Option<Call>],
+    local_variables_ty: &[Rc<ty::Ty>],
+    global_variables_ty: &[Rc<ty::Ty>],
+    ir_function_tys: &[ir::FunctionTy],
+) -> bool {
+    let Some(call_index) = call_index else {
+        return true;
+    };
+    let call = &ir_calls[call_index];
+    let num_arguments = call.arguments.len();
+    let Some(argument_tys): Option<Vec<_>> = call
+        .arguments
+        .iter()
+        .map(|argument| {
+            get_expression_ty(
+                argument,
+                function_uses,
+                calls,
+                local_variables_ty,
+                global_variables_ty,
+                ir_function_tys,
+            )
+        })
+        .collect()
+    else {
+        return true;
+    };
+    let Some(function_ty) = get_expression_ty(
+        &call.function,
+        function_uses,
+        calls,
+        local_variables_ty,
+        global_variables_ty,
+        ir_function_tys,
+    ) else {
+        return true;
+    };
+    let return_ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+    let parameter_tys: Vec<_> = (0..num_arguments)
+        .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
+        .collect();
+    if !unifications.unify(
+        &function_ty,
+        &Rc::new(ty::Ty::Application {
+            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+            arguments: Rc::new(ty::Ty::Cons {
+                head: return_ty.clone(),
+                tail: parameter_tys.iter().rev().fold(
+                    Rc::new(ty::Ty::Nil),
+                    |tail, parameter_ty| {
+                        Rc::new(ty::Ty::Cons {
+                            head: parameter_ty.clone(),
+                            tail,
+                        })
+                    },
+                ),
+            }),
+        }),
+    ) {
+        return false;
+    }
+    let mut ty_vars = HashMap::from([(None, 0)]);
+    let argument_orders: Vec<_> = argument_tys
+        .iter()
+        .map(|argument_ty| {
+            let (var, order) = argument_ty.extract_function_ty();
+            let next_index = ty_vars.len();
+            let index = *ty_vars.entry(var).or_insert(next_index);
+            (index, order)
+        })
+        .collect();
+    let mut inequalities = Vec::new();
+    let mut diff_sum = 0;
+    for (&(argument_index, argument_order), parameter_ty) in
+        argument_orders.iter().zip(&parameter_tys)
+    {
+        let (parameter_var, parameter_order) = parameter_ty.extract_function_ty();
+        let next_index = ty_vars.len();
+        let parameter_index = *ty_vars.entry(parameter_var).or_insert(next_index);
+        let diff = argument_order - parameter_order;
+        diff_sum += diff.abs();
+        inequalities.push((argument_index, parameter_index, diff));
+    }
+    let num_ty_vars = ty_vars.len();
+    let Some(mut orders) = get_orders(&inequalities, num_ty_vars, diff_sum) else {
+        return false;
+    };
+    let mut min_order = -1;
+    let mut max_order = diff_sum;
+    while max_order - min_order > 1 {
+        let mid_order = (min_order + max_order) / 2;
+        match get_orders(&inequalities, num_ty_vars, mid_order) {
+            Some(new_orders) => {
+                orders = new_orders;
+                max_order = mid_order;
+            }
+            None => min_order = mid_order,
+        }
+    }
+    let extra_calls: Vec<_> = (0..max_order)
+        .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
+        .collect();
+    for i in 0..num_arguments {
+        unifications.unify(
+            &argument_tys[i],
+            &extra_calls.iter().take(orders[i] as usize).fold(
+                parameter_tys[i].clone(),
+                |ty, extra_call| {
+                    Rc::new(ty::Ty::Application {
+                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                        arguments: Rc::new(ty::Ty::Cons {
+                            head: ty,
+                            tail: extra_call.clone(),
+                        }),
+                    })
+                },
+            ),
+        );
+    }
+    let call_ty = extra_calls.iter().fold(return_ty, |ty, extra_call| {
+        Rc::new(ty::Ty::Application {
+            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+            arguments: Rc::new(ty::Ty::Cons {
+                head: ty,
+                tail: extra_call.clone(),
+            }),
+        })
+    });
+    calls[call_index] = Some(Call {
+        ty: call_ty.clone(),
+        extra_calls,
+    });
+    updated_call_indices.push(call_index);
+    translate_calls(
+        call.used_by,
+        unifications,
+        updated_call_indices,
+        ir_calls,
+        function_uses,
+        calls,
+        local_variables_ty,
+        global_variables_ty,
+        ir_function_tys,
+    )
+}
+
+fn get_function_ty(function: &ir::Function, ir_function_tys: &[ir::FunctionTy]) -> Rc<ty::Ty> {
+    match *function {
+        ir::Function::UserDefined(function_index) => {
+            let ir_function_ty = &ir_function_tys[function_index];
             let ty_parameters: Vec<_> = (0..ir_function_ty.num_ty_parameters)
                 .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
                 .collect();
@@ -377,30 +449,17 @@ fn get_function_ty(ir_function: &ir::Function, ir_functions_ty: &[ir::FunctionTy
                 }),
             })
         }
-        ir::Function::AddInteger => Rc::new(ty::Ty::Application {
-            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-            arguments: Rc::new(ty::Ty::Cons {
-                head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
-                tail: Rc::new(ty::Ty::Cons {
-                    head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
-                    tail: Rc::new(ty::Ty::Cons {
-                        head: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)),
-                        tail: Rc::new(ty::Ty::Nil),
-                    }),
-                }),
-            }),
-        }),
         ir::Function::Dereference => {
-            let ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
+            let target_ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
             Rc::new(ty::Ty::Application {
                 constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
                 arguments: Rc::new(ty::Ty::Cons {
-                    head: ty.clone(),
+                    head: target_ty.clone(),
                     tail: Rc::new(ty::Ty::Cons {
                         head: Rc::new(ty::Ty::Application {
                             constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
                             arguments: Rc::new(ty::Ty::Cons {
-                                head: ty.clone(),
+                                head: target_ty.clone(),
                                 tail: Rc::new(ty::Ty::Nil),
                             }),
                         }),
@@ -409,73 +468,6 @@ fn get_function_ty(ir_function: &ir::Function, ir_functions_ty: &[ir::FunctionTy
                 }),
             })
         }
-        ir::Function::Identity => {
-            let ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
-            Rc::new(ty::Ty::Application {
-                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-                arguments: Rc::new(ty::Ty::Cons {
-                    head: ty.clone(),
-                    tail: Rc::new(ty::Ty::Cons {
-                        head: ty.clone(),
-                        tail: Rc::new(ty::Ty::Nil),
-                    }),
-                }),
-            })
-        }
-        ir::Function::Delete => {
-            let ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
-            Rc::new(ty::Ty::Application {
-                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-                arguments: Rc::new(ty::Ty::Cons {
-                    head: Rc::new(ty::Ty::Application {
-                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
-                        arguments: Rc::new(ty::Ty::Nil),
-                    }),
-                    tail: Rc::new(ty::Ty::Cons {
-                        head: ty.clone(),
-                        tail: Rc::new(ty::Ty::Nil),
-                    }),
-                }),
-            })
-        }
-        ir::Function::Assign => {
-            let ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
-            Rc::new(ty::Ty::Application {
-                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-                arguments: Rc::new(ty::Ty::Cons {
-                    head: Rc::new(ty::Ty::Application {
-                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
-                        arguments: Rc::new(ty::Ty::Nil),
-                    }),
-                    tail: Rc::new(ty::Ty::Cons {
-                        head: Rc::new(ty::Ty::Application {
-                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
-                            arguments: Rc::new(ty::Ty::Cons {
-                                head: ty.clone(),
-                                tail: Rc::new(ty::Ty::Nil),
-                            }),
-                        }),
-                        tail: Rc::new(ty::Ty::Cons {
-                            head: ty.clone(),
-                            tail: Rc::new(ty::Ty::Nil),
-                        }),
-                    }),
-                }),
-            })
-        }
-        ir::Function::Print => Rc::new(ty::Ty::Application {
-            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-            arguments: Rc::new(ty::Ty::Cons {
-                head: Rc::new(ty::Ty::Application {
-                    constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Tuple)),
-                    arguments: Rc::new(ty::Ty::Nil),
-                }),
-                tail: Rc::new(ty::Ty::Cons {
-                    head: Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))),
-                    tail: Rc::new(ty::Ty::Nil),
-                }),
-            }),
-        }),
         _ => todo!(),
     }
 }

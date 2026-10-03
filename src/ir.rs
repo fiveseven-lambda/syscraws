@@ -25,7 +25,8 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct Program {
-    pub structures: Vec<(TyKind, Structure)>,
+    pub structure_tys: Vec<Constant>,
+    pub structure_definitions: Vec<StructureDefinition>,
     pub function_tys: Vec<FunctionTy>,
     pub function_definitions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
@@ -37,6 +38,22 @@ pub struct Structure {
     pub field_tys: Vec<Ty>,
 }
 
+#[derive(PartialEq, Eq, Clone, Serialize)]
+pub enum Constant {
+    Integer,
+    Float,
+    Ty,
+    Structure(usize),
+    Parameter(usize, usize),
+    Product(Vec<Constant>, Box<Constant>),
+    Application(Box<Constant>, Vec<Constant>),
+}
+
+#[derive(Serialize)]
+pub struct StructureDefinition {
+    pub field_tys: Vec<Constant>,
+}
+
 #[derive(Clone, Serialize)]
 pub struct FunctionTy {
     pub num_ty_parameters: usize,
@@ -46,8 +63,7 @@ pub struct FunctionTy {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Function {
-    AddInteger,
-    IntegerToString,
+    Method(Class, usize),
     Dereference,
     Identity,
     Assign,
@@ -65,9 +81,28 @@ pub enum Function {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash)]
+pub enum Class {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    RightShift,
+    LeftShift,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    Eq,
+    Cmp,
+    ToString,
+    UserDefined(usize),
+}
+
 #[derive(Serialize)]
 pub struct FunctionUse {
     pub candidates: Vec<Function>,
+    pub used_by: Option<usize>,
 }
 
 #[derive(Clone, Serialize)]
@@ -89,6 +124,8 @@ pub enum TyConstructor {
     Tuple,
     Function,
     Structure(usize),
+    AddInteger,
+    AddFloat,
 }
 
 #[derive(Serialize)]
@@ -148,4 +185,5 @@ pub enum Storage {
 pub struct Call {
     pub function: Expression,
     pub arguments: Vec<Expression>,
+    pub used_by: Option<usize>,
 }

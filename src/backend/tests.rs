@@ -22,7 +22,7 @@ use super::*;
 
 #[test]
 fn unify_tuples() {
-    let mut unifications = ty::Unifications::new();
+    let mut unifications = ty::Unifier::new();
     let t1 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
     let u1 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
     {
@@ -74,7 +74,7 @@ fn unify_tuples() {
 
 #[test]
 fn unify_vars() {
-    let mut unifications = ty::Unifications::new();
+    let mut unifications = ty::Unifier::new();
 
     let x1 = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
     assert!(unifications.unify(&x1, &x1));
@@ -100,7 +100,7 @@ fn unify_vars() {
 
 #[test]
 fn unify_undo() {
-    let mut unifications = ty::Unifications::new();
+    let mut unifications = ty::Unifier::new();
     let x = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
     let assert_x_rank = |expected: u32| {
         if let ty::Ty::Var(ref var) = *x {
@@ -123,7 +123,12 @@ fn unify_undo() {
     ));
     assert!(unifications.unify(&x, &y));
     assert_x_rank(2);
-    unifications.undo();
+    for ty::Unifier { ty, old_rank } in unifications.0.into_iter().rev() {
+        let ty::Ty::Var(ref var) = *ty else {
+            unreachable!();
+        };
+        *var.borrow_mut() = ty::Var::Unassigned(old_rank);
+    }
     assert_x_rank(0);
 }
 
