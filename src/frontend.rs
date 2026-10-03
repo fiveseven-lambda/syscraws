@@ -54,7 +54,8 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         num_functions: 0,
         num_global_basic_blocks: 0,
         ir_program: ir::Program {
-            structures: Vec::new(),
+            structure_tys: Vec::new(),
+            structure_definitions: Vec::new(),
             function_tys: Vec::new(),
             function_definitions: Vec::new(),
             num_global_variables: 0,
@@ -64,7 +65,6 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         global_blocks: Vec::new(),
         global_variables: Variables::new(ir::Storage::Global),
         exports: Vec::new(),
-        submodules: Vec::new(),
         logger,
         file_indices: HashMap::new(),
         import_chain: HashSet::from([root_file_path.clone()]),
@@ -127,7 +127,6 @@ struct Reader<'logger> {
      * After all files are read, any remaining global variables are freed.
      */
     global_variables: Variables,
-    submodules: Vec<Vec<usize>>,
     /**
      * Items exported from each file, in postorder.
      */
@@ -161,6 +160,8 @@ pub enum Item {
      * A type definition.
      */
     Ty(ir::Ty),
+    Constant(ir::Constant),
+    Parameter(usize, usize),
     /**
      * One or more function definitions.
      */
@@ -169,6 +170,24 @@ pub enum Item {
      * A variable definition.
      */
     Variable(ir::Storage, usize),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Class {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    RightShift,
+    LeftShift,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    Eq,
+    Cmp,
+    ToString,
+    UserDefined(usize),
 }
 
 impl Reader<'_> {
@@ -206,9 +225,11 @@ impl Reader<'_> {
                 String::from("print"),
                 (None, Item::Function(vec![ir::Function::Print])),
             )]),
-            methods: HashMap::from([(String::from("assign"), vec![ir::Function::Assign])]),
+            submodules: Vec::new(),
+            eq_instances: Vec::new(),
+            add_instances: Vec::new(),
+            instances: Vec::new(),
         };
-        let mut submodules = Vec::new();
         for ast::WithExtraTokens {
             content: ast_import,
             extra_tokens_pos,
@@ -220,7 +241,6 @@ impl Reader<'_> {
             if let Ok((name, pos, Some(index))) =
                 self.import_file(ast_import, path.parent().unwrap())
             {
-                submodules.push(index);
                 match context.items.entry(name) {
                     std::collections::hash_map::Entry::Occupied(mut entry) => {
                         if let (Some(prev_pos), _) = entry.get() {
@@ -231,24 +251,13 @@ impl Reader<'_> {
                     }
                     std::collections::hash_map::Entry::Vacant(entry) => {
                         entry.insert((Some(pos), Item::Import(index)));
-                        for (name, exported_candidates) in &self.exports[index].methods {
-                            context
-                                .methods
-                                .entry(name.clone())
-                                .or_insert_with(Vec::new)
-                                .extend_from_slice(exported_candidates);
-                        }
+                        context.submodules.push(index);
                     }
                 }
             }
-            for candidates in context.methods.values_mut() {
-                candidates.sort();
-                candidates.dedup();
-            }
         }
-        submodules.sort();
-        submodules.dedup();
-        self.submodules.push(submodules);
+        context.submodules.sort();
+        context.submodules.dedup();
         for name in ast_file.structure_names {
             self.declare_structure(name, &mut context);
         }
@@ -264,13 +273,18 @@ impl Reader<'_> {
                 self.logger.extra_tokens(extra_tokens_pos);
             }
             match statement {
-                ast::TopLevelStatement::StructureDefinition(structure_definition) => {
-                    let (kind, definition) = context.translate_structure_definition(
-                        structure_definition,
+                ast::TopLevelStatement::StructureDefinition(ast_definition) => {
+                    let definition = context.translate_structure_definition(
+                        ast_definition,
                         &self.exports,
                         &mut self.logger,
                     );
-                    self.ir_program.structures.push((kind, definition));
+                    if self.logger.num_errors == 0
+                        && let Ok((ty, definition)) = definition
+                    {
+                        self.ir_program.structure_tys.push(ty);
+                        self.ir_program.structure_definitions.push(definition);
+                    }
                 }
                 ast::TopLevelStatement::FunctionDefinition(function_definition) => {
                     let mut num_basic_blocks = 0;
@@ -454,11 +468,7 @@ impl Reader<'_> {
             return;
         };
         if is_method {
-            context
-                .methods
-                .entry(name)
-                .or_insert_with(Vec::new)
-                .push(ir::Function::UserDefined(self.num_functions));
+            todo!();
         } else {
             match context.items.entry(name) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {

@@ -25,7 +25,8 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct Program {
-    pub structures: Vec<(TyKind, Structure)>,
+    pub structure_tys: Vec<Constant>,
+    pub structure_definitions: Vec<StructureDefinition>,
     pub function_tys: Vec<FunctionTy>,
     pub function_definitions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
@@ -35,6 +36,22 @@ pub struct Program {
 pub struct Structure {
     pub num_ty_parameters: usize,
     pub field_tys: Vec<Ty>,
+}
+
+#[derive(PartialEq, Eq, Clone, Serialize)]
+pub enum Constant {
+    Integer,
+    Float,
+    Ty,
+    Structure(usize),
+    Parameter(usize, usize),
+    Product(Vec<Constant>, Box<Constant>),
+    Application(Box<Constant>, Vec<Constant>),
+}
+
+#[derive(Serialize)]
+pub struct StructureDefinition {
+    pub field_tys: Vec<Constant>,
 }
 
 #[derive(Clone, Serialize)]

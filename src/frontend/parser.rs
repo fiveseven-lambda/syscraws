@@ -26,8 +26,8 @@ mod token;
 use std::cell::Cell;
 
 use super::CharsPeekable;
+use super::Class;
 use super::ast;
-use crate::ir;
 use crate::log::Index;
 use crate::log::ParseError;
 use crate::log::Pos;
@@ -163,7 +163,6 @@ impl Parser<'_, '_> {
                 Token::Identifier(name) => {
                     let name = std::mem::take(name);
                     let pos = self.current_pos();
-                    self.consume_token()?;
                     Some((name, pos))
                 }
                 _ => {
@@ -177,32 +176,7 @@ impl Parser<'_, '_> {
             None
         };
 
-        let ty_parameters = if self.current.is_on_new_line {
-            None
-        } else if let Some(Token::OpeningBracket) = self.current.token {
-            let opening_bracket_pos = self.current_pos();
-            self.consume_token()?;
-
-            let (ty_parameters, _) = self.parse_list_elements_and_trailing_comma()?;
-            match self.current.token {
-                Some(Token::ClosingBracket) => self.consume_token()?,
-                Some(_) => {
-                    return Err(ParseError::UnexpectedTokenInBrackets {
-                        unexpected_token_pos: self.current_pos(),
-                        opening_bracket_pos,
-                    });
-                }
-                None => {
-                    return Err(ParseError::UnclosedBracket {
-                        opening_bracket_pos,
-                    });
-                }
-            }
-            Some(ty_parameters)
-        } else {
-            None
-        };
-
+        let ty_parameters = self.parse_factor(false)?;
         let extra_tokens_pos = self.consume_line()?;
 
         let mut fields = Vec::new();
@@ -1009,24 +983,24 @@ enum Precedence {
     TimeShift,
 }
 
-fn infix_operator(token: &Token, precedence: Precedence) -> Option<(ir::Class, usize)> {
+fn infix_operator(token: &Token, precedence: Precedence) -> Option<(Class, usize)> {
     match (token, precedence) {
-        (Token::Asterisk, Precedence::MulDivRem) => Some((ir::Class::Mul, 0)),
-        (Token::Slash, Precedence::MulDivRem) => Some((ir::Class::Div, 0)),
-        (Token::Percent, Precedence::MulDivRem) => Some((ir::Class::Rem, 0)),
-        (Token::Plus, Precedence::AddSub) => Some((ir::Class::Add, 0)),
-        (Token::Hyphen, Precedence::AddSub) => Some((ir::Class::Sub, 0)),
-        (Token::DoubleGreater, Precedence::BitShift) => Some((ir::Class::RightShift, 0)),
-        (Token::DoubleLess, Precedence::BitShift) => Some((ir::Class::LeftShift, 0)),
-        (Token::Ampersand, Precedence::BitAnd) => Some((ir::Class::BitwiseAnd, 0)),
-        (Token::Circumflex, Precedence::BitXor) => Some((ir::Class::BitwiseXor, 0)),
-        (Token::Bar, Precedence::BitOr) => Some((ir::Class::BitwiseOr, 0)),
-        (Token::Greater, Precedence::Inequality) => Some((ir::Class::Cmp, 0)),
-        (Token::GreaterEqual, Precedence::Inequality) => Some((ir::Class::Cmp, 1)),
-        (Token::Less, Precedence::Inequality) => Some((ir::Class::Cmp, 2)),
-        (Token::LessEqual, Precedence::Inequality) => Some((ir::Class::Cmp, 3)),
-        (Token::DoubleEqual, Precedence::Equality) => Some((ir::Class::Eq, 0)),
-        (Token::ExclamationEqual, Precedence::Equality) => Some((ir::Class::Eq, 1)),
+        (Token::Asterisk, Precedence::MulDivRem) => Some((Class::Mul, 0)),
+        (Token::Slash, Precedence::MulDivRem) => Some((Class::Div, 0)),
+        (Token::Percent, Precedence::MulDivRem) => Some((Class::Rem, 0)),
+        (Token::Plus, Precedence::AddSub) => Some((Class::Add, 0)),
+        (Token::Hyphen, Precedence::AddSub) => Some((Class::Sub, 0)),
+        (Token::DoubleGreater, Precedence::BitShift) => Some((Class::RightShift, 0)),
+        (Token::DoubleLess, Precedence::BitShift) => Some((Class::LeftShift, 0)),
+        (Token::Ampersand, Precedence::BitAnd) => Some((Class::BitwiseAnd, 0)),
+        (Token::Circumflex, Precedence::BitXor) => Some((Class::BitwiseXor, 0)),
+        (Token::Bar, Precedence::BitOr) => Some((Class::BitwiseOr, 0)),
+        (Token::Greater, Precedence::Inequality) => Some((Class::Cmp, 0)),
+        (Token::GreaterEqual, Precedence::Inequality) => Some((Class::Cmp, 1)),
+        (Token::Less, Precedence::Inequality) => Some((Class::Cmp, 2)),
+        (Token::LessEqual, Precedence::Inequality) => Some((Class::Cmp, 3)),
+        (Token::DoubleEqual, Precedence::Equality) => Some((Class::Eq, 0)),
+        (Token::ExclamationEqual, Precedence::Equality) => Some((Class::Eq, 1)),
         _ => None,
     }
 }
