@@ -24,7 +24,7 @@ use std::rc::Rc;
 use crate::ir;
 
 pub enum Ty {
-    Constructor(ir::TyConstructor),
+    Constructor(ir::Constant),
     Parameter(usize),
     Application {
         constructor: Rc<Ty>,
@@ -110,7 +110,7 @@ impl Ty {
                 constructor,
                 arguments,
             } => match constructor.as_ref() {
-                Ty::Constructor(ir::TyConstructor::Function) => match arguments.as_ref() {
+                Ty::Constructor(ir::Constant::FunctionTy) => match arguments.as_ref() {
                     Ty::Cons { head, tail: _ } => {
                         let (ty, depth) = head.extract_function_ty();
                         (ty, depth + 1)

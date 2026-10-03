@@ -81,11 +81,13 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         &mut reader.global_function_uses,
         &mut reader.global_calls,
     );
-    reader.ir_program.function_tys.push(ir::FunctionTy {
-        num_ty_parameters: 0,
-        parameter_tys: Vec::new(),
-        return_ty: ir::Ty::Constructor(ir::TyConstructor::Integer),
-    });
+    reader
+        .ir_program
+        .function_tys
+        .push(ir::Constant::Application(
+            Box::new(ir::Constant::FunctionTy),
+            vec![ir::Constant::Integer],
+        ));
     reader
         .ir_program
         .function_definitions
@@ -156,16 +158,8 @@ pub enum Item {
      * References another file by its postorder index.
      */
     Import(usize),
-    /**
-     * A type definition.
-     */
-    Ty(ir::Ty),
     Constant(ir::Constant),
     Parameter(usize, usize),
-    /**
-     * One or more function definitions.
-     */
-    Function(Vec<ir::Function>),
     /**
      * A variable definition.
      */
@@ -221,10 +215,7 @@ impl Reader<'_> {
             }
         };
         let mut context = Context {
-            items: HashMap::from([(
-                String::from("print"),
-                (None, Item::Function(vec![ir::Function::Print])),
-            )]),
+            items: HashMap::new(),
             submodules: Vec::new(),
             eq_instances: Vec::new(),
             add_instances: Vec::new(),
@@ -292,7 +283,7 @@ impl Reader<'_> {
                         .body
                         .count_basic_blocks(&mut num_basic_blocks);
                     let num_current_items = context.items.len();
-                    if let Some((ty, definition)) = context.translate_function_definition(
+                    if let Ok((ty, definition)) = context.translate_function_definition(
                         function_definition,
                         &self.exports,
                         &mut self.logger,
@@ -436,18 +427,14 @@ impl Reader<'_> {
                 } else {
                     entry.insert((
                         Some(pos),
-                        Item::Ty(ir::Ty::Constructor(ir::TyConstructor::Structure(
-                            self.num_structures,
-                        ))),
+                        Item::Constant(ir::Constant::Structure(self.num_structures)),
                     ));
                 }
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert((
                     Some(pos),
-                    Item::Ty(ir::Ty::Constructor(ir::TyConstructor::Structure(
-                        self.num_structures,
-                    ))),
+                    Item::Constant(ir::Constant::Structure(self.num_structures)),
                 ));
                 self.num_structures += 1;
             }
@@ -473,17 +460,13 @@ impl Reader<'_> {
             match context.items.entry(name) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
                     let (prev_pos, item) = entry.get_mut();
-                    if let Item::Function(functions) = item {
-                        functions.push(ir::Function::UserDefined(self.num_functions));
-                    } else {
-                        self.logger
-                            .duplicate_definition(pos, prev_pos.clone().unwrap());
-                    }
+                    self.logger
+                        .duplicate_definition(pos, prev_pos.clone().unwrap());
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
                     entry.insert((
                         Some(pos),
-                        Item::Function(vec![ir::Function::UserDefined(self.num_functions)]),
+                        Item::Constant(ir::Constant::Function(self.num_functions)),
                     ));
                 }
             }

@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::rc::Rc;
 
+/*
 fn translate_ty(ir_ty: &ir::Ty, ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
     match ir_ty {
         ir::Ty::Constructor(constructor) => Rc::new(ty::Ty::Constructor(constructor.clone())),
@@ -53,8 +54,10 @@ fn translate_tys(ir_tys: &[ir::Ty], ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> 
         })
     });
 }
+*/
 
 pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8, ()> {
+    /*
     let global_variables_ty: Vec<_> = (0..ir_program.num_global_variables)
         .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
         .collect();
@@ -201,9 +204,11 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             return Ok(pointer);
         }
     }
+    */
     Err(())
 }
 
+/*
 fn search_instance(relations: &[(Rc<ty::Ty>, ir::Class, Vec<Rc<ty::Ty>>)]) {}
 
 fn get_expression_ty(
@@ -471,3 +476,4 @@ fn get_function_ty(function: &ir::Function, ir_function_tys: &[ir::FunctionTy]) 
         _ => todo!(),
     }
 }
+*/

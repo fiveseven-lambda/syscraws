@@ -134,7 +134,7 @@ impl Variables {
             let function_use_index = function_uses.len();
             let call_index = calls.len();
             function_uses.push(ir::FunctionUse {
-                candidates: vec![ir::Function::Delete],
+                candidates: vec![ir::Constant::Delete],
                 used_by: Some(call_index),
             });
             calls.push(ir::Call {

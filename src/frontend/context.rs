@@ -37,9 +37,9 @@ pub struct Context {
      */
     pub items: HashMap<String, (Option<log::Pos>, Item)>,
     pub submodules: Vec<usize>,
-    pub eq_instances: Vec<ir::Function>,
-    pub add_instances: Vec<ir::Function>,
-    pub instances: Vec<Vec<ir::Function>>,
+    pub eq_instances: Vec<ir::Constant>,
+    pub add_instances: Vec<ir::Constant>,
+    pub instances: Vec<Vec<ir::Constant>>,
 }
 
 impl Context {
@@ -53,23 +53,30 @@ impl Context {
         exports: &[Context],
         logger: &mut log::Logger,
     ) -> Result<(ir::Constant, ir::StructureDefinition), ()> {
-        let mut parameter_tys = Vec::new();
         let mut parameter_names = Vec::new();
         let mut depth = 0;
-        self.translate_constant_declaration(
-            ast_ty_parameters.unwrap(),
-            &mut parameter_names,
-            &mut parameter_tys,
-            &mut depth,
-            exports,
-            logger,
-        );
-        let ty = parameter_tys
-            .into_iter()
-            .rev()
-            .fold(ir::Constant::Ty, |ty, tys| {
-                ir::Constant::Product(tys, Box::new(ty))
-            });
+        let structure_ty = {
+            let mut parameter_tys = Vec::new();
+            let result = self.translate_constant_declaration(
+                ast_ty_parameters.unwrap(),
+                &mut parameter_names,
+                &mut parameter_tys,
+                &mut depth,
+                exports,
+                logger,
+            );
+            if logger.num_errors == 0 {
+                assert!(result.unwrap().1.is_empty());
+                Ok(parameter_tys
+                    .into_iter()
+                    .rev()
+                    .fold(ir::Constant::Ty, |ty, tys| {
+                        ir::Constant::Product(tys, Box::new(ty))
+                    }))
+            } else {
+                Err(())
+            }
+        };
         if let Some(extra_tokens_pos) = extra_tokens_pos {
             logger.extra_tokens(extra_tokens_pos);
         }
@@ -102,7 +109,11 @@ impl Context {
         for parameter_name in parameter_names {
             self.items.remove(&parameter_name);
         }
-        Ok((ty, ir::StructureDefinition { field_tys }))
+        if logger.num_errors == 0 {
+            Ok((structure_ty?, ir::StructureDefinition { field_tys }))
+        } else {
+            Err(())
+        }
     }
 
     pub fn translate_constant_declaration(
@@ -160,15 +171,15 @@ impl Context {
                         exports,
                         logger,
                     );
-                    for name in names {
-                        self.items.remove(&name);
-                    }
                     let ret_ty = self
                         .translate_constant(*ast_ret, parameter_depth, exports, logger)
                         .unwrap();
                     let ty = tys.into_iter().rev().fold(ret_ty, |ret_ty, parameter_tys| {
                         ir::Constant::Product(parameter_tys, Box::new(ret_ty))
                     });
+                    for name in names {
+                        self.items.remove(&name);
+                    }
                     if let Ok((pos, name)) = parameter {
                         self.items.insert(
                             name.clone(),
@@ -191,16 +202,133 @@ impl Context {
     pub fn translate_function_definition(
         &mut self,
         ast::FunctionDefinition {
-            ty_parameters: ast_ty_parameters,
-            parameters: ast_parameters,
-            return_ty: ast_return_ty,
+            signature: ast_signature,
             body: ast_body,
             extra_tokens_pos,
         }: ast::FunctionDefinition,
         exports: &[Context],
         logger: &mut log::Logger,
-    ) -> Option<(ir::FunctionTy, ir::FunctionDefinition)> {
-        todo!();
+    ) -> Result<(ir::Constant, ir::FunctionDefinition), ()> {
+        let Some(ast_signature) = ast_signature else {
+            todo!()
+        };
+        let ast::Term::TypeAnnotation {
+            term_left: ast_parameters,
+            colon_pos: _,
+            term_right: ast_return_ty,
+        } = ast_signature.term
+        else {
+            todo!()
+        };
+        let ast::Term::FunctionCall {
+            function: ast_constants,
+            arguments: ast_parameters,
+        } = ast_parameters.term
+        else {
+            todo!()
+        };
+        let mut constant_names = Vec::new();
+        let mut constant_tys = Vec::new();
+        let mut depth = 0;
+        self.translate_constant_declaration(
+            *ast_constants,
+            &mut constant_names,
+            &mut constant_tys,
+            &mut depth,
+            exports,
+            logger,
+        );
+        let return_ty = match ast_return_ty {
+            Some(ty) => self.translate_constant(*ty, depth, exports, logger),
+            None => Err(()),
+        };
+        let mut local_variables = Variables::new(ir::Storage::Local);
+        let mut parameter_tys = return_ty.map(|return_ty| vec![return_ty]);
+        for ast_parameter in ast_parameters {
+            let ast_parameter = match ast_parameter {
+                ast::ListElement::Empty { comma_pos } => {
+                    logger.empty_argument(comma_pos);
+                    continue;
+                }
+                ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
+            };
+            let ast::Term::TypeAnnotation {
+                term_left: ast_parameter_name,
+                colon_pos,
+                term_right: Some(ast_parameter_ty),
+            } = ast_parameter.term
+            else {
+                todo!();
+            };
+            let ast::Term::Identifier(parameter_name) = ast_parameter_name.term else {
+                todo!();
+            };
+            match self.items.entry(parameter_name.clone()) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if let (Some(pos), _) = entry.get() {
+                        logger.duplicate_definition(ast_parameter.pos, pos.clone());
+                    } else {
+                        let item = local_variables.add(parameter_name);
+                        entry.insert((Some(ast_parameter_name.pos), item));
+                    }
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let item = local_variables.add(parameter_name);
+                    entry.insert((Some(ast_parameter_name.pos), item));
+                }
+            }
+            let parameter_ty = self.translate_constant(*ast_parameter_ty, depth, exports, logger);
+            if logger.num_errors == 0
+                && let Ok(parameter_tys) = &mut parameter_tys
+                && let Ok(parameter_ty) = parameter_ty
+            {
+                parameter_tys.push(parameter_ty);
+            }
+        }
+        let function_ty =
+            ir::Constant::Application(Box::new(ir::Constant::FunctionTy), parameter_tys.unwrap());
+        if let Some(extra_tokens_pos) = extra_tokens_pos {
+            logger.extra_tokens(extra_tokens_pos);
+        }
+        let mut function_uses = Vec::new();
+        let mut calls = Vec::new();
+        let mut blocks = Vec::new();
+        for ast::WithExtraTokens {
+            content: ast_statement,
+            extra_tokens_pos,
+        } in ast_body.0
+        {
+            if let Some(extra_tokens_pos) = extra_tokens_pos {
+                logger.extra_tokens(extra_tokens_pos);
+            }
+            self.translate_statement(
+                ast_statement,
+                &mut function_uses,
+                &mut calls,
+                &mut blocks,
+                &mut local_variables,
+                0,
+                None,
+                None,
+                exports,
+                logger,
+            );
+        }
+        local_variables.free_and_remove(0, &mut function_uses, &mut calls, self);
+        for name in constant_names {
+            self.items.remove(&name);
+        }
+        Ok((
+            constant_tys.into_iter().rev().fold(function_ty, |ty, tys| {
+                ir::Constant::Product(tys, Box::new(ty))
+            }),
+            ir::FunctionDefinition {
+                num_local_variables: local_variables.num_total(),
+                function_uses,
+                calls,
+                blocks,
+            },
+        ))
     }
 
     pub fn translate_statement(
@@ -520,13 +648,13 @@ impl Context {
                                 {
                                     let function_use_index = function_uses.len();
                                     let call_index = calls.len();
-                                    function_uses.push(ir::FunctionUse {
-                                        candidates: vec![ir::Function::Method(
-                                            ir::Class::ToString,
-                                            0,
-                                        )],
-                                        used_by: Some(call_index),
-                                    });
+                                    // function_uses.push(ir::FunctionUse {
+                                    //     candidates: vec![ir::Function::Method(
+                                    //         ir::Class::ToString,
+                                    //         0,
+                                    //     )],
+                                    //     used_by: Some(call_index),
+                                    // });
                                     calls.push(ir::Call {
                                         function: ir::Expression::FunctionUse(function_use_index),
                                         arguments: vec![value],
@@ -545,7 +673,7 @@ impl Context {
                             let function_use_index = function_uses.len();
                             let call_index = calls.len();
                             function_uses.push(ir::FunctionUse {
-                                candidates: vec![ir::Function::ConcatenateString],
+                                candidates: vec![ir::Constant::ConcatenateString],
                                 used_by: Some(call_index),
                             });
                             calls.push(ir::Call {
@@ -561,7 +689,7 @@ impl Context {
             ast::Term::Identity => {
                 let function = ir::Expression::FunctionUse(function_uses.len());
                 function_uses.push(ir::FunctionUse {
-                    candidates: vec![ir::Function::Identity],
+                    candidates: vec![ir::Constant::Identity],
                     used_by: None,
                 });
                 Ok(ExpressionOrImport::Expression(function))
@@ -835,13 +963,13 @@ impl Context {
         logger: &mut log::Logger,
     ) -> Result<ExpressionOrImport, ()> {
         match self.items.get(name) {
-            Some((_, Item::Function(candidates))) => {
+            Some((_, Item::Constant(candidate))) => {
                 if reference {
                     todo!();
                 }
                 let function = ir::Expression::FunctionUse(function_uses.len());
                 function_uses.push(ir::FunctionUse {
-                    candidates: candidates.clone(),
+                    candidates: vec![candidate.clone()],
                     used_by: None,
                 });
                 Ok(ExpressionOrImport::Expression(function))
@@ -854,7 +982,7 @@ impl Context {
                     let function_use_index = function_uses.len();
                     let call_index = calls.len();
                     function_uses.push(ir::FunctionUse {
-                        candidates: vec![ir::Function::Dereference],
+                        candidates: vec![ir::Constant::Dereference],
                         used_by: Some(call_index),
                     });
                     calls.push(ir::Call {
@@ -868,34 +996,6 @@ impl Context {
                 }
             }
             _ => todo!(),
-        }
-    }
-
-    fn translate_ty(
-        &self,
-        ast::TermWithPos {
-            term: ast_term,
-            pos,
-        }: ast::TermWithPos,
-        exports: &[Context],
-        logger: &mut log::Logger,
-    ) -> Result<ir::Constant, ()> {
-        match ast_term {
-            ast::Term::IntegerTy => return Ok(ir::Constant::Integer),
-            ast::Term::FloatTy => return Ok(ir::Constant::Float),
-            ast::Term::Identifier(name) => self.get_ty(&name, logger),
-            ast::Term::FieldByName { term_left, name } => {
-                let index = self.translate_import(*term_left, exports, logger)?;
-                exports[index].get_ty(&name, logger)
-            }
-            _ => todo!(),
-        }
-    }
-
-    fn get_ty(&self, name: &str, logger: &mut log::Logger) -> Result<ir::Constant, ()> {
-        match self.items.get(name) {
-            Some((_, Item::Constant(ty))) => Ok(ty.clone()),
-            _ => Err(()),
         }
     }
 
@@ -936,6 +1036,8 @@ impl Context {
         logger: &mut log::Logger,
     ) -> Result<ir::Constant, ()> {
         match ast_term {
+            ast::Term::IntegerTy => return Ok(ir::Constant::Integer),
+            ast::Term::FloatTy => return Ok(ir::Constant::Float),
             ast::Term::Ty => Ok(ir::Constant::Ty),
             ast::Term::Identifier(name) => self.get_constant(&name, depth, logger),
             ast::Term::TypeParameters {
@@ -980,7 +1082,7 @@ impl Context {
         }
     }
 
-    fn get_instances(&self, class: &Class) -> &[ir::Function] {
+    fn get_instances(&self, class: &Class) -> &[ir::Constant] {
         match *class {
             Class::Add => &self.add_instances,
             Class::Eq => &self.eq_instances,

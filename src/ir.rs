@@ -27,15 +27,9 @@ use serde::Serialize;
 pub struct Program {
     pub structure_tys: Vec<Constant>,
     pub structure_definitions: Vec<StructureDefinition>,
-    pub function_tys: Vec<FunctionTy>,
+    pub function_tys: Vec<Constant>,
     pub function_definitions: Vec<FunctionDefinition>,
     pub num_global_variables: usize,
-}
-
-#[derive(Serialize)]
-pub struct Structure {
-    pub num_ty_parameters: usize,
-    pub field_tys: Vec<Ty>,
 }
 
 #[derive(PartialEq, Eq, Clone, Serialize)]
@@ -46,7 +40,13 @@ pub enum Constant {
     Structure(usize),
     Parameter(usize, usize),
     Product(Vec<Constant>, Box<Constant>),
+    FunctionTy,
     Application(Box<Constant>, Vec<Constant>),
+    Identity,
+    Delete,
+    Dereference,
+    ConcatenateString,
+    Function(usize),
 }
 
 #[derive(Serialize)]
@@ -54,94 +54,10 @@ pub struct StructureDefinition {
     pub field_tys: Vec<Constant>,
 }
 
-#[derive(Clone, Serialize)]
-pub struct FunctionTy {
-    pub num_ty_parameters: usize,
-    pub parameter_tys: Vec<Ty>,
-    pub return_ty: Ty,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-pub enum Function {
-    Method(Class, usize),
-    Dereference,
-    Identity,
-    Assign,
-    Delete,
-    ConcatenateString,
-    Print,
-    UserDefined(usize),
-    Field {
-        structure_index: usize,
-        field_index: usize,
-    },
-    FieldRef {
-        structure_index: usize,
-        field_index: usize,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash)]
-pub enum Class {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Rem,
-    RightShift,
-    LeftShift,
-    BitwiseAnd,
-    BitwiseOr,
-    BitwiseXor,
-    Eq,
-    Cmp,
-    ToString,
-    UserDefined(usize),
-}
-
 #[derive(Serialize)]
 pub struct FunctionUse {
-    pub candidates: Vec<Function>,
+    pub candidates: Vec<Constant>,
     pub used_by: Option<usize>,
-}
-
-#[derive(Clone, Serialize)]
-pub enum Ty {
-    Constructor(TyConstructor),
-    Parameter(usize),
-    Application {
-        constructor: Box<Ty>,
-        arguments: Vec<Ty>,
-    },
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Serialize)]
-pub enum TyConstructor {
-    Integer,
-    Float,
-    String,
-    Reference,
-    Tuple,
-    Function,
-    Structure(usize),
-    AddInteger,
-    AddFloat,
-}
-
-#[derive(Serialize)]
-pub enum TyKind {
-    Ty,
-    Abstraction {
-        parameters: TyListKind,
-        ret: Box<TyKind>,
-    },
-}
-
-#[derive(Serialize)]
-pub enum TyListKind {
-    Nil,
-    Cons(Box<TyKind>, Box<TyListKind>),
-    Rest,
 }
 
 #[derive(Serialize)]

@@ -228,7 +228,6 @@ impl Parser<'_, '_> {
                 Token::Identifier(name) => {
                     let name = std::mem::take(name);
                     let pos = self.current_pos();
-                    self.consume_token()?;
                     Some((name, pos))
                 }
                 _ => {
@@ -242,91 +241,7 @@ impl Parser<'_, '_> {
             None
         };
 
-        // Generic parameters list can follow.
-        let ty_parameters = if self.current.is_on_new_line {
-            None
-        } else if let Some(Token::OpeningBracket) = self.current.token {
-            let opening_bracket_pos = self.current_pos();
-            self.consume_token()?;
-
-            let (ty_parameters, _) = self.parse_list_elements_and_trailing_comma()?;
-            match self.current.token {
-                Some(Token::ClosingBracket) => self.consume_token()?,
-                Some(_) => {
-                    return Err(ParseError::UnexpectedTokenInBrackets {
-                        unexpected_token_pos: self.current_pos(),
-                        opening_bracket_pos,
-                    });
-                }
-                None => {
-                    return Err(ParseError::UnclosedBracket {
-                        opening_bracket_pos,
-                    });
-                }
-            }
-            Some(ty_parameters)
-        } else {
-            None
-        };
-
-        // parameters list follows.
-        let parameters = if self.current.is_on_new_line {
-            None
-        } else if let Some(Token::OpeningParenthesis) = self.current.token {
-            let opening_parenthesis_pos = self.current_pos();
-            self.consume_token()?;
-
-            let mut parameters = Vec::new();
-            loop {
-                let parameter = self.parse_assign(true)?;
-                match self.current.token {
-                    Some(Token::ClosingParenthesis) => {
-                        self.consume_token()?;
-                        if let Some(element) = parameter {
-                            parameters.push(ast::ListElement::NonEmpty(element));
-                        }
-                        break;
-                    }
-                    Some(Token::Comma) => {
-                        let comma_pos = self.current_pos();
-                        self.consume_token()?;
-                        if let Some(element) = parameter {
-                            parameters.push(ast::ListElement::NonEmpty(element));
-                        } else {
-                            parameters.push(ast::ListElement::Empty { comma_pos })
-                        }
-                    }
-                    Some(_) => {
-                        return Err(ParseError::UnexpectedTokenInParentheses {
-                            unexpected_token_pos: self.current_pos(),
-                            opening_parenthesis_pos,
-                        });
-                    }
-                    None => {
-                        return Err(ParseError::UnclosedParenthesis {
-                            opening_parenthesis_pos,
-                        });
-                    }
-                }
-            }
-            Some(parameters)
-        } else {
-            None
-        };
-        let parameters = parameters.ok_or_else(|| self.range_from(keyword_pos.start));
-
-        // The return type can be written after `:`.
-        let return_ty = if let Some(Token::Colon) = self.current.token {
-            let arrow_pos = self.current_pos();
-            self.consume_token()?;
-            Some(ast::ReturnTy {
-                colon_pos: arrow_pos,
-                ty: self.parse_disjunction(false)?,
-            })
-        } else {
-            None
-        };
-
+        let signature = self.parse_factor(false)?;
         let extra_tokens_pos = self.consume_line()?;
 
         // The function body follows.
@@ -347,9 +262,7 @@ impl Parser<'_, '_> {
                 is_method,
             },
             ast::FunctionDefinition {
-                parameters,
-                ty_parameters,
-                return_ty,
+                signature,
                 body,
                 extra_tokens_pos,
             },
@@ -879,6 +792,9 @@ impl Parser<'_, '_> {
         } else if let Token::KeywordFloat = first_token {
             self.consume_token()?;
             ast::Term::FloatTy
+        } else if let Token::KeywordType = first_token {
+            self.consume_token()?;
+            ast::Term::Ty
         } else if let Token::OpeningParenthesis = first_token {
             let opening_parenthesis_pos = self.current_pos();
             self.consume_token()?;

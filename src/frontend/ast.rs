@@ -156,18 +156,7 @@ pub struct StructureDefinition {
  * included here.
  */
 pub struct FunctionDefinition {
-    /**
-     * List of type parameters.
-     */
-    pub ty_parameters: Option<Vec<ListElement>>,
-    /**
-     * List of parameters.
-     */
-    pub parameters: Result<Vec<ListElement>, Pos>,
-    /**
-     * Return type of the function.
-     */
-    pub return_ty: Option<ReturnTy>,
+    pub signature: Option<TermWithPos>,
     /**
      * [`Pos`] of extra tokens if any appear on the same line after the
      * keyword `func`, optional function name, optional type parameter list,
