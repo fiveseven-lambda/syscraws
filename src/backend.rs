@@ -31,22 +31,20 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::rc::Rc;
 
-/*
-fn translate_ty(ir_ty: &ir::Ty, ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
-    match ir_ty {
-        ir::Ty::Constructor(constructor) => Rc::new(ty::Ty::Constructor(constructor.clone())),
-        ir::Ty::Parameter(index) => ty_parameters[*index].clone(),
-        ir::Ty::Application {
-            constructor,
-            arguments,
-        } => Rc::new(ty::Ty::Application {
+fn translate_ty(ir_ty: &ir::Constant, ty_parameters: &mut Vec<Vec<Rc<ty::Ty>>>) -> Rc<ty::Ty> {
+    match *ir_ty {
+        ir::Constant::Integer => Rc::new(ty::Ty::Constructor(ty::Constructor::Integer)),
+        ir::Constant::Float => Rc::new(ty::Ty::Constructor(ty::Constructor::Float)),
+        ir::Constant::Parameter(i, j) => ty_parameters[i][j].clone(),
+        ir::Constant::Application(ref constructor, ref arguments) => Rc::new(ty::Ty::Application {
             constructor: translate_ty(constructor, ty_parameters),
             arguments: translate_tys(arguments, ty_parameters),
         }),
+        _ => todo!(),
     }
 }
 
-fn translate_tys(ir_tys: &[ir::Ty], ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> {
+fn translate_tys(ir_tys: &[ir::Constant], ty_parameters: &mut Vec<Vec<Rc<ty::Ty>>>) -> Rc<ty::Ty> {
     return ir_tys.iter().rfold(Rc::new(ty::Ty::Nil), |tail, ir_head| {
         Rc::new(ty::Ty::Cons {
             head: translate_ty(ir_head, ty_parameters),
@@ -54,33 +52,12 @@ fn translate_tys(ir_tys: &[ir::Ty], ty_parameters: &[Rc<ty::Ty>]) -> Rc<ty::Ty> 
         })
     });
 }
-*/
 
 pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8, ()> {
-    /*
     let global_variables_ty: Vec<_> = (0..ir_program.num_global_variables)
         .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
         .collect();
     let mut function_definitions = Vec::new();
-    let instances = HashMap::from([(
-        ir::Class::Add,
-        [
-            (
-                ir::Ty::Constructor(ir::TyConstructor::AddInteger),
-                vec![
-                    ir::Ty::Constructor(ir::TyConstructor::Integer),
-                    ir::Ty::Constructor(ir::TyConstructor::Integer),
-                ],
-            ),
-            (
-                ir::Ty::Constructor(ir::TyConstructor::AddFloat),
-                vec![
-                    ir::Ty::Constructor(ir::TyConstructor::Float),
-                    ir::Ty::Constructor(ir::TyConstructor::Float),
-                ],
-            ),
-        ],
-    )]);
     for function_definition in &ir_program.function_definitions {
         let local_variables_ty: Vec<_> = (0..function_definition.num_local_variables)
             .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
@@ -105,37 +82,29 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                     let candidate_ty = get_function_ty(&candidate, &ir_program.function_tys);
                     function_uses[function_use_index] =
                         FunctionUse::Resolved(candidate.clone(), candidate_ty.clone());
-                    if let ir::Function::Method(class, method_index) = &candidate {
-                        let instance = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
-                        let ty_arguments =
-                            vec![Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))))];
-                        let relations = vec![(instance, class.clone(), ty_arguments)];
-                        search_instance(&relations);
+                    let mut unifier = unify::Unifier::new();
+                    let mut updated_call_indices = Vec::new();
+                    if translate_calls(
+                        function_definition.function_uses[function_use_index].used_by,
+                        &mut unifier,
+                        &mut updated_call_indices,
+                        &function_definition.calls,
+                        &function_uses,
+                        &mut calls,
+                        &local_variables_ty,
+                        &global_variables_ty,
+                        &ir_program.function_tys,
+                    ) {
+                        substitutions.extend(unifier.rollback());
+                        for call_index in updated_call_indices.into_iter().rev() {
+                            let call = std::mem::take(&mut calls[call_index]);
+                            updated_calls.push((call_index, call));
+                        }
+                        new_candidates.push((candidate, candidate_ty));
                     } else {
-                        let mut unifier = unify::Unifier::new();
-                        let mut updated_call_indices = Vec::new();
-                        if translate_calls(
-                            function_definition.function_uses[function_use_index].used_by,
-                            &mut unifier,
-                            &mut updated_call_indices,
-                            &function_definition.calls,
-                            &function_uses,
-                            &mut calls,
-                            &local_variables_ty,
-                            &global_variables_ty,
-                            &ir_program.function_tys,
-                        ) {
-                            substitutions.extend(unifier.rollback());
-                            for call_index in updated_call_indices.into_iter().rev() {
-                                let call = std::mem::take(&mut calls[call_index]);
-                                updated_calls.push((call_index, call));
-                            }
-                            new_candidates.push((candidate, candidate_ty));
-                        } else {
-                            for _ in unifier.rollback() {}
-                            for call_index in updated_call_indices.into_iter().rev() {
-                                calls[call_index] = None;
-                            }
+                        for _ in unifier.rollback() {}
+                        for call_index in updated_call_indices.into_iter().rev() {
+                            calls[call_index] = None;
                         }
                     }
                 }
@@ -165,6 +134,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
         }
         function_definitions.push((function_uses, calls));
     }
+    /*
     unsafe { ffi::initialize_jit() };
     let num_definitions = ir_program.function_definitions.len();
     for (function_index, (ir_function_definition, function_definition)) in ir_program
@@ -210,6 +180,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
 
 /*
 fn search_instance(relations: &[(Rc<ty::Ty>, ir::Class, Vec<Rc<ty::Ty>>)]) {}
+*/
 
 fn get_expression_ty(
     expression: &ir::Expression,
@@ -217,14 +188,12 @@ fn get_expression_ty(
     calls: &[Option<Call>],
     local_variables_ty: &[Rc<ty::Ty>],
     global_variables_ty: &[Rc<ty::Ty>],
-    ir_function_tys: &[ir::FunctionTy],
+    ir_function_tys: &[ir::Constant],
 ) -> Option<Rc<ty::Ty>> {
     match *expression {
-        ir::Expression::Integer(_) => {
-            Some(Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer)))
-        }
-        ir::Expression::Float(_) => Some(Rc::new(ty::Ty::Constructor(ir::TyConstructor::Integer))),
-        ir::Expression::String(_) => Some(Rc::new(ty::Ty::Constructor(ir::TyConstructor::String))),
+        ir::Expression::Integer(_) => Some(Rc::new(ty::Ty::Constructor(ty::Constructor::Integer))),
+        ir::Expression::Float(_) => Some(Rc::new(ty::Ty::Constructor(ty::Constructor::Float))),
+        ir::Expression::String(_) => Some(Rc::new(ty::Ty::Constructor(ty::Constructor::String))),
         ir::Expression::FunctionUse(argument_function_use_index) => {
             match &function_uses[argument_function_use_index] {
                 FunctionUse::Resolved(_, ty) => Some(ty.clone()),
@@ -244,8 +213,8 @@ fn get_expression_ty(
 
 #[derive(serde::Serialize)]
 enum FunctionUse {
-    Resolved(ir::Function, Rc<ty::Ty>),
-    Unresolved(Vec<ir::Function>),
+    Resolved(ir::Constant, Rc<ty::Ty>),
+    Unresolved(Vec<ir::Constant>),
 }
 
 #[derive(serde::Serialize)]
@@ -296,7 +265,7 @@ fn translate_calls(
     calls: &mut [Option<Call>],
     local_variables_ty: &[Rc<ty::Ty>],
     global_variables_ty: &[Rc<ty::Ty>],
-    ir_function_tys: &[ir::FunctionTy],
+    ir_function_tys: &[ir::Constant],
 ) -> bool {
     let Some(call_index) = call_index else {
         return true;
@@ -337,7 +306,7 @@ fn translate_calls(
     if !unifications.unify(
         &function_ty,
         &Rc::new(ty::Ty::Application {
-            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+            constructor: Rc::new(ty::Ty::Constructor(ty::Constructor::Function)),
             arguments: Rc::new(ty::Ty::Cons {
                 head: return_ty.clone(),
                 tail: parameter_tys.iter().rev().fold(
@@ -402,7 +371,7 @@ fn translate_calls(
                 parameter_tys[i].clone(),
                 |ty, extra_call| {
                     Rc::new(ty::Ty::Application {
-                        constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+                        constructor: Rc::new(ty::Ty::Constructor(ty::Constructor::Function)),
                         arguments: Rc::new(ty::Ty::Cons {
                             head: ty,
                             tail: extra_call.clone(),
@@ -414,7 +383,7 @@ fn translate_calls(
     }
     let call_ty = extra_calls.iter().fold(return_ty, |ty, extra_call| {
         Rc::new(ty::Ty::Application {
-            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
+            constructor: Rc::new(ty::Ty::Constructor(ty::Constructor::Function)),
             arguments: Rc::new(ty::Ty::Cons {
                 head: ty,
                 tail: extra_call.clone(),
@@ -439,41 +408,9 @@ fn translate_calls(
     )
 }
 
-fn get_function_ty(function: &ir::Function, ir_function_tys: &[ir::FunctionTy]) -> Rc<ty::Ty> {
+fn get_function_ty(function: &ir::Constant, ir_function_tys: &[ir::Constant]) -> Rc<ty::Ty> {
     match *function {
-        ir::Function::UserDefined(function_index) => {
-            let ir_function_ty = &ir_function_tys[function_index];
-            let ty_parameters: Vec<_> = (0..ir_function_ty.num_ty_parameters)
-                .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
-                .collect();
-            Rc::new(ty::Ty::Application {
-                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-                arguments: Rc::new(ty::Ty::Cons {
-                    head: translate_ty(&ir_function_ty.return_ty, &ty_parameters),
-                    tail: translate_tys(&ir_function_ty.parameter_tys, &ty_parameters),
-                }),
-            })
-        }
-        ir::Function::Dereference => {
-            let target_ty = Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0))));
-            Rc::new(ty::Ty::Application {
-                constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Function)),
-                arguments: Rc::new(ty::Ty::Cons {
-                    head: target_ty.clone(),
-                    tail: Rc::new(ty::Ty::Cons {
-                        head: Rc::new(ty::Ty::Application {
-                            constructor: Rc::new(ty::Ty::Constructor(ir::TyConstructor::Reference)),
-                            arguments: Rc::new(ty::Ty::Cons {
-                                head: target_ty.clone(),
-                                tail: Rc::new(ty::Ty::Nil),
-                            }),
-                        }),
-                        tail: Rc::new(ty::Ty::Nil),
-                    }),
-                }),
-            })
-        }
+        ir::Constant::Function(index) => translate_ty(&ir_function_tys[index], &mut Vec::new()),
         _ => todo!(),
     }
 }
-*/

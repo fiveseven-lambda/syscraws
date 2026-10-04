@@ -21,10 +21,8 @@ use std::cell::RefCell;
 use std::ptr;
 use std::rc::Rc;
 
-use crate::ir;
-
 pub enum Ty {
-    Constructor(ir::Constant),
+    Constructor(Constructor),
     Parameter(usize),
     Application {
         constructor: Rc<Ty>,
@@ -36,6 +34,14 @@ pub enum Ty {
         tail: Rc<Ty>,
     },
     Var(RefCell<Var>),
+}
+
+#[derive(PartialEq, Eq, serde::Serialize)]
+pub enum Constructor {
+    Integer,
+    Float,
+    String,
+    Function,
 }
 
 impl Serialize for Ty {
@@ -110,7 +116,7 @@ impl Ty {
                 constructor,
                 arguments,
             } => match constructor.as_ref() {
-                Ty::Constructor(ir::Constant::FunctionTy) => match arguments.as_ref() {
+                Ty::Constructor(Constructor::Function) => match arguments.as_ref() {
                     Ty::Cons { head, tail: _ } => {
                         let (ty, depth) = head.extract_function_ty();
                         (ty, depth + 1)
