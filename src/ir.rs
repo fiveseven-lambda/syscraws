@@ -29,7 +29,8 @@ pub struct Program {
     pub structure_definitions: Vec<StructureDefinition>,
     pub function_tys: Vec<Constant>,
     pub function_definitions: Vec<FunctionDefinition>,
-    pub num_global_variables: usize,
+    pub global_variable_tys: Vec<Constant>,
+    pub num_ty_variables: usize,
 }
 
 #[derive(PartialEq, Eq, Clone, Serialize)]
@@ -39,11 +40,12 @@ pub enum Constant {
     Ty,
     Structure(usize),
     Parameter(usize, usize),
+    Variable(usize),
     Product(Vec<Constant>, Box<Constant>),
     FunctionTy,
     Application(Box<Constant>, Vec<Constant>),
     Identity,
-    Delete,
+    DeleteInteger,
     Dereference,
     ConcatenateString,
     Function(usize),
@@ -62,7 +64,8 @@ pub struct FunctionUse {
 
 #[derive(Serialize)]
 pub struct FunctionDefinition {
-    pub num_local_variables: usize,
+    pub local_variable_tys: Vec<Constant>,
+    pub num_ty_variables: usize,
     pub function_uses: Vec<FunctionUse>,
     pub calls: Vec<Call>,
     pub blocks: Vec<Block>,

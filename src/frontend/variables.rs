@@ -42,15 +42,14 @@ pub struct Variables {
      * The storage class of the variables (global or local).
      */
     storage: ir::Storage,
-    /**
-     * The next available index for uniquely identifying a new variable.
-     */
-    num: usize,
-    /**
-     * A list of variable names and their assigned unique indices,
-     * representing variables that are currently alive.
-     */
-    name_and_indices: Vec<(String, usize)>,
+    variable_tys: Vec<ir::Constant>,
+    visible_variables: Vec<Variable>,
+}
+
+struct Variable {
+    name: String,
+    index: usize,
+    destructors: Vec<ir::Constant>,
 }
 
 impl Variables {
@@ -60,8 +59,8 @@ impl Variables {
     pub fn new(storage: ir::Storage) -> Variables {
         Variables {
             storage,
-            num: 0,
-            name_and_indices: Vec::new(),
+            variable_tys: Vec::new(),
+            visible_variables: Vec::new(),
         }
     }
     /**
@@ -70,8 +69,8 @@ impl Variables {
      * This count increases monotonically and is never decremented,
      * ensuring that each variable receives a unique index.
      */
-    pub fn num_total(self) -> usize {
-        self.num
+    pub fn tys(self) -> Vec<ir::Constant> {
+        self.variable_tys
     }
     /**
      * Returns the number of currently alive variables.
@@ -81,16 +80,34 @@ impl Variables {
      * when the block ends to clean up variables declared inside the block.
      */
     pub fn num_alive(&self) -> usize {
-        self.name_and_indices.len()
+        self.visible_variables.len()
     }
     /**
      * Adds a new variable with the given name.
      */
-    pub fn add(&mut self, name: String) -> Item {
-        self.name_and_indices.push((name, self.num));
-        let ret = Item::Variable(self.storage, self.num);
-        self.num += 1;
-        ret
+    pub fn add(
+        &mut self,
+        name: String,
+        ty: ir::Constant,
+        context: &Context,
+        exports: &[Context],
+    ) -> Item {
+        let index = self.variable_tys.len();
+        self.variable_tys.push(ty);
+        let destructors = context
+            .submodules
+            .iter()
+            .map(|&module_index| &exports[module_index].delete_instances)
+            .flatten()
+            .chain(&context.delete_instances)
+            .cloned()
+            .collect();
+        self.visible_variables.push(Variable {
+            name,
+            index,
+            destructors,
+        });
+        Item::Variable(self.storage, index)
     }
     /**
      * Frees and removes all variables declared after a given base index.
@@ -106,7 +123,7 @@ impl Variables {
         context: &mut Context,
     ) {
         self.free(len, function_uses, calls);
-        for (name, index) in self.name_and_indices.split_off(len) {
+        for Variable { name, index, .. } in self.visible_variables.split_off(len) {
             match context.items.remove(&name).unwrap() {
                 (_, Item::Variable(s, i)) => {
                     assert_eq!(s, self.storage);
@@ -129,12 +146,17 @@ impl Variables {
         function_uses: &mut Vec<ir::FunctionUse>,
         calls: &mut Vec<ir::Call>,
     ) {
-        for &(_, index) in self.name_and_indices[len..].iter().rev() {
+        for &Variable {
+            index,
+            destructors: ref deleter,
+            ..
+        } in self.visible_variables[len..].iter().rev()
+        {
             let expr = ir::Expression::Variable(self.storage, index);
             let function_use_index = function_uses.len();
             let call_index = calls.len();
             function_uses.push(ir::FunctionUse {
-                candidates: vec![ir::Constant::Delete],
+                candidates: deleter.clone(),
                 used_by: Some(call_index),
             });
             calls.push(ir::Call {

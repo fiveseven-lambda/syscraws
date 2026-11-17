@@ -58,13 +58,21 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
             structure_definitions: Vec::new(),
             function_tys: Vec::new(),
             function_definitions: Vec::new(),
-            num_global_variables: 0,
+            global_variable_tys: Vec::new(),
+            num_ty_variables: 0,
         },
         global_function_uses: Vec::new(),
         global_calls: Vec::new(),
         global_blocks: Vec::new(),
         global_variables: Variables::new(ir::Storage::Global),
-        exports: Vec::new(),
+        exports: vec![Context {
+            items: HashMap::new(),
+            submodules: Vec::new(),
+            eq_instances: vec![],
+            add_instances: vec![],
+            delete_instances: vec![ir::Constant::DeleteInteger],
+            instances: Vec::new(),
+        }],
         logger,
         file_indices: HashMap::new(),
         import_chain: HashSet::from([root_file_path.clone()]),
@@ -95,9 +103,10 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
             function_uses: reader.global_function_uses,
             calls: reader.global_calls,
             blocks: reader.global_blocks,
-            num_local_variables: 0,
+            local_variable_tys: Vec::new(),
+            num_ty_variables: 0,
         });
-    reader.ir_program.num_global_variables = reader.global_variables.num_total();
+    reader.ir_program.global_variable_tys = reader.global_variables.tys();
     Ok(reader.ir_program)
 }
 
@@ -216,9 +225,10 @@ impl Reader<'_> {
         };
         let mut context = Context {
             items: HashMap::new(),
-            submodules: Vec::new(),
+            submodules: vec![0],
             eq_instances: Vec::new(),
             add_instances: Vec::new(),
+            delete_instances: Vec::new(),
             instances: Vec::new(),
         };
         for ast::WithExtraTokens {
@@ -242,6 +252,7 @@ impl Reader<'_> {
                     }
                     std::collections::hash_map::Entry::Vacant(entry) => {
                         entry.insert((Some(pos), Item::Import(index)));
+                        context.submodules.extend(&self.exports[index].submodules);
                         context.submodules.push(index);
                     }
                 }
@@ -301,6 +312,7 @@ impl Reader<'_> {
                         &mut self.global_calls,
                         &mut self.global_blocks,
                         &mut self.global_variables,
+                        &mut self.ir_program.num_ty_variables,
                         0,
                         None,
                         None,

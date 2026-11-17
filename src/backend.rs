@@ -54,12 +54,12 @@ fn translate_tys(ir_tys: &[ir::Constant], ty_parameters: &mut Vec<Vec<Rc<ty::Ty>
 }
 
 pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8, ()> {
-    let global_variables_ty: Vec<_> = (0..ir_program.num_global_variables)
+    let global_variables_ty: Vec<_> = (0..ir_program.num_ty_variables)
         .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
         .collect();
     let mut function_definitions = Vec::new();
     for function_definition in &ir_program.function_definitions {
-        let local_variables_ty: Vec<_> = (0..function_definition.num_local_variables)
+        let local_variables_ty: Vec<_> = (0..function_definition.num_ty_variables)
             .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
             .collect();
         let mut function_uses: Vec<FunctionUse> = function_definition

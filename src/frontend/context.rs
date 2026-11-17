@@ -39,6 +39,7 @@ pub struct Context {
     pub submodules: Vec<usize>,
     pub eq_instances: Vec<ir::Constant>,
     pub add_instances: Vec<ir::Constant>,
+    pub delete_instances: Vec<ir::Constant>,
     pub instances: Vec<Vec<ir::Constant>>,
 }
 
@@ -263,24 +264,25 @@ impl Context {
             let ast::Term::Identifier(parameter_name) = ast_parameter_name.term else {
                 todo!();
             };
-            match self.items.entry(parameter_name.clone()) {
+            let parameter_ty = self
+                .translate_constant(*ast_parameter_ty, depth, exports, logger)
+                .unwrap();
+            let item =
+                local_variables.add(parameter_name.clone(), parameter_ty.clone(), self, exports);
+            match self.items.entry(parameter_name) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
                     if let (Some(pos), _) = entry.get() {
                         logger.duplicate_definition(ast_parameter.pos, pos.clone());
                     } else {
-                        let item = local_variables.add(parameter_name);
                         entry.insert((Some(ast_parameter_name.pos), item));
                     }
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    let item = local_variables.add(parameter_name);
                     entry.insert((Some(ast_parameter_name.pos), item));
                 }
             }
-            let parameter_ty = self.translate_constant(*ast_parameter_ty, depth, exports, logger);
             if logger.num_errors == 0
                 && let Ok(parameter_tys) = &mut parameter_tys
-                && let Ok(parameter_ty) = parameter_ty
             {
                 parameter_tys.push(parameter_ty);
             }
@@ -290,6 +292,7 @@ impl Context {
         if let Some(extra_tokens_pos) = extra_tokens_pos {
             logger.extra_tokens(extra_tokens_pos);
         }
+        let mut num_ty_variables = 0;
         let mut function_uses = Vec::new();
         let mut calls = Vec::new();
         let mut blocks = Vec::new();
@@ -307,6 +310,7 @@ impl Context {
                 &mut calls,
                 &mut blocks,
                 &mut local_variables,
+                &mut num_ty_variables,
                 0,
                 None,
                 None,
@@ -323,7 +327,8 @@ impl Context {
                 ir::Constant::Product(tys, Box::new(ty))
             }),
             ir::FunctionDefinition {
-                num_local_variables: local_variables.num_total(),
+                local_variable_tys: local_variables.tys(),
+                num_ty_variables,
                 function_uses,
                 calls,
                 blocks,
@@ -338,6 +343,7 @@ impl Context {
         calls: &mut Vec<ir::Call>,
         blocks: &mut Vec<ir::Block>,
         variables: &mut Variables,
+        num_ty_variables: &mut usize,
         num_outer_variables: usize,
         break_index: Option<usize>,
         continue_index: Option<usize>,
@@ -351,6 +357,7 @@ impl Context {
                     false,
                     function_uses,
                     calls,
+                    num_ty_variables,
                     exports,
                     logger,
                 );
@@ -364,20 +371,28 @@ impl Context {
                     return;
                 };
                 match ast_name.term {
-                    ast::Term::Identifier(name) => match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                            if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(ast_name.pos, pos.clone());
-                            } else {
-                                let item = variables.add(name);
+                    ast::Term::Identifier(name) => {
+                        let index = *num_ty_variables;
+                        *num_ty_variables += 1;
+                        let item = variables.add(
+                            name.clone(),
+                            ir::Constant::Variable(index),
+                            self,
+                            exports,
+                        );
+                        match self.items.entry(name) {
+                            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                if let (Some(pos), _) = entry.get() {
+                                    logger.duplicate_definition(ast_name.pos, pos.clone());
+                                } else {
+                                    entry.insert((Some(ast_name.pos), item));
+                                }
+                            }
+                            std::collections::hash_map::Entry::Vacant(entry) => {
                                 entry.insert((Some(ast_name.pos), item));
                             }
                         }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            let item = variables.add(name);
-                            entry.insert((Some(ast_name.pos), item));
-                        }
-                    },
+                    }
                     _ => {
                         logger.invalid_variable_name(ast_name.pos);
                         return;
@@ -401,6 +416,7 @@ impl Context {
                         false,
                         function_uses,
                         calls,
+                        num_ty_variables,
                         exports,
                         logger,
                     )
@@ -437,6 +453,7 @@ impl Context {
                         calls,
                         blocks,
                         variables,
+                        num_ty_variables,
                         num_outer_variables,
                         break_index,
                         continue_index,
@@ -467,6 +484,7 @@ impl Context {
                             calls,
                             blocks,
                             variables,
+                            num_ty_variables,
                             num_outer_variables,
                             break_index,
                             continue_index,
@@ -503,6 +521,7 @@ impl Context {
                         false,
                         function_uses,
                         calls,
+                        num_ty_variables,
                         exports,
                         logger,
                     )
@@ -537,6 +556,7 @@ impl Context {
                         calls,
                         blocks,
                         variables,
+                        num_ty_variables,
                         num_variables,
                         Some(end_index.get()),
                         Some(condition_index.get()),
@@ -573,6 +593,7 @@ impl Context {
                             false,
                             function_uses,
                             calls,
+                            num_ty_variables,
                             exports,
                             logger,
                         ) {
@@ -600,6 +621,7 @@ impl Context {
         reference: bool,
         function_uses: &mut Vec<ir::FunctionUse>,
         calls: &mut Vec<ir::Call>,
+        num_ty_variables: &mut usize,
         exports: &[Context],
         logger: &mut log::Logger,
     ) -> Result<ExpressionOrImport, ()> {
@@ -642,6 +664,7 @@ impl Context {
                                         false,
                                         function_uses,
                                         calls,
+                                        num_ty_variables,
                                         exports,
                                         logger,
                                     )
@@ -687,9 +710,14 @@ impl Context {
                 ))
             }
             ast::Term::Identity => {
+                let ty_variable_index = *num_ty_variables;
+                *num_ty_variables += 1;
                 let function = ir::Expression::FunctionUse(function_uses.len());
                 function_uses.push(ir::FunctionUse {
-                    candidates: vec![ir::Constant::Identity],
+                    candidates: vec![ir::Constant::Application(
+                        Box::new(ir::Constant::Identity),
+                        vec![ir::Constant::Variable(ty_variable_index)],
+                    )],
                     used_by: None,
                 });
                 Ok(ExpressionOrImport::Expression(function))
@@ -703,6 +731,7 @@ impl Context {
                     reference,
                     function_uses,
                     calls,
+                    num_ty_variables,
                     exports,
                     logger,
                 )? {
@@ -727,6 +756,7 @@ impl Context {
                     false,
                     function_uses,
                     calls,
+                    num_ty_variables,
                     exports,
                     logger,
                 );
@@ -754,6 +784,7 @@ impl Context {
                         false,
                         function_uses,
                         calls,
+                        num_ty_variables,
                         exports,
                         logger,
                     ) else {
@@ -808,6 +839,7 @@ impl Context {
                             true,
                             function_uses,
                             calls,
+                            num_ty_variables,
                             exports,
                             logger,
                         )
@@ -832,6 +864,7 @@ impl Context {
                             false,
                             function_uses,
                             calls,
+                            num_ty_variables,
                             exports,
                             logger,
                         )
@@ -884,6 +917,7 @@ impl Context {
                             true,
                             function_uses,
                             calls,
+                            num_ty_variables,
                             exports,
                             logger,
                         )
@@ -908,6 +942,7 @@ impl Context {
                             false,
                             function_uses,
                             calls,
+                            num_ty_variables,
                             exports,
                             logger,
                         )
@@ -927,13 +962,10 @@ impl Context {
                 let candidates: Vec<_> = self
                     .submodules
                     .iter()
-                    .map(|&module_index| {
-                        exports[module_index]
-                            .get_instances(&operator_class)
-                            .iter()
-                            .cloned()
-                    })
+                    .map(|&module_index| exports[module_index].get_instances(&operator_class))
                     .flatten()
+                    .chain(self.get_instances(&operator_class))
+                    .cloned()
                     .collect();
                 let function_use_index = function_uses.len();
                 let call_index = calls.len();
