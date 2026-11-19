@@ -284,7 +284,8 @@ fn parse_addition() {
     assert_eq!(factor.pos, pos!(0:0-0:9 in 0));
     let ast::Term::BinaryOperation {
         left_operand,
-        operator_name,
+        operator_class,
+        operator_index,
         operator_pos,
         right_operand,
     } = factor.term
@@ -297,7 +298,8 @@ fn parse_addition() {
         ast::Term::Identifier(String::from("foo"))
     );
     assert_eq!(left_operand.pos, pos!(0:0-0:3 in 0));
-    assert_eq!(operator_name, "add");
+    assert_eq!(operator_class, ir::Class::Add);
+    assert_eq!(operator_index, 0);
     assert_eq!(operator_pos, pos!(0:4-0:5 in 0));
     let right_operand = right_operand.unwrap();
     assert_eq!(

@@ -26,6 +26,7 @@ mod token;
 use std::cell::Cell;
 
 use super::CharsPeekable;
+use super::Class;
 use super::ast;
 use crate::log::Index;
 use crate::log::ParseError;
@@ -162,7 +163,6 @@ impl Parser<'_, '_> {
                 Token::Identifier(name) => {
                     let name = std::mem::take(name);
                     let pos = self.current_pos();
-                    self.consume_token()?;
                     Some((name, pos))
                 }
                 _ => {
@@ -176,32 +176,7 @@ impl Parser<'_, '_> {
             None
         };
 
-        let ty_parameters = if self.current.is_on_new_line {
-            None
-        } else if let Some(Token::OpeningBracket) = self.current.token {
-            let opening_bracket_pos = self.current_pos();
-            self.consume_token()?;
-
-            let (ty_parameters, _) = self.parse_list_elements_and_trailing_comma()?;
-            match self.current.token {
-                Some(Token::ClosingBracket) => self.consume_token()?,
-                Some(_) => {
-                    return Err(ParseError::UnexpectedTokenInBrackets {
-                        unexpected_token_pos: self.current_pos(),
-                        opening_bracket_pos,
-                    });
-                }
-                None => {
-                    return Err(ParseError::UnclosedBracket {
-                        opening_bracket_pos,
-                    });
-                }
-            }
-            Some(ty_parameters)
-        } else {
-            None
-        };
-
+        let ty_parameters = self.parse_factor(false)?;
         let extra_tokens_pos = self.consume_line()?;
 
         let mut fields = Vec::new();
@@ -253,7 +228,6 @@ impl Parser<'_, '_> {
                 Token::Identifier(name) => {
                     let name = std::mem::take(name);
                     let pos = self.current_pos();
-                    self.consume_token()?;
                     Some((name, pos))
                 }
                 _ => {
@@ -267,91 +241,7 @@ impl Parser<'_, '_> {
             None
         };
 
-        // Generic parameters list can follow.
-        let ty_parameters = if self.current.is_on_new_line {
-            None
-        } else if let Some(Token::OpeningBracket) = self.current.token {
-            let opening_bracket_pos = self.current_pos();
-            self.consume_token()?;
-
-            let (ty_parameters, _) = self.parse_list_elements_and_trailing_comma()?;
-            match self.current.token {
-                Some(Token::ClosingBracket) => self.consume_token()?,
-                Some(_) => {
-                    return Err(ParseError::UnexpectedTokenInBrackets {
-                        unexpected_token_pos: self.current_pos(),
-                        opening_bracket_pos,
-                    });
-                }
-                None => {
-                    return Err(ParseError::UnclosedBracket {
-                        opening_bracket_pos,
-                    });
-                }
-            }
-            Some(ty_parameters)
-        } else {
-            None
-        };
-
-        // parameters list follows.
-        let parameters = if self.current.is_on_new_line {
-            None
-        } else if let Some(Token::OpeningParenthesis) = self.current.token {
-            let opening_parenthesis_pos = self.current_pos();
-            self.consume_token()?;
-
-            let mut parameters = Vec::new();
-            loop {
-                let parameter = self.parse_assign(true)?;
-                match self.current.token {
-                    Some(Token::ClosingParenthesis) => {
-                        self.consume_token()?;
-                        if let Some(element) = parameter {
-                            parameters.push(ast::ListElement::NonEmpty(element));
-                        }
-                        break;
-                    }
-                    Some(Token::Comma) => {
-                        let comma_pos = self.current_pos();
-                        self.consume_token()?;
-                        if let Some(element) = parameter {
-                            parameters.push(ast::ListElement::NonEmpty(element));
-                        } else {
-                            parameters.push(ast::ListElement::Empty { comma_pos })
-                        }
-                    }
-                    Some(_) => {
-                        return Err(ParseError::UnexpectedTokenInParentheses {
-                            unexpected_token_pos: self.current_pos(),
-                            opening_parenthesis_pos,
-                        });
-                    }
-                    None => {
-                        return Err(ParseError::UnclosedParenthesis {
-                            opening_parenthesis_pos,
-                        });
-                    }
-                }
-            }
-            Some(parameters)
-        } else {
-            None
-        };
-        let parameters = parameters.ok_or_else(|| self.range_from(keyword_pos.start));
-
-        // The return type can be written after `:`.
-        let return_ty = if let Some(Token::Colon) = self.current.token {
-            let arrow_pos = self.current_pos();
-            self.consume_token()?;
-            Some(ast::ReturnTy {
-                colon_pos: arrow_pos,
-                ty: self.parse_disjunction(false)?,
-            })
-        } else {
-            None
-        };
-
+        let signature = self.parse_factor(false)?;
         let extra_tokens_pos = self.consume_line()?;
 
         // The function body follows.
@@ -372,9 +262,7 @@ impl Parser<'_, '_> {
                 is_method,
             },
             ast::FunctionDefinition {
-                parameters,
-                ty_parameters,
-                return_ty,
+                signature,
                 body,
                 extra_tokens_pos,
             },
@@ -684,7 +572,7 @@ impl Parser<'_, '_> {
             let Some(ref token) = self.current.token else {
                 break;
             };
-            if let Some(operator_name) = infix_operator(token, precedence) {
+            if let Some((operator_class, operator_index)) = infix_operator(token, precedence) {
                 let operator_pos = self.current_pos();
                 self.consume_token()?;
                 let right_operand =
@@ -692,7 +580,8 @@ impl Parser<'_, '_> {
                 left_operand = Some(ast::TermWithPos {
                     term: ast::Term::BinaryOperation {
                         left_operand: left_operand.map(Box::new),
-                        operator_name,
+                        operator_class,
+                        operator_index,
                         operator_pos,
                         right_operand: right_operand.map(Box::new),
                     },
@@ -903,6 +792,9 @@ impl Parser<'_, '_> {
         } else if let Token::KeywordFloat = first_token {
             self.consume_token()?;
             ast::Term::FloatTy
+        } else if let Token::KeywordType = first_token {
+            self.consume_token()?;
+            ast::Term::Ty
         } else if let Token::OpeningParenthesis = first_token {
             let opening_parenthesis_pos = self.current_pos();
             self.consume_token()?;
@@ -1007,24 +899,24 @@ enum Precedence {
     TimeShift,
 }
 
-fn infix_operator(token: &Token, precedence: Precedence) -> Option<&'static str> {
+fn infix_operator(token: &Token, precedence: Precedence) -> Option<(Class, usize)> {
     match (token, precedence) {
-        (Token::Asterisk, Precedence::MulDivRem) => Some("mul"),
-        (Token::Slash, Precedence::MulDivRem) => Some("div"),
-        (Token::Percent, Precedence::MulDivRem) => Some("rem"),
-        (Token::Plus, Precedence::AddSub) => Some("add"),
-        (Token::Hyphen, Precedence::AddSub) => Some("sub"),
-        (Token::DoubleGreater, Precedence::BitShift) => Some("right_shift"),
-        (Token::DoubleLess, Precedence::BitShift) => Some("left_shift"),
-        (Token::Ampersand, Precedence::BitAnd) => Some("bitwise_and"),
-        (Token::Circumflex, Precedence::BitXor) => Some("bitwise_xor"),
-        (Token::Bar, Precedence::BitOr) => Some("bitwise_or"),
-        (Token::Greater, Precedence::Inequality) => Some("greater"),
-        (Token::GreaterEqual, Precedence::Inequality) => Some("greater_or_equal"),
-        (Token::Less, Precedence::Inequality) => Some("less"),
-        (Token::LessEqual, Precedence::Inequality) => Some("less_or_equal"),
-        (Token::DoubleEqual, Precedence::Equality) => Some("equal"),
-        (Token::ExclamationEqual, Precedence::Equality) => Some("not_equal"),
+        (Token::Asterisk, Precedence::MulDivRem) => Some((Class::Mul, 0)),
+        (Token::Slash, Precedence::MulDivRem) => Some((Class::Div, 0)),
+        (Token::Percent, Precedence::MulDivRem) => Some((Class::Rem, 0)),
+        (Token::Plus, Precedence::AddSub) => Some((Class::Add, 0)),
+        (Token::Hyphen, Precedence::AddSub) => Some((Class::Sub, 0)),
+        (Token::DoubleGreater, Precedence::BitShift) => Some((Class::RightShift, 0)),
+        (Token::DoubleLess, Precedence::BitShift) => Some((Class::LeftShift, 0)),
+        (Token::Ampersand, Precedence::BitAnd) => Some((Class::BitwiseAnd, 0)),
+        (Token::Circumflex, Precedence::BitXor) => Some((Class::BitwiseXor, 0)),
+        (Token::Bar, Precedence::BitOr) => Some((Class::BitwiseOr, 0)),
+        (Token::Greater, Precedence::Inequality) => Some((Class::Cmp, 0)),
+        (Token::GreaterEqual, Precedence::Inequality) => Some((Class::Cmp, 1)),
+        (Token::Less, Precedence::Inequality) => Some((Class::Cmp, 2)),
+        (Token::LessEqual, Precedence::Inequality) => Some((Class::Cmp, 3)),
+        (Token::DoubleEqual, Precedence::Equality) => Some((Class::Eq, 0)),
+        (Token::ExclamationEqual, Precedence::Equality) => Some((Class::Eq, 1)),
         _ => None,
     }
 }

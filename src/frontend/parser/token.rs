@@ -61,6 +61,7 @@ pub enum Token {
     KeywordVar,
     KeywordInt,
     KeywordFloat,
+    KeywordType,
     Underscore,
     Identifier(String),
     Plus,
@@ -306,6 +307,7 @@ pub fn read(
                 "var" => Token::KeywordVar,
                 "int" => Token::KeywordInt,
                 "float" => Token::KeywordFloat,
+                "type" => Token::KeywordType,
                 "_" => Token::Underscore,
                 _ => Token::Identifier(name),
             }

@@ -25,91 +25,49 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct Program {
-    pub structures: Vec<(TyKind, Structure)>,
-    pub function_tys: Vec<FunctionTy>,
+    pub structure_tys: Vec<Constant>,
+    pub structure_definitions: Vec<StructureDefinition>,
+    pub function_tys: Vec<Constant>,
     pub function_definitions: Vec<FunctionDefinition>,
-    pub num_global_variables: usize,
+    pub global_variable_tys: Vec<Constant>,
+    pub num_ty_variables: usize,
+}
+
+#[derive(PartialEq, Eq, Clone, Serialize)]
+pub enum Constant {
+    Integer,
+    Float,
+    Ty,
+    Structure(usize),
+    Parameter(usize, usize),
+    Variable(usize),
+    Product(Vec<Constant>, Box<Constant>),
+    FunctionTy,
+    Application(Box<Constant>, Vec<Constant>),
+    Identity,
+    DeleteInteger,
+    Dereference,
+    AddInteger,
+    EqInteger,
+    ConcatenateString,
+    Function(usize),
 }
 
 #[derive(Serialize)]
-pub struct Structure {
-    pub num_ty_parameters: usize,
-    pub field_tys: Vec<Ty>,
-}
-
-#[derive(Clone, Serialize)]
-pub struct FunctionTy {
-    pub num_ty_parameters: usize,
-    pub parameter_tys: Vec<Ty>,
-    pub return_ty: Ty,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-pub enum Function {
-    AddInteger,
-    IntegerToString,
-    Dereference,
-    Identity,
-    Assign,
-    Delete,
-    ConcatenateString,
-    Print,
-    UserDefined(usize),
-    Field {
-        structure_index: usize,
-        field_index: usize,
-    },
-    FieldRef {
-        structure_index: usize,
-        field_index: usize,
-    },
+pub struct StructureDefinition {
+    pub field_tys: Vec<Constant>,
 }
 
 #[derive(Serialize)]
 pub struct FunctionUse {
-    pub candidates: Vec<Function>,
-}
-
-#[derive(Clone, Serialize)]
-pub enum Ty {
-    Constructor(TyConstructor),
-    Parameter(usize),
-    Application {
-        constructor: Box<Ty>,
-        arguments: Vec<Ty>,
-    },
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Serialize)]
-pub enum TyConstructor {
-    Integer,
-    Float,
-    String,
-    Reference,
-    Tuple,
-    Function,
-    Structure(usize),
-}
-
-#[derive(Serialize)]
-pub enum TyKind {
-    Ty,
-    Abstraction {
-        parameters: TyListKind,
-        ret: Box<TyKind>,
-    },
-}
-
-#[derive(Serialize)]
-pub enum TyListKind {
-    Nil,
-    Cons(Box<TyKind>, Box<TyListKind>),
-    Rest,
+    pub candidates: Vec<Constant>,
+    pub used_by: Option<usize>,
 }
 
 #[derive(Serialize)]
 pub struct FunctionDefinition {
-    pub num_local_variables: usize,
+    pub local_variable_tys: Vec<Constant>,
+    pub num_ty_variables: usize,
     pub function_uses: Vec<FunctionUse>,
     pub calls: Vec<Call>,
     pub blocks: Vec<Block>,
@@ -148,4 +106,5 @@ pub enum Storage {
 pub struct Call {
     pub function: Expression,
     pub arguments: Vec<Expression>,
+    pub used_by: Option<usize>,
 }

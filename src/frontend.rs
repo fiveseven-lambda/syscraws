@@ -54,16 +54,25 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         num_functions: 0,
         num_global_basic_blocks: 0,
         ir_program: ir::Program {
-            structures: Vec::new(),
+            structure_tys: Vec::new(),
+            structure_definitions: Vec::new(),
             function_tys: Vec::new(),
             function_definitions: Vec::new(),
-            num_global_variables: 0,
+            global_variable_tys: Vec::new(),
+            num_ty_variables: 0,
         },
         global_function_uses: Vec::new(),
         global_calls: Vec::new(),
         global_blocks: Vec::new(),
         global_variables: Variables::new(ir::Storage::Global),
-        exports: Vec::new(),
+        exports: vec![Context {
+            items: HashMap::new(),
+            submodules: Vec::new(),
+            eq_instances: vec![ir::Constant::EqInteger],
+            add_instances: vec![ir::Constant::AddInteger],
+            delete_instances: vec![ir::Constant::DeleteInteger],
+            instances: Vec::new(),
+        }],
         logger,
         file_indices: HashMap::new(),
         import_chain: HashSet::from([root_file_path.clone()]),
@@ -80,11 +89,13 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         &mut reader.global_function_uses,
         &mut reader.global_calls,
     );
-    reader.ir_program.function_tys.push(ir::FunctionTy {
-        num_ty_parameters: 0,
-        parameter_tys: Vec::new(),
-        return_ty: ir::Ty::Constructor(ir::TyConstructor::Integer),
-    });
+    reader
+        .ir_program
+        .function_tys
+        .push(ir::Constant::Application(
+            Box::new(ir::Constant::FunctionTy),
+            vec![ir::Constant::Integer],
+        ));
     reader
         .ir_program
         .function_definitions
@@ -92,9 +103,10 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
             function_uses: reader.global_function_uses,
             calls: reader.global_calls,
             blocks: reader.global_blocks,
-            num_local_variables: 0,
+            local_variable_tys: Vec::new(),
+            num_ty_variables: 0,
         });
-    reader.ir_program.num_global_variables = reader.global_variables.num_total();
+    reader.ir_program.global_variable_tys = reader.global_variables.tys();
     Ok(reader.ir_program)
 }
 
@@ -155,18 +167,30 @@ pub enum Item {
      * References another file by its postorder index.
      */
     Import(usize),
-    /**
-     * A type definition.
-     */
-    Ty(ir::Ty),
-    /**
-     * One or more function definitions.
-     */
-    Function(Vec<ir::Function>),
+    Constant(ir::Constant),
+    Parameter(usize, usize),
     /**
      * A variable definition.
      */
     Variable(ir::Storage, usize),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Class {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    RightShift,
+    LeftShift,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    Eq,
+    Cmp,
+    ToString,
+    UserDefined(usize),
 }
 
 impl Reader<'_> {
@@ -200,11 +224,12 @@ impl Reader<'_> {
             }
         };
         let mut context = Context {
-            items: HashMap::from([(
-                String::from("print"),
-                (None, Item::Function(vec![ir::Function::Print])),
-            )]),
-            methods: HashMap::from([(String::from("assign"), vec![ir::Function::Assign])]),
+            items: HashMap::new(),
+            submodules: vec![0],
+            eq_instances: Vec::new(),
+            add_instances: Vec::new(),
+            delete_instances: Vec::new(),
+            instances: Vec::new(),
         };
         for ast::WithExtraTokens {
             content: ast_import,
@@ -227,21 +252,14 @@ impl Reader<'_> {
                     }
                     std::collections::hash_map::Entry::Vacant(entry) => {
                         entry.insert((Some(pos), Item::Import(index)));
-                        for (name, exported_candidates) in &self.exports[index].methods {
-                            context
-                                .methods
-                                .entry(name.clone())
-                                .or_insert_with(Vec::new)
-                                .extend_from_slice(exported_candidates);
-                        }
+                        context.submodules.extend(&self.exports[index].submodules);
+                        context.submodules.push(index);
                     }
                 }
             }
-            for candidates in context.methods.values_mut() {
-                candidates.sort();
-                candidates.dedup();
-            }
         }
+        context.submodules.sort();
+        context.submodules.dedup();
         for name in ast_file.structure_names {
             self.declare_structure(name, &mut context);
         }
@@ -257,13 +275,18 @@ impl Reader<'_> {
                 self.logger.extra_tokens(extra_tokens_pos);
             }
             match statement {
-                ast::TopLevelStatement::StructureDefinition(structure_definition) => {
-                    let (kind, definition) = context.translate_structure_definition(
-                        structure_definition,
+                ast::TopLevelStatement::StructureDefinition(ast_definition) => {
+                    let definition = context.translate_structure_definition(
+                        ast_definition,
                         &self.exports,
                         &mut self.logger,
                     );
-                    self.ir_program.structures.push((kind, definition));
+                    if self.logger.num_errors == 0
+                        && let Ok((ty, definition)) = definition
+                    {
+                        self.ir_program.structure_tys.push(ty);
+                        self.ir_program.structure_definitions.push(definition);
+                    }
                 }
                 ast::TopLevelStatement::FunctionDefinition(function_definition) => {
                     let mut num_basic_blocks = 0;
@@ -271,7 +294,7 @@ impl Reader<'_> {
                         .body
                         .count_basic_blocks(&mut num_basic_blocks);
                     let num_current_items = context.items.len();
-                    if let Some((ty, definition)) = context.translate_function_definition(
+                    if let Ok((ty, definition)) = context.translate_function_definition(
                         function_definition,
                         &self.exports,
                         &mut self.logger,
@@ -289,6 +312,7 @@ impl Reader<'_> {
                         &mut self.global_calls,
                         &mut self.global_blocks,
                         &mut self.global_variables,
+                        &mut self.ir_program.num_ty_variables,
                         0,
                         None,
                         None,
@@ -415,18 +439,14 @@ impl Reader<'_> {
                 } else {
                     entry.insert((
                         Some(pos),
-                        Item::Ty(ir::Ty::Constructor(ir::TyConstructor::Structure(
-                            self.num_structures,
-                        ))),
+                        Item::Constant(ir::Constant::Structure(self.num_structures)),
                     ));
                 }
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert((
                     Some(pos),
-                    Item::Ty(ir::Ty::Constructor(ir::TyConstructor::Structure(
-                        self.num_structures,
-                    ))),
+                    Item::Constant(ir::Constant::Structure(self.num_structures)),
                 ));
                 self.num_structures += 1;
             }
@@ -447,26 +467,18 @@ impl Reader<'_> {
             return;
         };
         if is_method {
-            context
-                .methods
-                .entry(name)
-                .or_insert_with(Vec::new)
-                .push(ir::Function::UserDefined(self.num_functions));
+            todo!();
         } else {
             match context.items.entry(name) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
                     let (prev_pos, item) = entry.get_mut();
-                    if let Item::Function(functions) = item {
-                        functions.push(ir::Function::UserDefined(self.num_functions));
-                    } else {
-                        self.logger
-                            .duplicate_definition(pos, prev_pos.clone().unwrap());
-                    }
+                    self.logger
+                        .duplicate_definition(pos, prev_pos.clone().unwrap());
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
                     entry.insert((
                         Some(pos),
-                        Item::Function(vec![ir::Function::UserDefined(self.num_functions)]),
+                        Item::Constant(ir::Constant::Function(self.num_functions)),
                     ));
                 }
             }

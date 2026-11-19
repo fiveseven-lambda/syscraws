@@ -22,6 +22,7 @@
 
 use std::cell::Cell;
 
+use super::Class;
 use crate::log::Pos;
 
 /**
@@ -135,7 +136,7 @@ pub struct StructureDefinition {
     /**
      * List of type parameters.
      */
-    pub ty_parameters: Option<Vec<ListElement>>,
+    pub ty_parameters: Option<TermWithPos>,
     /**
      * [`Pos`] of extra tokens if any appear on the same line after the
      * keyword `struct`, optional struct name, and optional type parameter
@@ -155,18 +156,7 @@ pub struct StructureDefinition {
  * included here.
  */
 pub struct FunctionDefinition {
-    /**
-     * List of type parameters.
-     */
-    pub ty_parameters: Option<Vec<ListElement>>,
-    /**
-     * List of parameters.
-     */
-    pub parameters: Result<Vec<ListElement>, Pos>,
-    /**
-     * Return type of the function.
-     */
-    pub return_ty: Option<ReturnTy>,
+    pub signature: Option<TermWithPos>,
     /**
      * [`Pos`] of extra tokens if any appear on the same line after the
      * keyword `func`, optional function name, optional type parameter list,
@@ -377,6 +367,7 @@ pub enum Term {
      * The identity function (`_`)
      */
     Identity,
+    Ty,
     /**
      * An identifier.
      */
@@ -416,7 +407,8 @@ pub enum Term {
      */
     BinaryOperation {
         left_operand: Option<Box<TermWithPos>>,
-        operator_name: &'static str,
+        operator_class: Class,
+        operator_index: usize,
         operator_pos: Pos,
         right_operand: Option<Box<TermWithPos>>,
     },

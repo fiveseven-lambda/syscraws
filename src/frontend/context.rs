@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use super::{Item, Variables, ast};
+use super::{Class, Item, Variables, ast};
 use crate::{ir, log};
 
 /**
@@ -36,12 +36,11 @@ pub struct Context {
      * Referencing items defined in another file requires dot notation ([`ast::Term::FieldByName`]).
      */
     pub items: HashMap<String, (Option<log::Pos>, Item)>,
-    /**
-     * A mapping from method names to the list of functions associated with them.
-     * Methods can be accessed by their name alone,
-     * even from files that import the defining file.
-     */
-    pub methods: HashMap<String, Vec<ir::Function>>,
+    pub submodules: Vec<usize>,
+    pub eq_instances: Vec<ir::Constant>,
+    pub add_instances: Vec<ir::Constant>,
+    pub delete_instances: Vec<ir::Constant>,
+    pub instances: Vec<Vec<ir::Constant>>,
 }
 
 impl Context {
@@ -54,51 +53,30 @@ impl Context {
         }: ast::StructureDefinition,
         exports: &[Context],
         logger: &mut log::Logger,
-    ) -> (ir::TyKind, ir::Structure) {
-        let mut ty_parameters_name = Vec::new();
-        let kind = if let Some(ast_ty_parameters) = ast_ty_parameters {
-            for ast_ty_parameter in ast_ty_parameters {
-                let ast_ty_parameter = match ast_ty_parameter {
-                    ast::ListElement::Empty { comma_pos } => {
-                        logger.empty_ty_parameter(comma_pos);
-                        continue;
-                    }
-                    ast::ListElement::NonEmpty(ast_ty_parameter) => ast_ty_parameter,
-                };
-                match ast_ty_parameter.term {
-                    ast::Term::Identifier(name) => match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                            if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(ast_ty_parameter.pos, pos.clone());
-                            } else {
-                                entry.insert((
-                                    Some(ast_ty_parameter.pos),
-                                    Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
-                                ));
-                                ty_parameters_name.push(name);
-                            }
-                        }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert((
-                                Some(ast_ty_parameter.pos),
-                                Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
-                            ));
-                            ty_parameters_name.push(name);
-                        }
-                    },
-                    _ => {
-                        logger.invalid_ty_parameter(ast_ty_parameter.pos);
-                    }
-                }
+    ) -> Result<(ir::Constant, ir::StructureDefinition), ()> {
+        let mut parameter_names = Vec::new();
+        let mut depth = 0;
+        let structure_ty = {
+            let mut parameter_tys = Vec::new();
+            let result = self.translate_constant_declaration(
+                ast_ty_parameters.unwrap(),
+                &mut parameter_names,
+                &mut parameter_tys,
+                &mut depth,
+                exports,
+                logger,
+            );
+            if logger.num_errors == 0 {
+                assert!(result.unwrap().1.is_empty());
+                Ok(parameter_tys
+                    .into_iter()
+                    .rev()
+                    .fold(ir::Constant::Ty, |ty, tys| {
+                        ir::Constant::Product(tys, Box::new(ty))
+                    }))
+            } else {
+                Err(())
             }
-            ir::TyKind::Abstraction {
-                parameters: (0..ty_parameters_name.len()).fold(ir::TyListKind::Nil, |tail, _| {
-                    ir::TyListKind::Cons(Box::new(ir::TyKind::Ty), Box::new(tail))
-                }),
-                ret: Box::new(ir::TyKind::Ty),
-            }
-        } else {
-            ir::TyKind::Ty
         };
         if let Some(extra_tokens_pos) = extra_tokens_pos {
             logger.extra_tokens(extra_tokens_pos);
@@ -116,7 +94,7 @@ impl Context {
                     term_right: Some(ast_field_ty),
                 } => {
                     let field_ty_pos = ast_field_ty.pos.clone();
-                    match self.translate_ty(*ast_field_ty, &exports, logger) {
+                    match self.translate_constant(*ast_field_ty, depth, &exports, logger) {
                         Ok(field_ty) => field_tys.push(field_ty),
                         Err(()) => {}
                     }
@@ -129,149 +107,192 @@ impl Context {
                 logger.extra_tokens(extra_tokens_pos);
             }
         }
-        for ty_parameter_name in &ty_parameters_name {
-            self.items.remove(ty_parameter_name);
+        for parameter_name in parameter_names {
+            self.items.remove(&parameter_name);
         }
-        (
-            kind,
-            ir::Structure {
-                num_ty_parameters: ty_parameters_name.len(),
-                field_tys,
-            },
-        )
+        if logger.num_errors == 0 {
+            Ok((structure_ty?, ir::StructureDefinition { field_tys }))
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn translate_constant_declaration(
+        &mut self,
+        ast::TermWithPos {
+            term: ast_term,
+            pos,
+        }: ast::TermWithPos,
+        constant_names: &mut Vec<String>,
+        constant_tys: &mut Vec<Vec<ir::Constant>>,
+        depth: &mut usize,
+        exports: &[Context],
+        logger: &mut log::Logger,
+    ) -> Result<(log::Pos, String), ()> {
+        match ast_term {
+            ast::Term::Identifier(name) => Ok((pos, name)),
+            ast::Term::TypeParameters {
+                term_left: ast_function,
+                parameters: ast_arguments,
+            } => {
+                let name_and_pos = self.translate_constant_declaration(
+                    *ast_function,
+                    constant_names,
+                    constant_tys,
+                    depth,
+                    exports,
+                    logger,
+                );
+                let mut parameter_tys = Vec::new();
+                for (argument_index, ast_argument) in ast_arguments.into_iter().enumerate() {
+                    let ast_argument = match ast_argument {
+                        ast::ListElement::Empty { comma_pos } => {
+                            logger.empty_ty_parameter(comma_pos);
+                            continue;
+                        }
+                        ast::ListElement::NonEmpty(ast_argument) => ast_argument,
+                    };
+                    let ast::Term::TypeAnnotation {
+                        term_left: ast_name_and_parameters,
+                        colon_pos,
+                        term_right: Some(ast_ret),
+                    } = ast_argument.term
+                    else {
+                        logger.invalid_ty_parameter(ast_argument.pos);
+                        continue;
+                    };
+                    let mut parameter_depth = *depth;
+                    let mut names = Vec::new();
+                    let mut tys = Vec::new();
+                    let parameter = self.translate_constant_declaration(
+                        *ast_name_and_parameters,
+                        &mut names,
+                        &mut tys,
+                        &mut parameter_depth,
+                        exports,
+                        logger,
+                    );
+                    let ret_ty = self
+                        .translate_constant(*ast_ret, parameter_depth, exports, logger)
+                        .unwrap();
+                    let ty = tys.into_iter().rev().fold(ret_ty, |ret_ty, parameter_tys| {
+                        ir::Constant::Product(parameter_tys, Box::new(ret_ty))
+                    });
+                    for name in names {
+                        self.items.remove(&name);
+                    }
+                    if let Ok((pos, name)) = parameter {
+                        self.items.insert(
+                            name.clone(),
+                            (Some(pos), Item::Parameter(parameter_depth, argument_index)),
+                        );
+                        constant_names.push(name);
+                    }
+                    parameter_tys.push(ty);
+                }
+                constant_tys.push(parameter_tys);
+                name_and_pos
+            }
+            _ => {
+                logger.invalid_ty_parameter(pos);
+                Err(())
+            }
+        }
     }
 
     pub fn translate_function_definition(
         &mut self,
         ast::FunctionDefinition {
-            ty_parameters: ast_ty_parameters,
-            parameters: ast_parameters,
-            return_ty: ast_return_ty,
+            signature: ast_signature,
             body: ast_body,
             extra_tokens_pos,
         }: ast::FunctionDefinition,
         exports: &[Context],
         logger: &mut log::Logger,
-    ) -> Option<(ir::FunctionTy, ir::FunctionDefinition)> {
-        let mut ty_parameters_name = Vec::new();
-        if let Some(ast_ty_parameters) = ast_ty_parameters {
-            for ast_ty_parameter in ast_ty_parameters {
-                let ast_ty_parameter = match ast_ty_parameter {
-                    ast::ListElement::Empty { comma_pos } => {
-                        logger.empty_ty_parameter(comma_pos);
-                        continue;
-                    }
-                    ast::ListElement::NonEmpty(ast_ty_parameter) => ast_ty_parameter,
-                };
-                if let ast::Term::Identifier(name) = ast_ty_parameter.term {
-                    match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                            if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(ast_ty_parameter.pos, pos.clone());
-                            } else {
-                                entry.insert((
-                                    Some(ast_ty_parameter.pos),
-                                    Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
-                                ));
-                                ty_parameters_name.push(name);
-                            }
-                        }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert((
-                                Some(ast_ty_parameter.pos),
-                                Item::Ty(ir::Ty::Parameter(ty_parameters_name.len())),
-                            ));
-                            ty_parameters_name.push(name);
-                        }
-                    }
-                } else {
-                    logger.invalid_ty_parameter(ast_ty_parameter.pos);
-                }
-            }
-        }
-        let mut local_variables = Variables::new(ir::Storage::Local);
-        let mut parameter_tys = Vec::new();
-        match ast_parameters {
-            Ok(ast_parameters) => {
-                for ast_parameter in ast_parameters {
-                    let ast_parameter = match ast_parameter {
-                        ast::ListElement::Empty { comma_pos } => {
-                            logger.empty_parameter(comma_pos);
-                            continue;
-                        }
-                        ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
-                    };
-                    match ast_parameter.term {
-                        ast::Term::TypeAnnotation {
-                            term_left: ast_parameter_name,
-                            colon_pos,
-                            term_right: ast_parameter_ty,
-                        } => {
-                            match ast_parameter_name.term {
-                                ast::Term::Identifier(name) => {
-                                    match self.items.entry(name.clone()) {
-                                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                                            if let (Some(pos), _) = entry.get() {
-                                                logger.duplicate_definition(
-                                                    ast_parameter.pos,
-                                                    pos.clone(),
-                                                );
-                                            } else {
-                                                let item = local_variables.add(name);
-                                                entry.insert((Some(ast_parameter_name.pos), item));
-                                            }
-                                        }
-                                        std::collections::hash_map::Entry::Vacant(entry) => {
-                                            let item = local_variables.add(name);
-                                            entry.insert((Some(ast_parameter_name.pos), item));
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    logger.invalid_parameter(ast_parameter.pos);
-                                }
-                            }
-                            if let Some(ast_parameter_ty) = ast_parameter_ty {
-                                let parameter_pos = ast_parameter_ty.pos.clone();
-                                match self.translate_ty(*ast_parameter_ty, &exports, logger) {
-                                    Ok(parameter_ty) => parameter_tys.push(parameter_ty),
-                                    Ok(_) => logger.expected_ty(parameter_pos),
-                                    Err(()) => {}
-                                }
-                            } else {
-                                logger.missing_ty(colon_pos);
-                            }
-                        }
-                        _ => {
-                            logger.invalid_parameter(ast_parameter.pos);
-                        }
-                    }
-                }
-            }
-            Err(signature_pos) => {
-                logger.missing_parameter_list(signature_pos);
-            }
-        }
-        let return_ty = if let Some(ast_return_ty) = ast_return_ty {
-            if let Some(ast_return_ty) = ast_return_ty.ty {
-                let return_ty_pos = ast_return_ty.pos.clone();
-                match self.translate_ty(ast_return_ty, &exports, logger) {
-                    Ok(return_ty) => return_ty,
-                    Err(()) => return None,
-                }
-            } else {
-                logger.missing_ty(ast_return_ty.colon_pos);
-                return None;
-            }
-        } else {
-            ir::Ty::Application {
-                constructor: Box::new(ir::Ty::Constructor(ir::TyConstructor::Tuple)),
-                arguments: vec![],
-            }
+    ) -> Result<(ir::Constant, ir::FunctionDefinition), ()> {
+        let Some(ast_signature) = ast_signature else {
+            todo!()
         };
+        let ast::Term::TypeAnnotation {
+            term_left: ast_parameters,
+            colon_pos: _,
+            term_right: ast_return_ty,
+        } = ast_signature.term
+        else {
+            todo!()
+        };
+        let ast::Term::FunctionCall {
+            function: ast_constants,
+            arguments: ast_parameters,
+        } = ast_parameters.term
+        else {
+            todo!()
+        };
+        let mut constant_names = Vec::new();
+        let mut constant_tys = Vec::new();
+        let mut depth = 0;
+        self.translate_constant_declaration(
+            *ast_constants,
+            &mut constant_names,
+            &mut constant_tys,
+            &mut depth,
+            exports,
+            logger,
+        );
+        let return_ty = match ast_return_ty {
+            Some(ty) => self.translate_constant(*ty, depth, exports, logger),
+            None => Err(()),
+        };
+        let mut local_variables = Variables::new(ir::Storage::Local);
+        let mut parameter_tys = return_ty.map(|return_ty| vec![return_ty]);
+        for ast_parameter in ast_parameters {
+            let ast_parameter = match ast_parameter {
+                ast::ListElement::Empty { comma_pos } => {
+                    logger.empty_argument(comma_pos);
+                    continue;
+                }
+                ast::ListElement::NonEmpty(ast_parameter) => ast_parameter,
+            };
+            let ast::Term::TypeAnnotation {
+                term_left: ast_parameter_name,
+                colon_pos,
+                term_right: Some(ast_parameter_ty),
+            } = ast_parameter.term
+            else {
+                todo!();
+            };
+            let ast::Term::Identifier(parameter_name) = ast_parameter_name.term else {
+                todo!();
+            };
+            let parameter_ty = self
+                .translate_constant(*ast_parameter_ty, depth, exports, logger)
+                .unwrap();
+            let item =
+                local_variables.add(parameter_name.clone(), parameter_ty.clone(), self, exports);
+            match self.items.entry(parameter_name) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if let (Some(pos), _) = entry.get() {
+                        logger.duplicate_definition(ast_parameter.pos, pos.clone());
+                    } else {
+                        entry.insert((Some(ast_parameter_name.pos), item));
+                    }
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert((Some(ast_parameter_name.pos), item));
+                }
+            }
+            if logger.num_errors == 0
+                && let Ok(parameter_tys) = &mut parameter_tys
+            {
+                parameter_tys.push(parameter_ty);
+            }
+        }
+        let function_ty =
+            ir::Constant::Application(Box::new(ir::Constant::FunctionTy), parameter_tys.unwrap());
         if let Some(extra_tokens_pos) = extra_tokens_pos {
             logger.extra_tokens(extra_tokens_pos);
         }
+        let mut num_ty_variables = 0;
         let mut function_uses = Vec::new();
         let mut calls = Vec::new();
         let mut blocks = Vec::new();
@@ -289,6 +310,7 @@ impl Context {
                 &mut calls,
                 &mut blocks,
                 &mut local_variables,
+                &mut num_ty_variables,
                 0,
                 None,
                 None,
@@ -297,17 +319,16 @@ impl Context {
             );
         }
         local_variables.free_and_remove(0, &mut function_uses, &mut calls, self);
-        for ty_parameter_name in &ty_parameters_name {
-            self.items.remove(ty_parameter_name);
+        for name in constant_names {
+            self.items.remove(&name);
         }
-        Some((
-            ir::FunctionTy {
-                num_ty_parameters: ty_parameters_name.len(),
-                parameter_tys,
-                return_ty,
-            },
+        Ok((
+            constant_tys.into_iter().rev().fold(function_ty, |ty, tys| {
+                ir::Constant::Product(tys, Box::new(ty))
+            }),
             ir::FunctionDefinition {
-                num_local_variables: local_variables.num_total(),
+                local_variable_tys: local_variables.tys(),
+                num_ty_variables,
                 function_uses,
                 calls,
                 blocks,
@@ -322,6 +343,7 @@ impl Context {
         calls: &mut Vec<ir::Call>,
         blocks: &mut Vec<ir::Block>,
         variables: &mut Variables,
+        num_ty_variables: &mut usize,
         num_outer_variables: usize,
         break_index: Option<usize>,
         continue_index: Option<usize>,
@@ -335,6 +357,7 @@ impl Context {
                     false,
                     function_uses,
                     calls,
+                    num_ty_variables,
                     exports,
                     logger,
                 );
@@ -348,20 +371,28 @@ impl Context {
                     return;
                 };
                 match ast_name.term {
-                    ast::Term::Identifier(name) => match self.items.entry(name.clone()) {
-                        std::collections::hash_map::Entry::Occupied(mut entry) => {
-                            if let (Some(pos), _) = entry.get() {
-                                logger.duplicate_definition(ast_name.pos, pos.clone());
-                            } else {
-                                let item = variables.add(name);
+                    ast::Term::Identifier(name) => {
+                        let index = *num_ty_variables;
+                        *num_ty_variables += 1;
+                        let item = variables.add(
+                            name.clone(),
+                            ir::Constant::Variable(index),
+                            self,
+                            exports,
+                        );
+                        match self.items.entry(name) {
+                            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                if let (Some(pos), _) = entry.get() {
+                                    logger.duplicate_definition(ast_name.pos, pos.clone());
+                                } else {
+                                    entry.insert((Some(ast_name.pos), item));
+                                }
+                            }
+                            std::collections::hash_map::Entry::Vacant(entry) => {
                                 entry.insert((Some(ast_name.pos), item));
                             }
                         }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            let item = variables.add(name);
-                            entry.insert((Some(ast_name.pos), item));
-                        }
-                    },
+                    }
                     _ => {
                         logger.invalid_variable_name(ast_name.pos);
                         return;
@@ -385,6 +416,7 @@ impl Context {
                         false,
                         function_uses,
                         calls,
+                        num_ty_variables,
                         exports,
                         logger,
                     )
@@ -421,6 +453,7 @@ impl Context {
                         calls,
                         blocks,
                         variables,
+                        num_ty_variables,
                         num_outer_variables,
                         break_index,
                         continue_index,
@@ -451,6 +484,7 @@ impl Context {
                             calls,
                             blocks,
                             variables,
+                            num_ty_variables,
                             num_outer_variables,
                             break_index,
                             continue_index,
@@ -487,6 +521,7 @@ impl Context {
                         false,
                         function_uses,
                         calls,
+                        num_ty_variables,
                         exports,
                         logger,
                     )
@@ -521,6 +556,7 @@ impl Context {
                         calls,
                         blocks,
                         variables,
+                        num_ty_variables,
                         num_variables,
                         Some(end_index.get()),
                         Some(condition_index.get()),
@@ -557,6 +593,7 @@ impl Context {
                             false,
                             function_uses,
                             calls,
+                            num_ty_variables,
                             exports,
                             logger,
                         ) {
@@ -584,6 +621,7 @@ impl Context {
         reference: bool,
         function_uses: &mut Vec<ir::FunctionUse>,
         calls: &mut Vec<ir::Call>,
+        num_ty_variables: &mut usize,
         exports: &[Context],
         logger: &mut log::Logger,
     ) -> Result<ExpressionOrImport, ()> {
@@ -626,20 +664,26 @@ impl Context {
                                         false,
                                         function_uses,
                                         calls,
+                                        num_ty_variables,
                                         exports,
                                         logger,
                                     )
                                 {
-                                    let function = ir::Expression::FunctionUse(function_uses.len());
-                                    function_uses.push(ir::FunctionUse {
-                                        candidates: vec![ir::Function::IntegerToString],
-                                    });
-                                    let expression = ir::Expression::Call(calls.len());
+                                    let function_use_index = function_uses.len();
+                                    let call_index = calls.len();
+                                    // function_uses.push(ir::FunctionUse {
+                                    //     candidates: vec![ir::Function::Method(
+                                    //         ir::Class::ToString,
+                                    //         0,
+                                    //     )],
+                                    //     used_by: Some(call_index),
+                                    // });
                                     calls.push(ir::Call {
-                                        function,
+                                        function: ir::Expression::FunctionUse(function_use_index),
                                         arguments: vec![value],
+                                        used_by: None,
                                     });
-                                    components.push(expression);
+                                    components.push(ir::Expression::Call(call_index));
                                 }
                             }
                         }
@@ -649,24 +693,32 @@ impl Context {
                     components
                         .into_iter()
                         .reduce(|left, right| {
-                            let function = ir::Expression::FunctionUse(function_uses.len());
+                            let function_use_index = function_uses.len();
+                            let call_index = calls.len();
                             function_uses.push(ir::FunctionUse {
-                                candidates: vec![ir::Function::ConcatenateString],
+                                candidates: vec![ir::Constant::ConcatenateString],
+                                used_by: Some(call_index),
                             });
-                            let expression = ir::Expression::Call(calls.len());
                             calls.push(ir::Call {
-                                function,
+                                function: ir::Expression::FunctionUse(function_use_index),
                                 arguments: vec![left, right],
+                                used_by: None,
                             });
-                            expression
+                            ir::Expression::Call(call_index)
                         })
                         .unwrap_or(ir::Expression::String(String::new())),
                 ))
             }
             ast::Term::Identity => {
+                let ty_variable_index = *num_ty_variables;
+                *num_ty_variables += 1;
                 let function = ir::Expression::FunctionUse(function_uses.len());
                 function_uses.push(ir::FunctionUse {
-                    candidates: vec![ir::Function::Identity],
+                    candidates: vec![ir::Constant::Application(
+                        Box::new(ir::Constant::Identity),
+                        vec![ir::Constant::Variable(ty_variable_index)],
+                    )],
+                    used_by: None,
                 });
                 Ok(ExpressionOrImport::Expression(function))
             }
@@ -679,6 +731,7 @@ impl Context {
                     reference,
                     function_uses,
                     calls,
+                    num_ty_variables,
                     exports,
                     logger,
                 )? {
@@ -703,10 +756,20 @@ impl Context {
                     false,
                     function_uses,
                     calls,
+                    num_ty_variables,
                     exports,
                     logger,
                 );
                 let mut arguments = Vec::new();
+                let mut call_indices = Vec::new();
+                let mut function_use_indices = Vec::new();
+                if let Ok(ExpressionOrImport::Expression(ref function)) = function {
+                    if let &ir::Expression::FunctionUse(index) = function {
+                        function_use_indices.push(index);
+                    } else if let &ir::Expression::Call(index) = function {
+                        call_indices.push(index);
+                    }
+                }
                 for ast_argument in ast_arguments {
                     let ast_argument = match ast_argument {
                         ast::ListElement::Empty { comma_pos } => {
@@ -721,6 +784,7 @@ impl Context {
                         false,
                         function_uses,
                         calls,
+                        num_ty_variables,
                         exports,
                         logger,
                     ) else {
@@ -728,6 +792,11 @@ impl Context {
                     };
                     match argument {
                         ExpressionOrImport::Expression(argument) => {
+                            if let ir::Expression::FunctionUse(index) = argument {
+                                function_use_indices.push(index);
+                            } else if let ir::Expression::Call(index) = argument {
+                                call_indices.push(index);
+                            }
                             arguments.push(argument);
                         }
                         _ => {
@@ -737,12 +806,21 @@ impl Context {
                 }
                 match function {
                     Ok(ExpressionOrImport::Expression(function)) => {
-                        let expression = ir::Expression::Call(calls.len());
+                        let call_index = calls.len();
+                        for &index in &call_indices {
+                            calls[index].used_by = Some(call_index);
+                        }
+                        for &index in &function_use_indices {
+                            function_uses[index].used_by = Some(call_index);
+                        }
                         calls.push(ir::Call {
                             function,
                             arguments,
+                            used_by: None,
                         });
-                        Ok(ExpressionOrImport::Expression(expression))
+                        Ok(ExpressionOrImport::Expression(ir::Expression::Call(
+                            call_index,
+                        )))
                     }
                     _ => todo!(),
                 }
@@ -761,6 +839,7 @@ impl Context {
                             true,
                             function_uses,
                             calls,
+                            num_ty_variables,
                             exports,
                             logger,
                         )
@@ -785,6 +864,7 @@ impl Context {
                             false,
                             function_uses,
                             calls,
+                            num_ty_variables,
                             exports,
                             logger,
                         )
@@ -801,19 +881,106 @@ impl Context {
                         Err(())
                     }
                 };
-                let candidates = self
-                    .methods
-                    .get(operator_name)
+                todo!();
+                //let candidates = self
+                //    .methods
+                //    .get(operator_name)
+                //    .cloned()
+                //    .unwrap_or_else(Vec::new);
+                //let function_use_index = function_uses.len();
+                //let call_index = calls.len();
+                //function_uses.push(ir::FunctionUse {
+                //    candidates,
+                //    used_by: Some(call_index),
+                //});
+                //calls.push(ir::Call {
+                //    function: ir::Expression::FunctionUse(function_use_index),
+                //    arguments: vec![left_hand_side?, right_hand_side?],
+                //    used_by: None,
+                //});
+                //Ok(ExpressionOrImport::Expression(ir::Expression::Call(
+                //    call_index,
+                //)))
+            }
+            ast::Term::BinaryOperation {
+                left_operand: ast_left_operand,
+                operator_class,
+                operator_index,
+                operator_pos,
+                right_operand: ast_right_operand,
+            } => {
+                let left_operand = match ast_left_operand {
+                    Some(ast_left_operand) => {
+                        let left_operand_pos = ast_left_operand.pos.clone();
+                        self.translate_expression_or_import(
+                            *ast_left_operand,
+                            true,
+                            function_uses,
+                            calls,
+                            num_ty_variables,
+                            exports,
+                            logger,
+                        )
+                        .and_then(|term| match term {
+                            ExpressionOrImport::Expression(expr) => Ok(expr),
+                            _ => {
+                                logger.expected_expression(left_operand_pos);
+                                Err(())
+                            }
+                        })
+                    }
+                    None => {
+                        logger.empty_left_operand(operator_pos.clone());
+                        Err(())
+                    }
+                };
+                let right_operand = match ast_right_operand {
+                    Some(ast_right_operand) => {
+                        let right_operand_pos = ast_right_operand.pos.clone();
+                        self.translate_expression_or_import(
+                            *ast_right_operand,
+                            false,
+                            function_uses,
+                            calls,
+                            num_ty_variables,
+                            exports,
+                            logger,
+                        )
+                        .and_then(|term| match term {
+                            ExpressionOrImport::Expression(expr) => Ok(expr),
+                            _ => {
+                                logger.expected_expression(right_operand_pos);
+                                Err(())
+                            }
+                        })
+                    }
+                    None => {
+                        logger.empty_right_operand(operator_pos);
+                        Err(())
+                    }
+                };
+                let candidates: Vec<_> = self
+                    .submodules
+                    .iter()
+                    .map(|&module_index| exports[module_index].get_instances(&operator_class))
+                    .flatten()
+                    .chain(self.get_instances(&operator_class))
                     .cloned()
-                    .unwrap_or_else(Vec::new);
-                let function = ir::Expression::FunctionUse(function_uses.len());
-                function_uses.push(ir::FunctionUse { candidates });
-                let expression = ir::Expression::Call(calls.len());
-                calls.push(ir::Call {
-                    function,
-                    arguments: vec![left_hand_side?, right_hand_side?],
+                    .collect();
+                let function_use_index = function_uses.len();
+                let call_index = calls.len();
+                function_uses.push(ir::FunctionUse {
+                    candidates,
+                    used_by: Some(call_index),
                 });
-                Ok(ExpressionOrImport::Expression(expression))
+                calls.push(ir::Call {
+                    function: ir::Expression::FunctionUse(function_use_index),
+                    arguments: vec![left_operand?, right_operand?],
+                    used_by: None,
+                });
+                Ok(ExpressionOrImport::Expression(ir::Expression::Call(
+                    call_index,
+                )))
             }
             _ => todo!(),
         }
@@ -828,13 +995,14 @@ impl Context {
         logger: &mut log::Logger,
     ) -> Result<ExpressionOrImport, ()> {
         match self.items.get(name) {
-            Some((_, Item::Function(candidates))) => {
+            Some((_, Item::Constant(candidate))) => {
                 if reference {
                     todo!();
                 }
                 let function = ir::Expression::FunctionUse(function_uses.len());
                 function_uses.push(ir::FunctionUse {
-                    candidates: candidates.clone(),
+                    candidates: vec![candidate.clone()],
+                    used_by: None,
                 });
                 Ok(ExpressionOrImport::Expression(function))
             }
@@ -843,47 +1011,23 @@ impl Context {
                 if reference {
                     Ok(ExpressionOrImport::Expression(variable))
                 } else {
-                    let function = ir::Expression::FunctionUse(function_uses.len());
+                    let function_use_index = function_uses.len();
+                    let call_index = calls.len();
                     function_uses.push(ir::FunctionUse {
-                        candidates: vec![ir::Function::Dereference],
+                        candidates: vec![ir::Constant::Dereference],
+                        used_by: Some(call_index),
                     });
-                    let expression = ir::Expression::Call(calls.len());
                     calls.push(ir::Call {
-                        function,
+                        function: ir::Expression::FunctionUse(function_use_index),
                         arguments: vec![variable],
+                        used_by: None,
                     });
-                    Ok(ExpressionOrImport::Expression(expression))
+                    Ok(ExpressionOrImport::Expression(ir::Expression::Call(
+                        call_index,
+                    )))
                 }
             }
             _ => todo!(),
-        }
-    }
-
-    fn translate_ty(
-        &self,
-        ast::TermWithPos {
-            term: ast_term,
-            pos,
-        }: ast::TermWithPos,
-        exports: &[Context],
-        logger: &mut log::Logger,
-    ) -> Result<ir::Ty, ()> {
-        match ast_term {
-            ast::Term::IntegerTy => return Ok(ir::Ty::Constructor(ir::TyConstructor::Integer)),
-            ast::Term::FloatTy => return Ok(ir::Ty::Constructor(ir::TyConstructor::Float)),
-            ast::Term::Identifier(name) => self.get_ty(&name, logger),
-            ast::Term::FieldByName { term_left, name } => {
-                let index = self.translate_import(*term_left, exports, logger)?;
-                exports[index].get_ty(&name, logger)
-            }
-            _ => todo!(),
-        }
-    }
-
-    fn get_ty(&self, name: &str, logger: &mut log::Logger) -> Result<ir::Ty, ()> {
-        match self.items.get(name) {
-            Some((_, Item::Ty(ty))) => Ok(ty.clone()),
-            _ => Err(()),
         }
     }
 
@@ -910,6 +1054,72 @@ impl Context {
         match self.items.get(name) {
             Some(&(_, Item::Import(index))) => Ok(index),
             _ => Err(()),
+        }
+    }
+
+    pub fn translate_constant(
+        &mut self,
+        ast::TermWithPos {
+            term: ast_term,
+            pos,
+        }: ast::TermWithPos,
+        depth: usize,
+        exports: &[Context],
+        logger: &mut log::Logger,
+    ) -> Result<ir::Constant, ()> {
+        match ast_term {
+            ast::Term::IntegerTy => return Ok(ir::Constant::Integer),
+            ast::Term::FloatTy => return Ok(ir::Constant::Float),
+            ast::Term::Ty => Ok(ir::Constant::Ty),
+            ast::Term::Identifier(name) => self.get_constant(&name, depth, logger),
+            ast::Term::TypeParameters {
+                term_left: ast_constructor,
+                parameters: ast_parameters,
+            } => {
+                let constructor = self.translate_constant(*ast_constructor, depth, exports, logger);
+                let mut parameters = Vec::new();
+                for ast_parameter in ast_parameters {
+                    let ast_parameter = match ast_parameter {
+                        ast::ListElement::Empty { comma_pos } => todo!(),
+                        ast::ListElement::NonEmpty(parameter) => parameter,
+                    };
+                    match self.translate_constant(ast_parameter, depth, exports, logger) {
+                        Ok(parameter) => parameters.push(parameter),
+                        Err(_) => todo!(),
+                    }
+                }
+                Ok(ir::Constant::Application(
+                    Box::new(constructor?),
+                    parameters,
+                ))
+            }
+            ast::Term::FieldByName { term_left, name } => {
+                let index = self.translate_import(*term_left, exports, logger)?;
+                exports[index].get_constant(&name, depth, logger)
+            }
+            _ => todo!(),
+        }
+    }
+
+    fn get_constant(
+        &self,
+        name: &str,
+        depth: usize,
+        logger: &mut log::Logger,
+    ) -> Result<ir::Constant, ()> {
+        match self.items.get(name) {
+            Some((_, Item::Constant(constant))) => Ok(constant.clone()),
+            Some((_, Item::Parameter(d, i))) => Ok(ir::Constant::Parameter(depth - d, *i)),
+            _ => Err(()),
+        }
+    }
+
+    fn get_instances(&self, class: &Class) -> &[ir::Constant] {
+        match *class {
+            Class::Add => &self.add_instances,
+            Class::Eq => &self.eq_instances,
+            Class::UserDefined(index) => &self.instances[index],
+            _ => todo!(),
         }
     }
 }
