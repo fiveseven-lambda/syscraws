@@ -42,6 +42,7 @@ pub enum Constructor {
     Float,
     String,
     Function,
+    Tuple,
 }
 
 impl Serialize for Ty {

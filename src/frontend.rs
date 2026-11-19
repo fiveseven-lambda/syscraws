@@ -68,8 +68,8 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         exports: vec![Context {
             items: HashMap::new(),
             submodules: Vec::new(),
-            eq_instances: vec![],
-            add_instances: vec![],
+            eq_instances: vec![ir::Constant::EqInteger],
+            add_instances: vec![ir::Constant::AddInteger],
             delete_instances: vec![ir::Constant::DeleteInteger],
             instances: Vec::new(),
         }],

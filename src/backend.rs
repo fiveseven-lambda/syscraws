@@ -54,13 +54,18 @@ fn translate_tys(ir_tys: &[ir::Constant], ty_parameters: &mut Vec<Vec<Rc<ty::Ty>
 }
 
 pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8, ()> {
-    let global_variables_ty: Vec<_> = (0..ir_program.num_ty_variables)
+    let global_ty_variables: Vec<_> = (0..ir_program.num_ty_variables)
         .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
         .collect();
     let mut function_definitions = Vec::new();
     for function_definition in &ir_program.function_definitions {
-        let local_variables_ty: Vec<_> = (0..function_definition.num_ty_variables)
+        let local_ty_variables: Vec<_> = (0..function_definition.num_ty_variables)
             .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
+            .collect();
+        let local_variables_ty: Vec<_> = function_definition
+            .local_variable_tys
+            .iter()
+            .map(|local_variable_ty| translate_ty(local_variable_ty, &mut Vec::new()))
             .collect();
         let mut function_uses: Vec<FunctionUse> = function_definition
             .function_uses
@@ -92,7 +97,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                         &function_uses,
                         &mut calls,
                         &local_variables_ty,
-                        &global_variables_ty,
+                        &global_ty_variables,
                         &ir_program.function_tys,
                     ) {
                         substitutions.extend(unifier.rollback());
@@ -134,7 +139,6 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
         }
         function_definitions.push((function_uses, calls));
     }
-    /*
     unsafe { ffi::initialize_jit() };
     let num_definitions = ir_program.function_definitions.len();
     for (function_index, (ir_function_definition, function_definition)) in ir_program
@@ -174,7 +178,6 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
             return Ok(pointer);
         }
     }
-    */
     Err(())
 }
 
@@ -410,6 +413,32 @@ fn translate_calls(
 
 fn get_function_ty(function: &ir::Constant, ir_function_tys: &[ir::Constant]) -> Rc<ty::Ty> {
     match *function {
+        ir::Constant::AddInteger => Rc::new(ty::Ty::Application {
+            constructor: Rc::new(ty::Ty::Constructor(ty::Constructor::Function)),
+            arguments: Rc::new(ty::Ty::Cons {
+                head: Rc::new(ty::Ty::Constructor(ty::Constructor::Integer)),
+                tail: Rc::new(ty::Ty::Cons {
+                    head: Rc::new(ty::Ty::Constructor(ty::Constructor::Integer)),
+                    tail: Rc::new(ty::Ty::Cons {
+                        head: Rc::new(ty::Ty::Constructor(ty::Constructor::Integer)),
+                        tail: Rc::new(ty::Ty::Nil),
+                    }),
+                }),
+            }),
+        }),
+        ir::Constant::DeleteInteger => Rc::new(ty::Ty::Application {
+            constructor: Rc::new(ty::Ty::Constructor(ty::Constructor::Function)),
+            arguments: Rc::new(ty::Ty::Cons {
+                head: Rc::new(ty::Ty::Application {
+                    constructor: Rc::new(ty::Ty::Constructor(ty::Constructor::Tuple)),
+                    arguments: Rc::new(ty::Ty::Nil),
+                }),
+                tail: Rc::new(ty::Ty::Cons {
+                    head: Rc::new(ty::Ty::Constructor(ty::Constructor::Integer)),
+                    tail: Rc::new(ty::Ty::Nil),
+                }),
+            }),
+        }),
         ir::Constant::Function(index) => translate_ty(&ir_function_tys[index], &mut Vec::new()),
         _ => todo!(),
     }

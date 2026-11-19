@@ -47,6 +47,8 @@ pub enum Constant {
     Identity,
     DeleteInteger,
     Dereference,
+    AddInteger,
+    EqInteger,
     ConcatenateString,
     Function(usize),
 }
