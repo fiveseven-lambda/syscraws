@@ -31,41 +31,50 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::rc::Rc;
 
-fn translate_ty(ir_ty: &ir::Constant, ty_parameters: &mut Vec<Vec<Rc<ty::Ty>>>) -> Rc<ty::Ty> {
+fn translate_ty(
+    ir_ty: &ir::Constant,
+    ty_parameters: &mut Vec<Vec<Rc<ty::Ty>>>,
+    ty_variables: &[Rc<ty::Ty>],
+) -> Rc<ty::Ty> {
     match *ir_ty {
         ir::Constant::Integer => Rc::new(ty::Ty::Constructor(ty::Constructor::Integer)),
         ir::Constant::Float => Rc::new(ty::Ty::Constructor(ty::Constructor::Float)),
+        ir::Constant::Function => Rc::new(ty::Ty::Constructor(ty::Constructor::Function)),
         ir::Constant::Parameter(i, j) => ty_parameters[i][j].clone(),
+        ir::Constant::Variable(index) => ty_variables[index].clone(),
         ir::Constant::Application(ref constructor, ref arguments) => Rc::new(ty::Ty::Application {
-            constructor: translate_ty(constructor, ty_parameters),
-            arguments: translate_tys(arguments, ty_parameters),
+            constructor: translate_ty(constructor, ty_parameters, ty_variables),
+            arguments: translate_tys(arguments, ty_parameters, ty_variables),
         }),
         _ => todo!(),
     }
 }
 
-fn translate_tys(ir_tys: &[ir::Constant], ty_parameters: &mut Vec<Vec<Rc<ty::Ty>>>) -> Rc<ty::Ty> {
+fn translate_tys(
+    ir_tys: &[ir::Constant],
+    ty_parameters: &mut Vec<Vec<Rc<ty::Ty>>>,
+    ty_variables: &[Rc<ty::Ty>],
+) -> Rc<ty::Ty> {
     return ir_tys.iter().rfold(Rc::new(ty::Ty::Nil), |tail, ir_head| {
         Rc::new(ty::Ty::Cons {
-            head: translate_ty(ir_head, ty_parameters),
+            head: translate_ty(ir_head, ty_parameters, ty_variables),
             tail,
         })
     });
 }
 
 pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8, ()> {
-    let global_ty_variables: Vec<_> = (0..ir_program.num_ty_variables)
+    let ty_variables: Vec<_> = (0..ir_program.num_ty_variables)
         .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
         .collect();
     let mut function_definitions = Vec::new();
     for function_definition in &ir_program.function_definitions {
-        let local_ty_variables: Vec<_> = (0..function_definition.num_ty_variables)
-            .map(|_| Rc::new(ty::Ty::Var(RefCell::new(ty::Var::Unassigned(0)))))
-            .collect();
         let local_variables_ty: Vec<_> = function_definition
             .local_variable_tys
             .iter()
-            .map(|local_variable_ty| translate_ty(local_variable_ty, &mut Vec::new()))
+            .map(|local_variable_ty| {
+                translate_ty(local_variable_ty, &mut Vec::new(), &ty_variables)
+            })
             .collect();
         let mut function_uses: Vec<FunctionUse> = function_definition
             .function_uses
@@ -84,7 +93,12 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                 let mut updated_calls = Vec::new();
                 let mut substitutions = Vec::new();
                 for candidate in candidates {
-                    let candidate_ty = get_function_ty(&candidate, &ir_program.function_tys);
+                    let candidate_ty = get_function_ty(
+                        &candidate,
+                        &ir_program.function_tys,
+                        &mut Vec::new(),
+                        &ty_variables,
+                    );
                     function_uses[function_use_index] =
                         FunctionUse::Resolved(candidate.clone(), candidate_ty.clone());
                     let mut unifier = unify::Unifier::new();
@@ -97,7 +111,7 @@ pub fn translate(ir_program: ir::Program) -> Result<unsafe extern "C" fn() -> u8
                         &function_uses,
                         &mut calls,
                         &local_variables_ty,
-                        &global_ty_variables,
+                        &ty_variables,
                         &ir_program.function_tys,
                     ) {
                         substitutions.extend(unifier.rollback());
@@ -411,8 +425,21 @@ fn translate_calls(
     )
 }
 
-fn get_function_ty(function: &ir::Constant, ir_function_tys: &[ir::Constant]) -> Rc<ty::Ty> {
+fn get_function_ty(
+    function: &ir::Constant,
+    ir_function_tys: &[ir::Constant],
+    parameters: &mut Vec<Vec<Rc<ty::Ty>>>,
+    variables: &[Rc<ty::Ty>],
+) -> Rc<ty::Ty> {
     match *function {
+        ir::Constant::Application(ref function, ref arguments) => {
+            let new_parameters = arguments
+                .iter()
+                .map(|argument| translate_ty(argument, parameters, variables))
+                .collect();
+            parameters.push(new_parameters);
+            get_function_ty(function, ir_function_tys, parameters, variables)
+        }
         ir::Constant::AddInteger => Rc::new(ty::Ty::Application {
             constructor: Rc::new(ty::Ty::Constructor(ty::Constructor::Function)),
             arguments: Rc::new(ty::Ty::Cons {
@@ -439,7 +466,25 @@ fn get_function_ty(function: &ir::Constant, ir_function_tys: &[ir::Constant]) ->
                 }),
             }),
         }),
-        ir::Constant::Function(index) => translate_ty(&ir_function_tys[index], &mut Vec::new()),
+        ir::Constant::Dereference => Rc::new(ty::Ty::Application {
+            constructor: Rc::new(ty::Ty::Constructor(ty::Constructor::Function)),
+            arguments: Rc::new(ty::Ty::Cons {
+                head: parameters.last().unwrap()[0].clone(),
+                tail: Rc::new(ty::Ty::Cons {
+                    head: Rc::new(ty::Ty::Application {
+                        constructor: Rc::new(ty::Ty::Constructor(ty::Constructor::Reference)),
+                        arguments: Rc::new(ty::Ty::Cons {
+                            head: parameters.last().unwrap()[0].clone(),
+                            tail: Rc::new(ty::Ty::Nil),
+                        }),
+                    }),
+                    tail: Rc::new(ty::Ty::Nil),
+                }),
+            }),
+        }),
+        ir::Constant::UserDefinedFunction(index) => {
+            translate_ty(&ir_function_tys[index], parameters, variables)
+        }
         _ => todo!(),
     }
 }

@@ -207,6 +207,7 @@ impl Context {
             body: ast_body,
             extra_tokens_pos,
         }: ast::FunctionDefinition,
+        num_ty_variables: &mut usize,
         exports: &[Context],
         logger: &mut log::Logger,
     ) -> Result<(ir::Constant, ir::FunctionDefinition), ()> {
@@ -288,11 +289,10 @@ impl Context {
             }
         }
         let function_ty =
-            ir::Constant::Application(Box::new(ir::Constant::FunctionTy), parameter_tys.unwrap());
+            ir::Constant::Application(Box::new(ir::Constant::Function), parameter_tys.unwrap());
         if let Some(extra_tokens_pos) = extra_tokens_pos {
             logger.extra_tokens(extra_tokens_pos);
         }
-        let mut num_ty_variables = 0;
         let mut function_uses = Vec::new();
         let mut calls = Vec::new();
         let mut blocks = Vec::new();
@@ -310,7 +310,7 @@ impl Context {
                 &mut calls,
                 &mut blocks,
                 &mut local_variables,
-                &mut num_ty_variables,
+                num_ty_variables,
                 0,
                 None,
                 None,
@@ -328,7 +328,6 @@ impl Context {
             }),
             ir::FunctionDefinition {
                 local_variable_tys: local_variables.tys(),
-                num_ty_variables,
                 function_uses,
                 calls,
                 blocks,
@@ -722,9 +721,14 @@ impl Context {
                 });
                 Ok(ExpressionOrImport::Expression(function))
             }
-            ast::Term::Identifier(name) => {
-                self.get_expression_or_import(&name, reference, function_uses, calls, logger)
-            }
+            ast::Term::Identifier(name) => self.get_expression_or_import(
+                &name,
+                reference,
+                function_uses,
+                calls,
+                num_ty_variables,
+                logger,
+            ),
             ast::Term::FieldByName { term_left, name } => {
                 match self.translate_expression_or_import(
                     *term_left,
@@ -743,6 +747,7 @@ impl Context {
                         reference,
                         function_uses,
                         calls,
+                        num_ty_variables,
                         logger,
                     ),
                 }
@@ -914,7 +919,7 @@ impl Context {
                         let left_operand_pos = ast_left_operand.pos.clone();
                         self.translate_expression_or_import(
                             *ast_left_operand,
-                            true,
+                            false,
                             function_uses,
                             calls,
                             num_ty_variables,
@@ -992,6 +997,7 @@ impl Context {
         reference: bool,
         function_uses: &mut Vec<ir::FunctionUse>,
         calls: &mut Vec<ir::Call>,
+        num_ty_variables: &mut usize,
         logger: &mut log::Logger,
     ) -> Result<ExpressionOrImport, ()> {
         match self.items.get(name) {
@@ -1013,8 +1019,13 @@ impl Context {
                 } else {
                     let function_use_index = function_uses.len();
                     let call_index = calls.len();
+                    let dereference = ir::Constant::Application(
+                        Box::new(ir::Constant::Dereference),
+                        vec![ir::Constant::Variable(*num_ty_variables)],
+                    );
+                    *num_ty_variables += 1;
                     function_uses.push(ir::FunctionUse {
-                        candidates: vec![ir::Constant::Dereference],
+                        candidates: vec![dereference],
                         used_by: Some(call_index),
                     });
                     calls.push(ir::Call {

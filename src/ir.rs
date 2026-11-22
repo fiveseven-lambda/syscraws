@@ -35,14 +35,16 @@ pub struct Program {
 
 #[derive(PartialEq, Eq, Clone, Serialize)]
 pub enum Constant {
+    Ty,
     Integer,
     Float,
-    Ty,
+    Reference,
+    Tuple,
     Structure(usize),
     Parameter(usize, usize),
     Variable(usize),
     Product(Vec<Constant>, Box<Constant>),
-    FunctionTy,
+    Function,
     Application(Box<Constant>, Vec<Constant>),
     Identity,
     DeleteInteger,
@@ -50,7 +52,7 @@ pub enum Constant {
     AddInteger,
     EqInteger,
     ConcatenateString,
-    Function(usize),
+    UserDefinedFunction(usize),
 }
 
 #[derive(Serialize)]
@@ -67,7 +69,6 @@ pub struct FunctionUse {
 #[derive(Serialize)]
 pub struct FunctionDefinition {
     pub local_variable_tys: Vec<Constant>,
-    pub num_ty_variables: usize,
     pub function_uses: Vec<FunctionUse>,
     pub calls: Vec<Call>,
     pub blocks: Vec<Block>,

@@ -93,7 +93,7 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
         .ir_program
         .function_tys
         .push(ir::Constant::Application(
-            Box::new(ir::Constant::FunctionTy),
+            Box::new(ir::Constant::Function),
             vec![ir::Constant::Integer],
         ));
     reader
@@ -104,7 +104,6 @@ pub fn read_input(root_file_path: &Path, logger: &mut log::Logger) -> Result<ir:
             calls: reader.global_calls,
             blocks: reader.global_blocks,
             local_variable_tys: Vec::new(),
-            num_ty_variables: 0,
         });
     reader.ir_program.global_variable_tys = reader.global_variables.tys();
     Ok(reader.ir_program)
@@ -296,6 +295,7 @@ impl Reader<'_> {
                     let num_current_items = context.items.len();
                     if let Ok((ty, definition)) = context.translate_function_definition(
                         function_definition,
+                        &mut self.ir_program.num_ty_variables,
                         &self.exports,
                         &mut self.logger,
                     ) {
@@ -478,7 +478,7 @@ impl Reader<'_> {
                 std::collections::hash_map::Entry::Vacant(entry) => {
                     entry.insert((
                         Some(pos),
-                        Item::Constant(ir::Constant::Function(self.num_functions)),
+                        Item::Constant(ir::Constant::UserDefinedFunction(self.num_functions)),
                     ));
                 }
             }
