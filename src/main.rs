@@ -17,10 +17,10 @@
  */
 
 mod backend;
-mod ffi;
 mod frontend;
 mod ir;
 mod log;
+mod ty;
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -43,13 +43,16 @@ fn main() -> ExitCode {
     else {
         return ExitCode::FAILURE;
     };
+    let Ok(ty_info) = ty::check(&ir_program) else {
+        return ExitCode::FAILURE;
+    };
     if command_line_arguments.print_ir {
         let mut stdout = std::io::stdout().lock();
         serde_json::to_writer_pretty(&mut stdout, &ir_program).unwrap();
         writeln!(&mut stdout).unwrap();
         return ExitCode::SUCCESS;
     }
-    let Ok(entry) = backend::translate(ir_program) else {
+    let Ok(entry) = backend::translate(ir_program, ty_info) else {
         return ExitCode::FAILURE;
     };
     ExitCode::from(unsafe { entry() })
